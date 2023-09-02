@@ -31,7 +31,7 @@ void GrassCollision::DrawSettings()
 
 		ImGui::TextWrapped("How many frames to skip before calculating positions again. 0 means calculate every frame (most smooth/costly).");
 		if (ImGui::SliderInt("Calculation Frame Interval", (int*)&settings.frameInterval, 0, 30)) {
-			if (settings.frameInterval) // increment so mod math works (e.g., skip 1 frame means frame % 2).
+			if (settings.frameInterval)  // increment so mod math works (e.g., skip 1 frame means frame % 2).
 				settings.frameInterval++;
 		}
 
@@ -158,7 +158,7 @@ void GrassCollision::UpdateCollisions()
 
 		for (const auto actor : actorList) {
 			if (auto root = actor->Get3D(false)) {
-				if (playerPosition.GetDistance(actor->GetPosition()) > settings.maxDistance) { // npc too far so skip
+				if (playerPosition.GetDistance(actor->GetPosition()) > settings.maxDistance) {  // npc too far so skip
 					continue;
 				}
 				activeActorCount++;

@@ -20,7 +20,7 @@ struct GrassCollision : Feature
 		float RadiusMultiplier = 2;
 		float DisplacementMultiplier = 16;
 		float maxDistance = 1000.0;
-		std::uint32_t frameInterval= 0;
+		std::uint32_t frameInterval = 0;
 	};
 
 	struct alignas(16) PerFrame

@@ -35,6 +35,7 @@ struct GrassCollision : Feature
 	};
 
 	std::unique_ptr<Buffer> collisions = nullptr;
+	std::uint32_t colllisionCount = 0;
 
 	Settings settings;
 

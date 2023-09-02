@@ -151,7 +151,6 @@ void GrassCollision::UpdateCollisions()
 		currentCollisionCount = 1;
 	}
 
-	static std::uint32_t colllisionCount = 0;
 	bool collisionCountChanged = currentCollisionCount != colllisionCount;
 
 	if (!collisions || collisionCountChanged) {

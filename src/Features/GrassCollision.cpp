@@ -31,7 +31,16 @@ void GrassCollision::DrawSettings()
 		if (ImGui::IsItemHovered()) {
 			ImGui::BeginTooltip();
 			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-			ImGui::Text("Distance from collision centres to apply collision");
+			ImGui::Text("Distance from collision centres to apply collision.");
+			ImGui::PopTextWrapPos();
+			ImGui::EndTooltip();
+		}
+
+		ImGui::SliderFloat("Max Distance from Player", &settings.maxDistance, 0.0f, 1500.0f);
+		if (ImGui::IsItemHovered()) {
+			ImGui::BeginTooltip();
+			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			ImGui::Text("Distance from player to apply collision (NPCs). 0 to disable NPC collisions.");
 			ImGui::PopTextWrapPos();
 			ImGui::EndTooltip();
 		}
@@ -45,10 +54,16 @@ void GrassCollision::DrawSettings()
 			ImGui::EndTooltip();
 		}
 
-		ImGui::TextWrapped("How many frames to skip before calculating positions again. 0 means calculate every frame (most smooth/costly).");
 		if (ImGui::SliderInt("Calculation Frame Interval", (int*)&settings.frameInterval, 0, 30)) {
 			if (settings.frameInterval)  // increment so mod math works (e.g., skip 1 frame means frame % 2).
 				settings.frameInterval++;
+		}
+		if (ImGui::IsItemHovered()) {
+			ImGui::BeginTooltip();
+			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			ImGui::Text("How many frames to skip before calculating positions again. 0 means calculate every frame (most smooth/costly).");
+			ImGui::PopTextWrapPos();
+			ImGui::EndTooltip();
 		}
 
 		ImGui::TreePop();

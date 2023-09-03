@@ -17,17 +17,33 @@ enum class GrassShaderTechniques
 void GrassCollision::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("Grass Collision", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::TextWrapped("Allows player collision to modify grass position.");
-
 		ImGui::Checkbox("Enable Grass Collision", (bool*)&settings.EnableGrassCollision);
-		ImGui::TextWrapped("Distance from collision centres to apply collision");
+		if (ImGui::IsItemHovered()) {
+			ImGui::BeginTooltip();
+			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			ImGui::Text("Allows player collision to modify grass position.");
+			ImGui::PopTextWrapPos();
+			ImGui::EndTooltip();
+		}
+
+		ImGui::Spacing();
 		ImGui::SliderFloat("Radius Multiplier", &settings.RadiusMultiplier, 0.0f, 8.0f);
+		if (ImGui::IsItemHovered()) {
+			ImGui::BeginTooltip();
+			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			ImGui::Text("Distance from collision centres to apply collision");
+			ImGui::PopTextWrapPos();
+			ImGui::EndTooltip();
+		}
 
-		ImGui::TextWrapped("Distance from player to apply collision (NPCs). 0 to disable NPC collisions");
-		ImGui::SliderFloat("Max Distance from Player", &settings.maxDistance, 0.0f, 1500.0f);
-
-		ImGui::TextWrapped("Strength of each collision on grass position.");
 		ImGui::SliderFloat("Displacement Multiplier", &settings.DisplacementMultiplier, 0.0f, 32.0f);
+		if (ImGui::IsItemHovered()) {
+			ImGui::BeginTooltip();
+			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			ImGui::Text("Strength of each collision on grass position.");
+			ImGui::PopTextWrapPos();
+			ImGui::EndTooltip();
+		}
 
 		ImGui::TextWrapped("How many frames to skip before calculating positions again. 0 means calculate every frame (most smooth/costly).");
 		if (ImGui::SliderInt("Calculation Frame Interval", (int*)&settings.frameInterval, 0, 30)) {

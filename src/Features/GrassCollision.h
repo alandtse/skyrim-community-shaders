@@ -50,6 +50,7 @@ struct GrassCollision : Feature
 	bool updatePerFrame = false;
 	ConstantBuffer* perFrame = nullptr;
 	int eyeCount = !REL::Module::IsVR() ? 1 : 2;
+	RE::bhkRigidBody* hands[4];
 
 	virtual void SetupResources();
 	virtual void Reset();

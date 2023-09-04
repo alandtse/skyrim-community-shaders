@@ -1,4 +1,5 @@
 #include "GrassCollision.h"
+#include "higgsinterface001.h"
 
 #include "State.h"
 #include "Util.h"
@@ -116,12 +117,8 @@ static bool GetShapeBound(RE::NiAVObject* a_node, RE::NiPoint3& centerPos, float
 	return false;
 }
 
-static bool GetShapeBound(RE::bhkNiCollisionObject* Colliedobj, RE::NiPoint3& centerPos, float& radius)
+static bool GetShapeBoundRigid(RE::bhkRigidBody* bhkRigid, RE::NiPoint3& centerPos, float& radius)
 {
-	if (!Colliedobj)
-		return false;
-
-	RE::bhkRigidBody* bhkRigid = Colliedobj->body.get() ? Colliedobj->body.get()->AsBhkRigidBody() : nullptr;
 	RE::hkpRigidBody* hkpRigid = bhkRigid ? skyrim_cast<RE::hkpRigidBody*>(bhkRigid->referencedObject.get()) : nullptr;
 	if (bhkRigid && hkpRigid) {
 		RE::hkVector4 massCenter;
@@ -151,6 +148,15 @@ static bool GetShapeBound(RE::bhkNiCollisionObject* Colliedobj, RE::NiPoint3& ce
 	}
 
 	return false;
+}
+
+static bool GetShapeBound(RE::bhkNiCollisionObject* Colliedobj, RE::NiPoint3& centerPos, float& radius)
+{
+	if (!Colliedobj)
+		return false;
+
+	RE::bhkRigidBody* bhkRigid = Colliedobj->body.get() ? Colliedobj->body.get()->AsBhkRigidBody() : nullptr;
+	return GetShapeBoundRigid(bhkRigid, centerPos, radius);
 }
 
 void GrassCollision::UpdateCollisions()
@@ -215,6 +221,39 @@ void GrassCollision::UpdateCollisions()
 					}
 					return RE::BSVisit::BSVisitControl::kContinue;
 				});
+			}
+		}
+
+		// VR hand nodes for grass collision
+		if (eyeCount == 2) {
+			if (!hands[0] && !hands[1] && g_higgsInterface) {
+				hands[0] = (RE::bhkRigidBody*)g_higgsInterface->GetHandRigidBody(false);
+				hands[1] = (RE::bhkRigidBody*)g_higgsInterface->GetHandRigidBody(true);
+				hands[2] = (RE::bhkRigidBody*)g_higgsInterface->GetWeaponRigidBody(false);
+				hands[3] = (RE::bhkRigidBody*)g_higgsInterface->GetWeaponRigidBody(true);
+			}
+			for (int i = 0; i < 4; i++) {
+				if (!hands[i])
+					continue;
+				RE::NiPoint3 centerPos;
+				float radius;
+				if (GetShapeBoundRigid(hands[i], centerPos, radius)) {
+					radius *= settings.RadiusMultiplier;
+					CollisionSData data{};
+					RE::NiPoint3 eyePosition{};
+					for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
+						if (!REL::Module::IsVR()) {
+							eyePosition = state->GetRuntimeData().posAdjust.getEye();
+						} else
+							eyePosition = state->GetVRRuntimeData().posAdjust.getEye(eyeIndex);
+						data.centre[eyeIndex].x = centerPos.x - eyePosition.x;
+						data.centre[eyeIndex].y = centerPos.y - eyePosition.y;
+						data.centre[eyeIndex].z = centerPos.z - eyePosition.z;
+					}
+					data.radius = radius;
+					currentCollisionCount++;
+					collisionsData.push_back(data);
+				}
 			}
 		}
 	}
@@ -299,7 +338,7 @@ void GrassCollision::ModifyGrass(const RE::BSShader*, const uint32_t)
 		views[0] = collisions->srv.get();
 		context->VSSetShaderResources(0, ARRAYSIZE(views), views);
 
-		ID3D11Buffer* buffers[1];
+		::ID3D11Buffer* buffers[1];
 		buffers[0] = perFrame->CB();
 		context->VSSetConstantBuffers(5, ARRAYSIZE(buffers), buffers);
 	}

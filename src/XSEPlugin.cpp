@@ -8,9 +8,12 @@
 #include "Features/ExtendedMaterials.h"
 #include "Features/LightLimitFIx/ParticleLights.h"
 #include "Features/LightLimitFix.h"
+#include "higgsinterface001.h"
+
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
+const SKSE::MessagingInterface* messaging;
 
 bool Load();
 
@@ -108,7 +111,21 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 					LightLimitFix::InstallHooks();
 				}
 			}
+			if (REL::Module::IsVR())
+			{
+				HiggsPluginAPI::GetHiggsInterface001(SKSE::GetPluginHandle(), messaging);
+				if (g_higgsInterface) {
+					logger::info("Got higgs interface!");
 
+					unsigned int higgsVersion = g_higgsInterface->GetBuildNumber();
+					if (higgsVersion < 1060000) {
+						logger::warn("[CRITICAL] HIGGS is present but is a lower version than is required by this mod. Get the latest version of HIGGS and try again.");
+					}
+
+				} else {
+					logger::warn("[WARN] Did NOT get higgs interface. Hand collisions disabled.");
+				}
+			}
 			break;
 		}
 	case SKSE::MessagingInterface::kDataLoaded:
@@ -147,7 +164,7 @@ bool Load()
 		return true;
 	}
 
-	auto messaging = SKSE::GetMessagingInterface();
+	messaging = SKSE::GetMessagingInterface();
 	messaging->RegisterListener("SKSE", MessageHandler);
 
 	auto state = State::GetSingleton();

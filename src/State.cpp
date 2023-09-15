@@ -8,6 +8,7 @@
 
 #include "Feature.h"
 
+#include "Features/ScreenSpaceGI.h"
 #include "Features/SubsurfaceScattering.h"
 
 void State::Draw()
@@ -42,6 +43,7 @@ void State::Draw()
 void State::DrawDeferred()
 {
 	SubsurfaceScattering::GetSingleton()->DrawDeferred();
+	ScreenSpaceGI::GetSingleton()->DrawDeferred();
 }
 
 void State::Reset()

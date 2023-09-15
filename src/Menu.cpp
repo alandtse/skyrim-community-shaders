@@ -10,9 +10,10 @@
 #include "Feature.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/LightLimitFix/ParticleLights.h"
+#include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
-#include "Features/WaterBlending.h"
 #include "Features/SubsurfaceScattering.h"
+#include "Features/WaterBlending.h"
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_FONTSCALE "Font Scale"
@@ -308,6 +309,7 @@ void Menu::DrawSettings()
 				shaderCache.Clear();
 				ScreenSpaceShadows::GetSingleton()->ClearComputeShader();
 				SubsurfaceScattering::GetSingleton()->ClearComputeShader();
+				ScreenSpaceGI::GetSingleton()->ClearComputeShader();
 			}
 			if (ImGui::IsItemHovered()) {
 				ImGui::BeginTooltip();

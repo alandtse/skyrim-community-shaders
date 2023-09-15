@@ -5,9 +5,10 @@
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
 #include "Features/LightLimitFix.h"
+#include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
-#include "Features/WaterBlending.h"
 #include "Features/SubsurfaceScattering.h"
+#include "Features/WaterBlending.h"
 
 void Feature::Load(json&)
 {
@@ -79,7 +80,8 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		ExtendedMaterials::GetSingleton(),
 		WaterBlending::GetSingleton(),
 		LightLimitFix::GetSingleton(),
-		SubsurfaceScattering::GetSingleton()
+		SubsurfaceScattering::GetSingleton(),
+		ScreenSpaceGI::GetSingleton()
 	};
 
 	static std::vector<Feature*> featuresVR = {

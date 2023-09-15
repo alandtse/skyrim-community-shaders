@@ -575,8 +575,7 @@ void Menu::DrawOverlay()
 
 	auto failed = shaderCache.GetFailedTasks();
 	auto hide = shaderCache.IsHideErrors();
-	auto stats = shaderCache.GetShaderStatsString();
-	auto progressTitle = state->IsDeveloperMode() ? fmt::format("Compiling Shaders: {}", stats) : fmt::format("Compiling Shaders: {}", shaderCache.GetShaderStatsString(true).c_str());
+	auto progressTitle = fmt::format("Compiling Shaders: {}", shaderCache.GetShaderStatsString(!state->IsDeveloperMode()).c_str());
 	auto percent = (float)compiledShaders / (float)totalShaders;
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 	if (shaderCache.IsCompiling()) {

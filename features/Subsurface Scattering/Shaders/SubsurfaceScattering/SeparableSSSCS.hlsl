@@ -14,7 +14,9 @@ cbuffer PerFrame : register(b0)
 {
     float4 DynamicRes;
 	float4 CameraData;
+	float2 BufferDim;
     float2 RcpBufferDim;
+	uint FrameCount;
     float SSSS_FOVY;
     float SSSWidth;
 };
@@ -35,8 +37,8 @@ float GetScreenDepth(float depth)
 #if defined(LINEAR)
 		color.rgb = Lin2sRGB(color.rgb);
 #endif
-		float sss = DeferredTexture.SampleLevel(PointSampler, texCoord, 0).r;
 		color.rgb += SpecularTexture.SampleLevel(PointSampler, texCoord, 0).rgb;
+		
 		color.a = 1.0;
 		SSSRW[DTid.xy] = color;
 #endif

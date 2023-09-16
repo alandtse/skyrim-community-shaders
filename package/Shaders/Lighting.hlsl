@@ -2,6 +2,10 @@
 #include "Common/FrameBuffer.hlsl"
 #include "Common/MotionBlur.hlsl"
 
+#if defined(CHARACTER_LIGHT)
+#undef CHARACTER_LIGHT
+#endif
+
 static const float PI = 3.14159265;
 
 #if (defined(TREE_ANIM) || defined(LANDSCAPE)) && !defined(VC)
@@ -1654,8 +1658,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #		endif
 	} else {
 #		if defined(SPECULAR) || defined(SPARKLE)
-#if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
-		lightsSpecularColor += GetPBRSpecular(input, uv, modelNormal.xyz, DirLightDirection, viewDirection, dirLightColor.xyz, glossiness, shininess);
+#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+		lightsSpecularColor = GetPBRSpecular(input, uv, modelNormal.xyz, DirLightDirection, viewDirection, dirLightColor.xyz, glossiness, shininess);
 #else
 		lightsSpecularColor = GetLightSpecularInput(input, DirLightDirection, viewDirection, modelNormal.xyz, dirLightColor.xyz, shininess, uv);
 #endif
@@ -1774,8 +1778,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #			endif  // BACK_LIGHTING
 
 #			if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
-#if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
-		lightsSpecularColor += GetPBRSpecular(input, uv, modelNormal.xyz, normalizedLightDirection, viewDirection, lightColor.xyz, glossiness, shininess) * intensityMultiplier;
+#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+		lightsSpecularColor += GetPBRSpecular(input, uv, modelNormal.xyz, normalizedLightDirection, viewDirection, lightColor.xyz, glossiness, shininess) * intensityMultiplier.xxx;
 #else
 			lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, viewDirection, modelNormal.xyz, lightColor, shininess, uv) * intensityMultiplier.xxx;
 #endif
@@ -1893,8 +1897,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 #				endif
 
 #				if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
-#if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
-				lightsSpecularColor += GetPBRSpecular(input, uv, worldSpaceNormal.xyz, normalizedLightDirection.xyz, worldSpaceViewDirection, lightColor.xyz, glossiness, shininess) * intensityMultiplier;
+#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+				lightsSpecularColor += GetPBRSpecular(input, uv, worldSpaceNormal.xyz, normalizedLightDirection.xyz, worldSpaceViewDirection, lightColor.xyz, glossiness, shininess) * intensityMultiplier.xxx;
 #else
 				lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, worldSpaceViewDirection, worldSpaceNormal.xyz, lightColor, shininess, uv) * intensityMultiplier.xxx;
 #endif
@@ -1924,13 +1928,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	diffuseColor += lightsDiffuseColor;
 	specularColor += lightsSpecularColor;
 
-// #		if defined(CHARACTER_LIGHT)
-// 	float charLightMul =
-// 		saturate(dot(viewDirection, modelNormal.xyz)) * CharacterLightParams.x +
-// 		CharacterLightParams.y * saturate(dot(float2(0.164398998, -0.986393988), modelNormal.yz));
-// 	float charLightColor = min(CharacterLightParams.w, max(0, CharacterLightParams.z * TexCharacterLightSampler.Sample(SampCharacterLightSampler, baseShadowUV).x));
-// 	diffuseColor += (charLightMul * charLightColor).xxx;
-// #		endif  // CHARACTER_LIGHT
+#		if defined(CHARACTER_LIGHT)
+	float charLightMul =
+		saturate(dot(viewDirection, modelNormal.xyz)) * CharacterLightParams.x +
+		CharacterLightParams.y * saturate(dot(float2(0.164398998, -0.986393988), modelNormal.yz));
+	float charLightColor = min(CharacterLightParams.w, max(0, CharacterLightParams.z * TexCharacterLightSampler.Sample(SampCharacterLightSampler, baseShadowUV).x));
+	diffuseColor += (charLightMul * charLightColor).xxx;
+#		endif  // CHARACTER_LIGHT
 
 #		if defined(EYE)
 	modelNormal.xyz = input.EyeNormal;
@@ -1988,8 +1992,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	// float2 screenMotionVector = GetSSMotionVector(worldPositionVR, PreviousWorldPositionVR, eyeIndex);
 // #	endif  // !VR
 #	if !defined(SKIN) 
-#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT))
-	//specularColor = (specularColor * MaterialData.yyy) * SpecularColor.xyz;
+#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+	//specularColor = (specularColor) * SpecularColor.xyz;
 #else
 #		if defined(SPECULAR)
 	specularColor = (specularColor * glossiness * MaterialData.yyy) * SpecularColor.xyz;
@@ -2161,9 +2165,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	psout.Albedo.xyz = Lin2sRGB(psout.Albedo.xyz);
 #endif
 
+
 #if defined(SKIN_SHADING)
-	psout.Deferred.x = RGBToLuminance(rimSoftLightColor.xyz);
+	// float3 albedo = baseColor.xyz * input.Color.xyz;
+	// float ao;
+	// Material2PBR(albedo, albedo, ao);
+	psout.Deferred = 1;
 #endif
+
 	psout.Deferred.w = psout.Albedo.w;
 
 	psout.Specular.xyz = 0;

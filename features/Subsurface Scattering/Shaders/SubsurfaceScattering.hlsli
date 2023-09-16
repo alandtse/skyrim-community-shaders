@@ -45,7 +45,7 @@ void RemoveTonemap(inout float3 color) {
 }
 
 void Material2PBR(float3 color, out float3 albedo, out float ao) {
-    RemoveTonemap(color);
+   // RemoveTonemap(color);
     float3 hsv = RGB2HSV(color);
     ao = hsv.z;
     albedo = HSV2RGB(float3(hsv.x + HUE_SHIFT, hsv.y * SATURATION, 1.0));
@@ -164,6 +164,7 @@ float DistributionGGX(float NdotH, float roughness)
     return num / denom;
 }
 
+#define PBR_SKIN
 float3 GetPBRSpecular(PS_INPUT input, float2 uv, float3 N, float3 L, float3 V, float3 lightColor, float glossiness, float shininess)
 {
     float3 f0 = 0.04;
@@ -177,9 +178,9 @@ float3 GetPBRSpecular(PS_INPUT input, float2 uv, float3 N, float3 L, float3 V, f
     float NdotH = saturate(dot(N, H));
         
     float roughness = 1 - glossiness;
-    roughness /= 2;
+    roughness /= 1.7;
 
-    float NDF1 = GetLightSpecularInput(input, L, V, N, lightColor, shininess, uv) * glossiness;
+    float3 NDF1 = GetLightSpecularInput(input, L, V, N, lightColor, shininess, uv) * glossiness * MaterialData.yyy * SpecularColor.xyz;
    
     float NDF = DistributionGGX(NdotH, roughness);
     float G = GeometrySmith(NdotV, NdotL, roughness);
@@ -187,7 +188,7 @@ float3 GetPBRSpecular(PS_INPUT input, float2 uv, float3 N, float3 L, float3 V, f
 
     // Cook-Torrance specular microfacet BRDF.
     float3 specularBRDF = (NDF * G * F) / max(0.001, 4.0 * NdotL * NdotH);
-
+    
     // Total contribution for this light.
     return max(specularBRDF * NdotL * radiance, NDF1);
 }

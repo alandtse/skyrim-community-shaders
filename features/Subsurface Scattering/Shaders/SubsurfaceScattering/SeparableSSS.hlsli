@@ -103,13 +103,15 @@ float RGBToLuminance(float3 color)
 
 float InterleavedGradientNoise(float2 uv)
 {
+    if (FrameCount == 0)
+        return 1.0;
 	// Temporal factor
-	// float frameStep = float(perPassLLF[0].FrameCount % 16) * 0.0625f;
-	// uv.x += frameStep * 4.7526;
-	// uv.y += frameStep * 3.1914;
+	float frameStep = float(FrameCount % 16) * 0.0625f;
+	uv.x += frameStep * 4.7526;
+	uv.y += frameStep * 3.1914;
 
 	float3 magic = float3(0.06711056f, 0.00583715f, 52.9829189f);
-	return frac(magic.z * frac(dot(uv, magic.xy)));
+	return frac(magic.z * frac(dot(uv, magic.xy))) * 1.5;
 }
 
 #define SSSS_N_SAMPLES 25
@@ -216,15 +218,14 @@ float4 SSSSBlurPS(
 #endif
 
     float3 sss = DeferredTexture.SampleLevel(PointSampler, texcoord, 0).xyz;
-    colorM.a = RGBToLuminance(sss);
 
+    colorM.a = sss.x;
     if (colorM.a == 0)
         return colorM;
-    
+
     // Fetch linear depth of current pixel:
     float depthM =  DepthTexture.SampleLevel(PointSampler, texcoord, 0).r;
     depthM = GetScreenDepth(depthM);
-
 
     float4 kernel[SSSS_N_SAMPLES] = {
         float4(0.530605, 0.613514, 0.739601, 0),
@@ -254,30 +255,19 @@ float4 SSSSBlurPS(
         float4(0.000973794, 1.11862e-005, 9.43437e-007, 3),
     };
 
-  //  CalculateKernel(kernel, sss);
-
     // Accumulate center sample, multiplying it with its gaussian weight:
     float4 colorBlurred = colorM;
     colorBlurred.rgb *= kernel[0].rgb;
-
-    float gaussianWidth = 100.0 * SSSS_N_SAMPLES;
-
-	float2 step = gaussianWidth * RcpBufferDim * dir;
     
-    float noise = InterleavedGradientNoise(texcoord * float2(3440, 1440));
-    step += step * noise;
+    // World-space width
+    float distanceToProjectionWindow = 1.0 / tan(0.5 * radians(SSSS_FOVY));
+    float scale = distanceToProjectionWindow / depthM;
 
-    //     float distanceToProjectionWindow = 1.0 / tan(0.5 * radians(SSSS_FOVY));
-    // float scale = distanceToProjectionWindow / depthM;
+    // Calculate the final step to fetch the surrounding pixels:
+    float2 finalStep = scale * dir / 3.0;
+    finalStep *= 1; // Modulate it using the alpha channel.
+    finalStep *= InterleavedGradientNoise(texcoord * BufferDim); // Randomise width to fix banding
 
-    // // Calculate the final step to fetch the surrounding pixels:
-    // float2 finalStep = 1 * scale * dir;
-    // finalStep *= colorM.a; // Modulate it using the alpha channel.
-    // finalStep *= 1.0 / 3.0; // Divide by 3 as the kernels range from -3 to 3.
-    // finalStep += finalStep * InterleavedGradientNoise(texcoord * float2(3440, 1440));
-
-    float2 finalStep = colorM.a * step / depthM;
-    
     // Accumulate the other samples:
     [unroll]
     for (int i = 1; i < SSSS_N_SAMPLES; i++) {
@@ -289,19 +279,19 @@ float4 SSSSBlurPS(
     color.rgb = sRGB2Lin(color.rgb);
 #endif
 
-
         float depth = DepthTexture.SampleLevel(LinearSampler, offset, 0).r;
         depth = GetScreenDepth(depth);
 
         // If the difference in depth is huge, we lerp color back to "colorM":
-        float s = min(abs(depthM - depth), 1.0);
+        float s = min(0.125 * abs(depthM - depth), 1.0);
         color = lerp(color, colorM.rgb, s);
 
         // Accumulate:
         colorBlurred.rgb += kernel[i].rgb * color.rgb;
     }
 
-    
+    colorBlurred = lerp(colorM, colorBlurred, colorM.a);
+   
     return colorBlurred;
 }
 

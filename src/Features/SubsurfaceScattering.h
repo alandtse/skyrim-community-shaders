@@ -16,9 +16,12 @@ public:
 	{
 		float4 DynamicRes;
 		float4 CameraData;
+		float2 BufferDim;
 		float2 RcpBufferDim;
+		uint FrameCount;
 		float SSSS_FOVY;
 		float SSSWidth;
+		float pad;
 	};
 
 	ConstantBuffer* blurCB = nullptr;

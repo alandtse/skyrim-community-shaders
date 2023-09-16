@@ -1,6 +1,8 @@
 #include "SubsurfaceScattering.h"
 #include <Util.h>
 
+#include "State.h"
+
 void SubsurfaceScattering::DrawSettings()
 {
 }
@@ -162,8 +164,14 @@ void SubsurfaceScattering::DrawDeferred()
 		{
 			BlurCB data{};
 
+			data.BufferDim.x = (float)deferredTexture->desc.Width;
+			data.BufferDim.y = (float)deferredTexture->desc.Height;
+
 			data.RcpBufferDim.x = 1.0f / (float)deferredTexture->desc.Width;
 			data.RcpBufferDim.y = 1.0f / (float)deferredTexture->desc.Height;
+
+			data.FrameCount = viewport->uiFrameCount * (Util::UnkOuterStruct::GetSingleton()->GetTAA() || State::GetSingleton()->upscalerLoaded);
+
 
 			data.DynamicRes.x = viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
 			data.DynamicRes.y = viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;

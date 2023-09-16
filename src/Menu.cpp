@@ -11,8 +11,9 @@
 #include "Features/ExtendedMaterials.h"
 #include "Features/LightLimitFix/ParticleLights.h"
 #include "Features/ScreenSpaceShadows.h"
-#include "Features/WaterBlending.h"
 #include "Features/SubsurfaceScattering.h"
+#include "Features/WaterBlending.h"
+
 
 #define SETTING_MENU_TOGGLEKEY "Toggle Key"
 #define SETTING_MENU_FONTSCALE "Font Scale"
@@ -573,9 +574,13 @@ void Menu::DrawOverlay()
 	compiledShaders = shaderCache.GetCompletedTasks();
 	totalShaders = shaderCache.GetTotalTasks();
 
+	auto state = State::GetSingleton();
+
 	auto failed = shaderCache.GetFailedTasks();
 	auto hide = shaderCache.IsHideErrors();
-	auto stats = shaderCache.GetShaderStatsString();
+	auto progressTitle = fmt::format("Compiling Shaders: {}", shaderCache.GetShaderStatsString(!state->IsDeveloperMode()).c_str());
+	auto percent = (float)compiledShaders / (float)totalShaders;
+	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 	if (shaderCache.IsCompiling()) {
 		ImGui::SetNextWindowBgAlpha(1);
 		ImGui::SetNextWindowPos(ImVec2(10, 10));
@@ -583,8 +588,8 @@ void Menu::DrawOverlay()
 			ImGui::End();
 			return;
 		}
-
-		ImGui::Text(fmt::format("Compiling Shaders: {}", stats).c_str());
+		ImGui::TextUnformatted(progressTitle.c_str());
+		ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
 
 		ImGui::End();
 	} else if (failed && !hide) {

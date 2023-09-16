@@ -47,13 +47,22 @@ Texture2D<uint> g_srcWorkingAOTerm : register(t0);    // coming from previous pa
 Texture2D<lpfloat> g_srcWorkingEdges : register(t1);  // coming from previous pass
 RWTexture2D<uint> g_outFinalAOTerm : register(u0);    // final AO term - just 'visibility' or 'visibility + bent normals'
 
+// input output textures for (XeGTAO_Mix)
+Texture2D<float4> g_srcColor : register(t0);
+Texture2D<float4> g_srcGI : register(t1);
+RWTexture2D<float4> g_outColor : register(u0);
+
 SamplerState g_samplerPointClamp : register(s0);
 
 // Engine-specific normal map loader
+
 lpfloat3 LoadNormal(int2 pos)
 {
-	float3 encodedNormal = g_srcNormalmap.Load(int3(pos, 0)).xyz;
-	float3 normal = normalize(encodedNormal * 2.0.xxx - 1.0.xxx);
+	float3 enc = g_srcNormalmap.Load(int3(pos, 0)).xyz;
+	float2 fenc = enc * 4 - 2;
+	float f = dot(fenc, fenc);
+	float g = sqrt(1 - f * 0.25);
+	float3 normal = normalize(float3(fenc * g, 1 - f * 0.5)) * float3(1, 1, -1);
 
 #if 0  // compute worldspace to viewspace here if your engine stores normals in worldspace; if generating normals from depth here, they're already in viewspace
     normal = mul( (float3x3)g_globals.View, normal );
@@ -108,6 +117,14 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 	const uint2 pixCoordBase = dispatchThreadID * uint2(2, 1);  // we're computing 2 horizontal pixels at a time (performance optimization)
 	// g_samplerPointClamp is a sampler with D3D12_FILTER_MIN_MAG_MIP_POINT filter and D3D12_TEXTURE_ADDRESS_MODE_CLAMP addressing mode
 	XeGTAO_Denoise(pixCoordBase, g_GTAOConsts, g_srcWorkingAOTerm, g_srcWorkingEdges, g_samplerPointClamp, g_outFinalAOTerm, true);
+}
+
+	[numthreads(XE_GTAO_NUMTHREADS_X, XE_GTAO_NUMTHREADS_Y, 1)] void CSMix(const uint2 pixCoord
+																		   : SV_DispatchThreadID)
+{
+	float4 color = g_srcColor[pixCoord];
+	float4 gi = g_srcGI[pixCoord];
+	g_outColor[pixCoord] = float4(color.rgb * gi.a, 1);
 }
 
 ///

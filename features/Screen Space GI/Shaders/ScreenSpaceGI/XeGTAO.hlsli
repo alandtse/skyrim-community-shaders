@@ -204,7 +204,7 @@ void XeGTAO_OutputWorkingTerm(const uint2 pixCoord, lpfloat visibility, lpfloat3
 	// 	outWorkingAOTerm[pixCoord] = uint(visibility * 255.0 + 0.5);
 	// #endif
 
-	outWorkingAOTerm[pixCoord] = float4(visibility.xxx, 1);
+	outWorkingAOTerm[pixCoord] = float4(visibility.xxx, visibility);
 }
 
 // "Efficiently building a matrix to rotate one vector to another"
@@ -242,6 +242,16 @@ lpfloat3x3 XeGTAO_RotFromToMatrix(lpfloat3 from, lpfloat3 to)
 	mtx[2][2] = e + hvz * v.z;
 
 	return mtx;
+}
+
+// HBIL pp.29
+float IlIntegral(float nx, float ny, float cos_prev, float cos_new)
+{
+	float delta_angle = XeGTAO_FastACos(cos_prev) - XeGTAO_FastACos(cos_new);
+	float sin_prev = sqrt(1 - cos_prev * cos_prev);
+	float sin_new = sqrt(1 - cos_new * cos_new);
+	return 0.5 * nx * (delta_angle + sin_prev * cos_prev - sin_new * cos_new) +
+	       0.5 * ny * (sin_prev * sin_prev - sin_new * sin_new);
 }
 
 void XeGTAO_MainPass(const uint2 pixCoord, lpfloat sliceCount, lpfloat stepsPerSlice, const lpfloat2 localNoise, lpfloat3 viewspaceNormal, const GTAOConstants consts,

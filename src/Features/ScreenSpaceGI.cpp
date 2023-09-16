@@ -48,8 +48,14 @@ void ScreenSpaceGI::DrawSettings()
 	}
 
 	if (ImGui::CollapsingHeader("Debug View")) {
+		ImGui::BulletText("texColor");
+		ImGui::Image(texColor->srv.get(), { texColor->desc.Width * .3f, texColor->desc.Height * .3f });
+
 		ImGui::BulletText("texGI");
-		ImGui::Image(texGI->srv.get(), { texGI->desc.Width * .5f, texGI->desc.Height * .5f });
+		ImGui::Image(texGI->srv.get(), { texGI->desc.Width * .3f, texGI->desc.Height * .3f });
+
+		ImGui::BulletText("texColorMix");
+		ImGui::Image(texColorMix->srv.get(), { texColorMix->desc.Width * .3f, texColorMix->desc.Height * .3f });
 	}
 }
 
@@ -58,6 +64,7 @@ void ScreenSpaceGI::ClearComputeShader()
 	if (hilbertLutCompute)
 		hilbertLutCompute->Release();
 	hilbertLutCompute = nullptr;
+	hilbertLUTGenFlag = true;
 
 	if (prefilterDepthsCompute)
 		prefilterDepthsCompute->Release();
@@ -66,6 +73,10 @@ void ScreenSpaceGI::ClearComputeShader()
 	if (ssgiCompute)
 		ssgiCompute->Release();
 	ssgiCompute = nullptr;
+
+	if (mixCompute)
+		mixCompute->Release();
+	mixCompute = nullptr;
 }
 
 void ScreenSpaceGI::SetupResources()
@@ -76,12 +87,15 @@ void ScreenSpaceGI::SetupResources()
 	if (!ssgiCB)
 		ssgiCB = new ConstantBuffer(ConstantBufferDesc<SSGICB>());
 
+	constexpr auto shader_path = L"Data\\Shaders\\ScreenSpaceGI\\vaGTAO.hlsl";
 	if (!hilbertLutCompute)
-		hilbertLutCompute = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceGI\\vaGTAO.hlsl", { { "", "" } }, "cs_5_0", "CSGenerateHibertLUT");
+		hilbertLutCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSGenerateHibertLUT");
 	if (!prefilterDepthsCompute)
-		prefilterDepthsCompute = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceGI\\vaGTAO.hlsl", { { "", "" } }, "cs_5_0", "CSPrefilterDepths16x16");
+		prefilterDepthsCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSPrefilterDepths16x16");
 	if (!ssgiCompute)
-		ssgiCompute = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceGI\\vaGTAO.hlsl", { { "", "" } }, "cs_5_0", "CSGTAO");
+		ssgiCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSGTAO");
+	if (!mixCompute)
+		mixCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSMix");
 
 	if (!texGI) {
 		{
@@ -110,33 +124,50 @@ void ScreenSpaceGI::SetupResources()
 				.Texture2D = { .MipSlice = 0 }
 			};
 
-			texHilbertLUT = new Texture2D(texDesc);
-			texHilbertLUT->CreateSRV(srvDesc);
-			texHilbertLUT->CreateUAV(uavDesc);
+			{
+				texHilbertLUT = new Texture2D(texDesc);
+				texHilbertLUT->CreateSRV(srvDesc);
+				texHilbertLUT->CreateUAV(uavDesc);
+			}
 
 			auto snowSwapTexture = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP];
 			snowSwapTexture.texture->GetDesc(&texDesc);
+			srvDesc.Format = uavDesc.Format = texDesc.Format;
+
 			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+			{
+				texColor = new Texture2D(texDesc);
+				texColor->CreateSRV(srvDesc);
+
+				texColorMix = new Texture2D(texDesc);
+				texColorMix->CreateSRV(srvDesc);
+				texColorMix->CreateUAV(uavDesc);
+			}
 
 			texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 
-			texGI = new Texture2D(texDesc);
-			texGI->CreateSRV(srvDesc);
-			texGI->CreateUAV(uavDesc);
+			{
+				texGI = new Texture2D(texDesc);
+				texGI->CreateSRV(srvDesc);
+				texGI->CreateUAV(uavDesc);
+			}
 
 			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
 
-			texWorkingDepth = new Texture2D(texDesc);
-			texWorkingDepth->CreateSRV(srvDesc);
-			DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 0));
-			uavDesc.Texture2D.MipSlice = 1;
-			DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 1));
-			uavDesc.Texture2D.MipSlice = 2;
-			DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 2));
-			uavDesc.Texture2D.MipSlice = 3;
-			DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 3));
-			uavDesc.Texture2D.MipSlice = 4;
-			DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 4));
+			{
+				texWorkingDepth = new Texture2D(texDesc);
+				texWorkingDepth->CreateSRV(srvDesc);
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 0));
+				uavDesc.Texture2D.MipSlice = 1;
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 1));
+				uavDesc.Texture2D.MipSlice = 2;
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 2));
+				uavDesc.Texture2D.MipSlice = 3;
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 3));
+				uavDesc.Texture2D.MipSlice = 4;
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth + 4));
+			}
 		}
 
 		{
@@ -168,19 +199,17 @@ void ScreenSpaceGI::Save(json&)
 
 void ScreenSpaceGI::GenerateHilbertLUT()
 {
-	static std::once_flag flag;
-	std::call_once(flag,
-		[&]() {
-			auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+	if (hilbertLUTGenFlag) {
+		auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
 
-			context->CSSetUnorderedAccessViews(0, 1, texHilbertLUT->uav.put(), nullptr);
-			context->CSSetShader(hilbertLutCompute, nullptr, 0);
-			context->Dispatch(2, 2, 1);
+		context->CSSetUnorderedAccessViews(0, 1, texHilbertLUT->uav.put(), nullptr);
+		context->CSSetShader(hilbertLutCompute, nullptr, 0);
+		context->Dispatch(2, 2, 1);
 
-			ID3D11UnorderedAccessView* uav = nullptr;
-			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-			context->CSSetShader(nullptr, nullptr, 0);
-		});
+		ID3D11UnorderedAccessView* uav = nullptr;
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
 }
 
 void ScreenSpaceGI::UpdateBuffer()
@@ -204,6 +233,7 @@ void ScreenSpaceGI::UpdateBuffer()
 
 		.EffectRadius = settings.EffectRadius,
 		.EffectFalloffRange = settings.EffectFalloffRange,
+		.RadiusMultiplier = 1.f,
 		.FinalValuePower = settings.FinalValuePower,
 		.SampleDistributionPower = settings.SampleDistributionPower,
 		.ThinOccluderCompensation = settings.ThinOccluderCompensation,
@@ -261,6 +291,9 @@ void ScreenSpaceGI::DrawDeferred()
 	context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
 	context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
 
+	// copy color
+	context->CopyResource(texColor->resource.get(), renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP].texture);
+
 	// prefilter depths
 	{
 		memcpy(uavs, uavWorkingDepth, sizeof(void*) * ARRAYSIZE(uavWorkingDepth));
@@ -285,6 +318,23 @@ void ScreenSpaceGI::DrawDeferred()
 		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 32.0f), (uint32_t)std::ceil(dynamic_res[1] / 32.0f), 1);
 	}
 
+	memset(srvs, 0, sizeof(void*) * ARRAYSIZE(srvs));
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+	memset(uavs, 0, sizeof(void*) * ARRAYSIZE(uavs));
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+	// mix
+	{
+		srvs[0] = texColor->srv.get();
+		srvs[1] = texGI->srv.get();
+		uavs[0] = texColorMix->uav.get();
+
+		context->CSSetShaderResources(0, 2, srvs);
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		context->CSSetShader(mixCompute, nullptr, 0);
+		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 32.0f), (uint32_t)std::ceil(dynamic_res[1] / 32.0f), 1);
+	}
+
 	// cleanup
 	memset(srvs, 0, sizeof(void*) * ARRAYSIZE(srvs));
 	memset(uavs, 0, sizeof(void*) * ARRAYSIZE(uavs));
@@ -296,4 +346,7 @@ void ScreenSpaceGI::DrawDeferred()
 	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 	context->CSSetShader(nullptr, nullptr, 0);
+
+	// copy back
+	context->CopyResource(renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP].texture, texColorMix->resource.get());
 }

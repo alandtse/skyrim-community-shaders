@@ -47,15 +47,19 @@ struct ScreenSpaceGI : Feature
 	ConstantBuffer* ssgiCB = nullptr;
 
 	bool normalSwap = false;
+	bool hilbertLUTGenFlag = true;
 
 	ID3D11ComputeShader* hilbertLutCompute = nullptr;
 	ID3D11ComputeShader* prefilterDepthsCompute = nullptr;
 	ID3D11ComputeShader* ssgiCompute = nullptr;
+	ID3D11ComputeShader* mixCompute = nullptr;
 
 	Texture2D* texHilbertLUT = nullptr;
 	Texture2D* texWorkingDepth = nullptr;
 	ID3D11UnorderedAccessView* uavWorkingDepth[5] = { nullptr };
 	Texture2D* texGI = nullptr;
+	Texture2D* texColor = nullptr;
+	Texture2D* texColorMix = nullptr;
 
 	ID3D11SamplerState* linearSampler = nullptr;
 	ID3D11SamplerState* pointSampler = nullptr;

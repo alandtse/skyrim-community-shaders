@@ -70,6 +70,8 @@ struct ScreenSpaceGI : Feature
 
 	struct Settings
 	{
+		bool Enabled = true;
+
 		uint32_t SliceCount = 2;
 		uint32_t StepsPerSlice = 2;
 

@@ -36,9 +36,10 @@ RWTexture2D<lpfloat> g_outWorkingDepthMIP3 : register(u3);  // output viewspace 
 RWTexture2D<lpfloat> g_outWorkingDepthMIP4 : register(u4);  // output viewspace depth MIP (these are views into g_srcWorkingDepth MIP levels)
 
 // input output textures for the second pass (XeGTAO_MainPass)
-Texture2D<lpfloat> g_srcWorkingDepth : register(t0);        // viewspace depth with MIPs, output by XeGTAO_PrefilterDepths16x16 and consumed by XeGTAO_MainPass
-Texture2D<float4> g_srcNormalmap : register(t1);            // source normal map (if used)
-Texture2D<uint> g_srcHilbertLUT : register(t2);             // hilbert lookup table  (if any)
+Texture2D<lpfloat> g_srcWorkingDepth : register(t0);  // viewspace depth with MIPs, output by XeGTAO_PrefilterDepths16x16 and consumed by XeGTAO_MainPass
+Texture2D<float4> g_srcNormalmap : register(t1);      // source normal map (if used)
+Texture2D<uint> g_srcHilbertLUT : register(t2);       // hilbert lookup table  (if any)
+Texture2D<float4> g_srcRadiance : register(t3);
 RWTexture2D<float4> g_outWorkingAOTerm : register(u0);      // output AO term (includes bent normals if enabled - packed as R11G11B10 scaled by AO)
 RWTexture2D<unorm float> g_outWorkingEdges : register(u1);  // output depth-based edges used by the denoiser
 
@@ -53,12 +54,13 @@ Texture2D<float4> g_srcGI : register(t1);
 RWTexture2D<float4> g_outColor : register(u0);
 
 SamplerState g_samplerPointClamp : register(s0);
+SamplerState g_samplerLinearClamp : register(s1);
 
 // Engine-specific normal map loader
 
 lpfloat3 LoadNormal(int2 pos)
 {
-	float3 enc = g_srcNormalmap.Load(int3(pos, 0)).xyz;
+	float2 enc = g_srcNormalmap.Load(int3(pos, 0)).xy;
 	float2 fenc = enc * 4 - 2;
 	float f = dot(fenc, fenc);
 	float g = sqrt(1 - f * 0.25);
@@ -100,7 +102,11 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 [numthreads(XE_GTAO_NUMTHREADS_X, XE_GTAO_NUMTHREADS_Y, 1)] void CSGTAO(const uint2 pixCoord
 																		: SV_DispatchThreadID) {
 	// g_samplerPointClamp is a sampler with D3D12_FILTER_MIN_MAG_MIP_POINT filter and D3D12_TEXTURE_ADDRESS_MODE_CLAMP addressing mode
-	XeGTAO_MainPass(pixCoord, g_GTAOConsts.SliceCount, g_GTAOConsts.StepsPerSlice, SpatioTemporalNoise(pixCoord, g_GTAOConsts.NoiseIndex), LoadNormal(pixCoord), g_GTAOConsts, g_srcWorkingDepth, g_samplerPointClamp, g_outWorkingAOTerm, g_outWorkingEdges);
+	XeGTAO_MainPass(pixCoord,
+		g_GTAOConsts.SliceCount, g_GTAOConsts.StepsPerSlice, SpatioTemporalNoise(pixCoord, g_GTAOConsts.NoiseIndex), LoadNormal(pixCoord), g_GTAOConsts,
+		g_srcWorkingDepth, g_srcRadiance,
+		g_samplerPointClamp, g_samplerLinearClamp,
+		g_outWorkingAOTerm, g_outWorkingEdges);
 }
 
 	// Engine-specific entry point for the third pass
@@ -124,7 +130,9 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 {
 	float4 color = g_srcColor[pixCoord];
 	float4 gi = g_srcGI[pixCoord];
-	g_outColor[pixCoord] = float4(color.rgb * gi.a, 1);
+	g_outColor[pixCoord] = float4(color.rgb * gi.a + gi.rgb, 1);
+
+	// g_outColor[pixCoord] = float4(gi.rgb * 10, 1);
 }
 
 ///

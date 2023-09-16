@@ -19,9 +19,12 @@ public:
 
 void ScreenSpaceGI::DrawSettings()
 {
-	ImGui::Text("Visual settings:");
+	ImGui::Checkbox("Enabled", &settings.Enabled);
 
-	ImGui::InputFloat("Effect radius", &settings.EffectRadius, 0.05f, 0.0f, "%.2f");
+	ImGui::InputScalar("Slices", ImGuiDataType_U32, &settings.SliceCount);
+	ImGui::InputScalar("Steps Per Slice", ImGuiDataType_U32, &settings.StepsPerSlice);
+
+	ImGui::InputFloat("Effect radius", &settings.EffectRadius, 10.f, 0.0f, "%.2f");
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("World (viewspace) effect radius\nExpected range: depends on the scene & requirements, anything from 0.01 to 1000+");
 
@@ -137,14 +140,19 @@ void ScreenSpaceGI::SetupResources()
 			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
 			{
-				texColor = new Texture2D(texDesc);
-				texColor->CreateSRV(srvDesc);
-
 				texColorMix = new Texture2D(texDesc);
 				texColorMix->CreateSRV(srvDesc);
 				texColorMix->CreateUAV(uavDesc);
 			}
 
+			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
+
+			{
+				texColor = new Texture2D(texDesc);
+				texColor->CreateSRV(srvDesc);
+			}
+
+			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
 			texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 
 			{
@@ -269,8 +277,12 @@ void ScreenSpaceGI::DrawDeferred()
 		return;
 
 	SetupResources();
-	UpdateBuffer();
 	GenerateHilbertLUT();
+
+	if (!settings.Enabled)
+		return;
+
+	UpdateBuffer();
 
 	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
@@ -279,20 +291,23 @@ void ScreenSpaceGI::DrawDeferred()
 	float dynamic_res[2] = { texGI->desc.Width * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale,
 		texGI->desc.Height * viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale };
 
-	ID3D11ShaderResourceView* srvs[3] = {
+	ID3D11ShaderResourceView* srvs[4] = {
 		renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV,
 		renderer->GetRuntimeData().renderTargets[normalSwap ? RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK_SWAP : RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK].SRV,
-		texHilbertLUT->srv.get()
+		texHilbertLUT->srv.get(),
+		texColor->srv.get()
 	};
 	ID3D11Buffer* cbs[1] = { ssgiCB->CB() };
-	ID3D11SamplerState* samplers[1] = { pointSampler };
+	ID3D11SamplerState* samplers[2] = { pointSampler, linearSampler };
 	ID3D11UnorderedAccessView* uavs[5] = { nullptr };
 
 	context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
 	context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
 
 	// copy color
-	context->CopyResource(texColor->resource.get(), renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP].texture);
+	context->CopySubresourceRegion(texColor->resource.get(), 0, 0, 0, 0,
+		renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP].texture, 0, nullptr);
+	context->GenerateMips(texColor->srv.get());
 
 	// prefilter depths
 	{
@@ -312,7 +327,7 @@ void ScreenSpaceGI::DrawDeferred()
 		srvs[0] = texWorkingDepth->srv.get();
 		uavs[0] = texGI->uav.get();
 
-		context->CSSetShaderResources(0, 3, srvs);
+		context->CSSetShaderResources(0, 4, srvs);
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 		context->CSSetShader(ssgiCompute, nullptr, 0);
 		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 32.0f), (uint32_t)std::ceil(dynamic_res[1] / 32.0f), 1);

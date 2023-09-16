@@ -195,7 +195,7 @@ void XeGTAO_DecodeVisibilityBentNormal(const uint packedValue, out lpfloat visib
 	visibility = decoded.w;
 }
 
-void XeGTAO_OutputWorkingTerm(const uint2 pixCoord, lpfloat visibility, lpfloat3 bentNormal, RWTexture2D<float4> outWorkingAOTerm)
+void XeGTAO_OutputWorkingTerm(const uint2 pixCoord, lpfloat visibility, lpfloat3 radiance, RWTexture2D<float4> outWorkingAOTerm)
 {
 	// 	visibility = saturate(visibility / lpfloat(XE_GTAO_OCCLUSION_TERM_SCALE));
 	// #ifdef XE_GTAO_COMPUTE_BENT_NORMALS
@@ -204,7 +204,7 @@ void XeGTAO_OutputWorkingTerm(const uint2 pixCoord, lpfloat visibility, lpfloat3
 	// 	outWorkingAOTerm[pixCoord] = uint(visibility * 255.0 + 0.5);
 	// #endif
 
-	outWorkingAOTerm[pixCoord] = float4(visibility.xxx, visibility);
+	outWorkingAOTerm[pixCoord] = float4(radiance, visibility);
 }
 
 // "Efficiently building a matrix to rotate one vector to another"
@@ -245,17 +245,21 @@ lpfloat3x3 XeGTAO_RotFromToMatrix(lpfloat3 from, lpfloat3 to)
 }
 
 // HBIL pp.29
-float IlIntegral(float nx, float ny, float cos_prev, float cos_new)
+float IlIntegral(float2 integral_factor, float cos_prev, float cos_new)
 {
-	float delta_angle = XeGTAO_FastACos(cos_prev) - XeGTAO_FastACos(cos_new);
+	float delta_angle = XeGTAO_FastACos(cos_new) - XeGTAO_FastACos(cos_prev);
 	float sin_prev = sqrt(1 - cos_prev * cos_prev);
 	float sin_new = sqrt(1 - cos_new * cos_new);
-	return 0.5 * nx * (delta_angle + sin_prev * cos_prev - sin_new * cos_new) +
-	       0.5 * ny * (sin_prev * sin_prev - sin_new * sin_new);
+	return max(0,
+		integral_factor.x * (delta_angle + sin_prev * cos_prev - sin_new * cos_new) + integral_factor.y * (cos_prev * cos_prev - cos_new * cos_new));
 }
 
-void XeGTAO_MainPass(const uint2 pixCoord, lpfloat sliceCount, lpfloat stepsPerSlice, const lpfloat2 localNoise, lpfloat3 viewspaceNormal, const GTAOConstants consts,
-	Texture2D<lpfloat> sourceViewspaceDepth, SamplerState depthSampler, RWTexture2D<float4> outWorkingAOTerm, RWTexture2D<unorm float> outWorkingEdges)
+void XeGTAO_MainPass(
+	const uint2 pixCoord,
+	lpfloat sliceCount, lpfloat stepsPerSlice, const lpfloat2 localNoise, lpfloat3 viewspaceNormal, const GTAOConstants consts,
+	Texture2D<lpfloat> sourceViewspaceDepth, Texture2D<float4> sourceRadiance,
+	SamplerState depthSampler, SamplerState radianceSampler,
+	RWTexture2D<float4> outWorkingAOTerm, RWTexture2D<unorm float> outWorkingEdges)
 {
 	float2 normalizedScreenPos = (pixCoord + 0.5.xx) * consts.ViewportPixelSize;
 
@@ -328,6 +332,9 @@ void XeGTAO_MainPass(const uint2 pixCoord, lpfloat sliceCount, lpfloat stepsPerS
 	const lpfloat falloffAdd = falloffFrom / (falloffRange) + (lpfloat)1.0;
 
 	lpfloat visibility = 0;
+
+	lpfloat3 radiance = 0;
+
 #ifdef XE_GTAO_COMPUTE_BENT_NORMALS
 	lpfloat3 bentNormal = 0;
 #else
@@ -424,6 +431,8 @@ void XeGTAO_MainPass(const uint2 pixCoord, lpfloat sliceCount, lpfloat stepsPerS
 			lpfloat horizonCos0 = lowHorizonCos0;  //-1;
 			lpfloat horizonCos1 = lowHorizonCos1;  //-1;
 
+			lpfloat3 sampleRadiance = 0;
+
 			for (lpfloat step = 0; step < stepsPerSlice; step++) {
 				// R1 sequence (http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/)
 				const lpfloat stepBaseNoise = lpfloat(slice + step * stepsPerSlice) * 0.6180339887498948482;  // <- this should unroll
@@ -450,90 +459,73 @@ void XeGTAO_MainPass(const uint2 pixCoord, lpfloat sliceCount, lpfloat stepsPerS
 				// artifacts due to them being pushed off the slice). Also use full precision for high res cases.
 				sampleOffset = round(sampleOffset) * (lpfloat2)consts.ViewportPixelSize;
 
-#ifdef XE_GTAO_SHOW_DEBUG_VIZ
-				int mipLevelU = (int)round(mipLevel);
-				float4 mipColor = saturate(float4(mipLevelU >= 3, mipLevelU >= 1 && mipLevelU <= 3, mipLevelU <= 1, 1.0));
-				if (all(sampleOffset == 0))
-					DebugDraw2DText(pixCoord, float4(1, 0, 0, 1), pixelTooCloseThreshold);
-				[branch] if (IsUnderCursorRange(pixCoord, int2(1, 1)))
+				// un-unroll the sides, but still [unroll]
+				[unroll] for (int sideSign = -1; sideSign <= 1; sideSign += 2)
 				{
-					//DebugDraw2DText( (normalizedScreenPos + sampleOffset) * consts.ViewportSize, mipColor, mipLevelU );
-					//DebugDraw2DText( (normalizedScreenPos + sampleOffset) * consts.ViewportSize, mipColor, (uint)slice );
-					//DebugDraw2DText( (normalizedScreenPos - sampleOffset) * consts.ViewportSize, mipColor, (uint)slice );
-					//DebugDraw2DText( (normalizedScreenPos - sampleOffset) * consts.ViewportSize, saturate( float4( mipLevelU>=3, mipLevelU>=1 && mipLevelU<=3, mipLevelU<=1, 1.0 ) ), mipLevelU );
-				}
-#endif
+					float2 sampleScreenPos = normalizedScreenPos + sampleOffset * sideSign;
+					float SZ = sourceViewspaceDepth.SampleLevel(depthSampler, sampleScreenPos, mipLevel).x;
+					float3 samplePos = XeGTAO_ComputeViewspacePosition(sampleScreenPos, SZ, consts);
 
-				float2 sampleScreenPos0 = normalizedScreenPos + sampleOffset;
-				float SZ0 = sourceViewspaceDepth.SampleLevel(depthSampler, sampleScreenPos0, mipLevel).x;
-				float3 samplePos0 = XeGTAO_ComputeViewspacePosition(sampleScreenPos0, SZ0, consts);
+					float3 sampleDelta = samplePos - float3(pixCenterPos);
+					lpfloat sampleDist = (lpfloat)length(sampleDelta);
 
-				float2 sampleScreenPos1 = normalizedScreenPos - sampleOffset;
-				float SZ1 = sourceViewspaceDepth.SampleLevel(depthSampler, sampleScreenPos1, mipLevel).x;
-				float3 samplePos1 = XeGTAO_ComputeViewspacePosition(sampleScreenPos1, SZ1, consts);
+					// approx lines 23, 24 from the paper, unrolled
+					lpfloat3 sampleHorizonVec = (lpfloat3)(sampleDelta / sampleDist);
 
-				float3 sampleDelta0 = (samplePos0 - float3(pixCenterPos));  // using lpfloat for sampleDelta causes precision issues
-				float3 sampleDelta1 = (samplePos1 - float3(pixCenterPos));  // using lpfloat for sampleDelta causes precision issues
-				lpfloat sampleDist0 = (lpfloat)length(sampleDelta0);
-				lpfloat sampleDist1 = (lpfloat)length(sampleDelta1);
-
-				// approx lines 23, 24 from the paper, unrolled
-				lpfloat3 sampleHorizonVec0 = (lpfloat3)(sampleDelta0 / sampleDist0);
-				lpfloat3 sampleHorizonVec1 = (lpfloat3)(sampleDelta1 / sampleDist1);
-
-				// any sample out of radius should be discarded - also use fallof range for smooth transitions; this is a modified idea from "4.3 Implementation details, Bounding the sampling area"
+					// any sample out of radius should be discarded - also use fallof range for smooth transitions; this is a modified idea from "4.3 Implementation details, Bounding the sampling area"
 #if XE_GTAO_USE_DEFAULT_CONSTANTS != 0 && XE_GTAO_DEFAULT_THIN_OBJECT_HEURISTIC == 0
-				lpfloat weight0 = saturate(sampleDist0 * falloffMul + falloffAdd);
-				lpfloat weight1 = saturate(sampleDist1 * falloffMul + falloffAdd);
+					lpfloat weight = saturate(sampleDist * falloffMul + falloffAdd);
 #else
-				// this is our own thickness heuristic that relies on sooner discarding samples behind the center
-				lpfloat falloffBase0 = length(lpfloat3(sampleDelta0.x, sampleDelta0.y, sampleDelta0.z * (1 + thinOccluderCompensation)));
-				lpfloat falloffBase1 = length(lpfloat3(sampleDelta1.x, sampleDelta1.y, sampleDelta1.z * (1 + thinOccluderCompensation)));
-				lpfloat weight0 = saturate(falloffBase0 * falloffMul + falloffAdd);
-				lpfloat weight1 = saturate(falloffBase1 * falloffMul + falloffAdd);
+					// this is our own thickness heuristic that relies on sooner discarding samples behind the center
+					lpfloat falloffBase = length(lpfloat3(sampleDelta) * lpfloat3(1, 1, 1 + thinOccluderCompensation));
+					lpfloat weight = saturate(falloffBase * falloffMul + falloffAdd);
 #endif
 
-				// sample horizon cos
-				lpfloat shc0 = (lpfloat)dot(sampleHorizonVec0, viewVec);
-				lpfloat shc1 = (lpfloat)dot(sampleHorizonVec1, viewVec);
+					// sample horizon cos
+					lpfloat shc = (lpfloat)dot(sampleHorizonVec, viewVec);
 
-				// discard unwanted samples
-				shc0 = lerp(lowHorizonCos0, shc0, weight0);  // this would be more correct but too expensive: cos(lerp( acos(lowHorizonCos0), acos(shc0), weight0 ));
-				shc1 = lerp(lowHorizonCos1, shc1, weight1);  // this would be more correct but too expensive: cos(lerp( acos(lowHorizonCos1), acos(shc1), weight1 ));
+					// discard unwanted samples
+					shc = lerp(sideSign == -1 ? lowHorizonCos1 : lowHorizonCos0, shc, weight);
 
-				// thickness heuristic - see "4.3 Implementation details, Height-field assumption considerations"
-#if 0    // (disabled, not used) this should match the paper
-                lpfloat newhorizonCos0 = max( horizonCos0, shc0 );
-                lpfloat newhorizonCos1 = max( horizonCos1, shc1 );
-                horizonCos0 = (horizonCos0 > shc0)?( lerp( newhorizonCos0, shc0, thinOccluderCompensation ) ):( newhorizonCos0 );
-                horizonCos1 = (horizonCos1 > shc1)?( lerp( newhorizonCos1, shc1, thinOccluderCompensation ) ):( newhorizonCos1 );
-#elif 0  // (disabled, not used) this is slightly different from the paper but cheaper and provides very similar results
-				horizonCos0 = lerp(max(horizonCos0, shc0), shc0, thinOccluderCompensation);
-				horizonCos1 = lerp(max(horizonCos1, shc1), shc1, thinOccluderCompensation);
-#else  // this is a version where thicknessHeuristic is completely disabled
-				horizonCos0 = max(horizonCos0, shc0);
-				horizonCos1 = max(horizonCos1, shc1);
-#endif
+					lpfloat horizonCos = sideSign == -1 ? horizonCos1 : horizonCos0;
+					// 					// thickness heuristic - see "4.3 Implementation details, Height-field assumption considerations"
+					// #if 0    // (disabled, not used) this should match the paper
+					//                 lpfloat newhorizonCos = max( horizonCos, shc );
 
-#ifdef XE_GTAO_SHOW_DEBUG_VIZ
-				[branch] if (IsUnderCursorRange(pixCoord, int2(1, 1)))
-				{
-					float3 WS_samplePos0 = mul(g_globals.ViewInv, float4(samplePos0, 1)).xyz;
-					float3 WS_samplePos1 = mul(g_globals.ViewInv, float4(samplePos1, 1)).xyz;
-					float3 WS_sampleHorizonVec0 = mul((float3x3)g_globals.ViewInv, sampleHorizonVec0).xyz;
-					float3 WS_sampleHorizonVec1 = mul((float3x3)g_globals.ViewInv, sampleHorizonVec1).xyz;
-					// DebugDraw3DSphere( WS_samplePos0, effectRadius * 0.02, DbgGetSliceColor(slice, sliceCount, false) );
-					// DebugDraw3DSphere( WS_samplePos1, effectRadius * 0.02, DbgGetSliceColor(slice, sliceCount, true) );
-					DebugDraw3DSphere(WS_samplePos0, effectRadius * 0.02, mipColor);
-					DebugDraw3DSphere(WS_samplePos1, effectRadius * 0.02, mipColor);
-					// DebugDraw3DArrow( WS_samplePos0, WS_samplePos0 - WS_sampleHorizonVec0, 0.002, float4(1, 0, 0, 1 ) );
-					// DebugDraw3DArrow( WS_samplePos1, WS_samplePos1 - WS_sampleHorizonVec1, 0.002, float4(1, 0, 0, 1 ) );
-					// DebugDraw3DText( WS_samplePos0, float2(0,  0), float4( 1, 0, 0, 1), weight0 );
-					// DebugDraw3DText( WS_samplePos1, float2(0,  0), float4( 1, 0, 0, 1), weight1 );
+					//                 horizonCos = (horizonCos > shc)? lerp( newhorizonCos, shc, thinOccluderCompensation ) :newhorizonCos ;
+					// #elif 0  // (disabled, not used) this is slightly different from the paper but cheaper and provides very similar results
+					// 				horizonCos = lerp(max(horizonCos, shc), shc, thinOccluderCompensation);
+					// #else  // this is a version where thicknessHeuristic is completely disabled
+					horizonCos = max(horizonCos, shc);
+					// #endif
 
-					// DebugDraw2DText( float2( 500, 94+(step+slice*3)*12 ), float4( 0, 1, 0, 1 ), float4( projectedNormalVecLength, 0, horizonCos0, horizonCos1 ) );
+					// HBIL (unused)
+					// if (shc > horizonCos) {
+					// 	lpfloat3 newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+					// 	// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;
+
+					// 	float angle_prev = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(horizonCos);
+					// 	float angle_curr = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(shc);
+					// 	newSampleRadiance *= IlIntegral(0.5 * float2(dot(directionVec.xy, viewspaceNormal.xy) * sideSign, -viewspaceNormal.z),
+					// 		cos(angle_prev), cos(angle_curr));
+					// 	// newSampleRadiance *= ComputeHorizonContribution(viewVec, directionVec, viewspaceNormal, XeGTAO_FastACos(horizonCos), XeGTAO_FastACos(shc));
+
+					// 	// depth filtering. HBIL pp.38
+					// 	float t = smoothstep(0, 1, dot(viewspaceNormal, sampleDelta) / sampleDist);
+					// 	// float t = dot(viewspaceNormal, sampleDelta) / sampleDist > -EPS;
+					// 	// float t = 1;
+					// 	sampleRadiance = lerp(sampleRadiance, newSampleRadiance, t);
+
+					// 	radiance += max(0, sampleRadiance);
+
+					// 	horizonCos = shc;
+					// }
+
+					if (sideSign == -1)
+						horizonCos1 = horizonCos;
+					else
+						horizonCos0 = horizonCos;
 				}
-#endif
 			}
 
 #if 1  // I can't figure out the slight overdarkening on high slopes, so I'm adding this fudge - in the training set, 0.05 is close (PSNR 21.34) to disabled (PSNR 21.45)
@@ -562,6 +554,8 @@ void XeGTAO_MainPass(const uint2 pixCoord, lpfloat sliceCount, lpfloat stepsPerS
 #endif
 		}
 		visibility /= (lpfloat)sliceCount;
+		radiance /= (lpfloat)sliceCount;
+
 		visibility = pow(visibility, (lpfloat)consts.FinalValuePower);
 		visibility = max((lpfloat)0.03, visibility);  // disallow total occlusion (which wouldn't make any sense anyhow since pixel is visible but also helps with packing bent normals)
 
@@ -570,17 +564,7 @@ void XeGTAO_MainPass(const uint2 pixCoord, lpfloat sliceCount, lpfloat stepsPerS
 #endif
 	}
 
-#if defined(XE_GTAO_SHOW_DEBUG_VIZ) && defined(XE_GTAO_COMPUTE_BENT_NORMALS)
-	[branch] if (IsUnderCursorRange(pixCoord, int2(1, 1)))
-	{
-		float3 dbgWorldViewNorm = mul((float3x3)g_globals.ViewInv, viewspaceNormal).xyz;
-		float3 dbgWorldBentNorm = mul((float3x3)g_globals.ViewInv, bentNormal).xyz;
-		DebugDraw3DSphereCone(dbgWorldPos, dbgWorldViewNorm, 0.3, VA_PI * 0.5 - acos(saturate(visibility)), float4(0.2, 0.2, 0.2, 0.5));
-		DebugDraw3DSphereCone(dbgWorldPos, dbgWorldBentNorm, 0.3, VA_PI * 0.5 - acos(saturate(visibility)), float4(0.0, 1.0, 0.0, 0.7));
-	}
-#endif
-
-	XeGTAO_OutputWorkingTerm(pixCoord, visibility, bentNormal, outWorkingAOTerm);
+	XeGTAO_OutputWorkingTerm(pixCoord, visibility, radiance, outWorkingAOTerm);
 }
 
 // weighted average depth filter

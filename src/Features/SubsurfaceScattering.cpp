@@ -3,6 +3,21 @@
 
 #include "State.h"
 
+void SubsurfaceScattering::DataLoaded()
+{
+	if (!REL::Module::IsVR()) {
+		if (auto bEnableImprovedSnow = RE::INIPrefSettingCollection::GetSingleton()->GetSetting("bEnableImprovedSnow:Display"); bEnableImprovedSnow) {
+			if (!bEnableImprovedSnow->data.b) {
+				logger::info("[SSS] Changing bEnableImprovedSnow from {} to {} to support Subsurface Scattering", bEnableImprovedSnow->data.b, true);
+				bEnableImprovedSnow->data.b = true;
+			}
+		}
+	} else {  // VR does not bEnableImprovedSnow but the value is at 143423e18 and is checked by the engine.
+		bool* bEnableImprovedSnow = reinterpret_cast<bool*>(REL::Offset(0x3423e18).address());
+		*bEnableImprovedSnow = true;
+		logger::info("[SSS] Enabling bEnableImprovedSnow to support Subsurface Scattering");
+	}
+}
 void SubsurfaceScattering::DrawSettings()
 {
 }
@@ -171,7 +186,6 @@ void SubsurfaceScattering::DrawDeferred()
 			data.RcpBufferDim.y = 1.0f / (float)deferredTexture->desc.Height;
 
 			data.FrameCount = viewport->uiFrameCount * (Util::UnkOuterStruct::GetSingleton()->GetTAA() || State::GetSingleton()->upscalerLoaded);
-
 
 			data.DynamicRes.x = viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale;
 			data.DynamicRes.y = viewport->GetRuntimeData().dynamicResolutionCurrentHeightScale;

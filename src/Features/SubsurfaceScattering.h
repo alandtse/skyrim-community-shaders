@@ -48,6 +48,7 @@ public:
 	virtual void SetupResources();
 	virtual inline void Reset() {}
 
+	virtual void DataLoaded();
 	virtual void DrawSettings();
 
 	virtual void Draw(const RE::BSShader* shader, const uint32_t descriptor);

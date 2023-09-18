@@ -21,8 +21,8 @@ void ScreenSpaceGI::DrawSettings()
 {
 	ImGui::Checkbox("Enabled", &settings.Enabled);
 
-	ImGui::InputScalar("Slices", ImGuiDataType_U32, &settings.SliceCount);
-	ImGui::InputScalar("Steps Per Slice", ImGuiDataType_U32, &settings.StepsPerSlice);
+	ImGui::SliderInt("Slices", (int*)&settings.SliceCount, 1, 1000);
+	ImGui::SliderInt("Steps Per Slice", (int*)&settings.StepsPerSlice, 1, 1000);
 
 	ImGui::InputFloat("Effect radius", &settings.EffectRadius, 10.f, 0.0f, "%.2f");
 	if (ImGui::IsItemHovered())

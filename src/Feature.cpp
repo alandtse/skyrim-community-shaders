@@ -89,7 +89,8 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		GrassCollision::GetSingleton(),
 		ExtendedMaterials::GetSingleton(),
 		LightLimitFix::GetSingleton(),
-		SubsurfaceScattering::GetSingleton()
+		SubsurfaceScattering::GetSingleton(),
+		ScreenSpaceGI::GetSingleton()
 	};
 
 	return REL::Module::IsVR() ? featuresVR : features;

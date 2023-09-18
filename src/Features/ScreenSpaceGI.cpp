@@ -225,7 +225,8 @@ void ScreenSpaceGI::UpdateBuffer()
 	auto viewport = RE::BSGraphics::State::GetSingleton();
 
 	auto state = RE::BSGraphics::RendererShadowState::GetSingleton();
-	auto projMat = state->GetRuntimeData().cameraData.getEye().projMat;
+	auto projMat = (!REL::Module::IsVR()) ? state->GetRuntimeData().cameraData.getEye().projMat :
+	                                        state->GetVRRuntimeData().cameraData.getEye().projMat;
 
 	SSGICB ssgi_cb_contents = {
 		.ViewportSize = { (int32_t)(texGI->desc.Width * viewport->GetRuntimeData().dynamicResolutionCurrentWidthScale),

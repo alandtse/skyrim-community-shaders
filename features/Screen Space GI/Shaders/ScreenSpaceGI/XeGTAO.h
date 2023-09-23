@@ -96,7 +96,10 @@ namespace XeGTAO
 		float DepthMIPSamplingOffset;
 		int NoiseIndex;  // frameIndex % 64 if using TAA or 0 otherwise
 
-		Vector3 Padding;
+		// bitmask
+		float Thickness;
+
+		Vector2 Padding;
 	};
 
 	// This is used only for the development (ray traced ground truth).
@@ -136,6 +139,8 @@ namespace XeGTAO
 #define XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET (3.30f)  // main trade-off between performance (memory bandwidth) and quality (temporal stability is the first affected, thin objects next)
 
 #define XE_GTAO_OCCLUSION_TERM_SCALE (1.5f)  // for packing in UNORM (because raw, pre-denoised occlusion term can overshoot 1 but will later average out to 1)
+
+#define BITMASK_NUM_BITS 32
 
 // From https://www.shadertoy.com/view/3tB3z3 - except we're using R2 here
 #define XE_HILBERT_LEVEL 6U

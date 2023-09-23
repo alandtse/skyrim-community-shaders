@@ -42,7 +42,10 @@ struct ScreenSpaceGI : Feature
 		float DepthMIPSamplingOffset;
 		int NoiseIndex;  // frameIndex % 64 if using TAA or 0 otherwise
 
-		Vector3 Padding;
+		// bitmask
+		float Thickness;
+
+		Vector2 Padding;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -52,6 +55,7 @@ struct ScreenSpaceGI : Feature
 	ID3D11ComputeShader* hilbertLutCompute = nullptr;
 	ID3D11ComputeShader* prefilterDepthsCompute = nullptr;
 	ID3D11ComputeShader* ssgiCompute = nullptr;
+	ID3D11ComputeShader* ssgiBitmaskCompute = nullptr;
 	ID3D11ComputeShader* denoiseCompute = nullptr;
 	ID3D11ComputeShader* denoiseFinalCompute = nullptr;
 	ID3D11ComputeShader* mixCompute = nullptr;
@@ -75,11 +79,10 @@ struct ScreenSpaceGI : Feature
 	struct Settings
 	{
 		bool Enabled = true;
+		bool UseBitmask = true;
 
 		uint32_t SliceCount = 2;
 		uint32_t StepsPerSlice = 2;
-
-		uint32_t DenoisePasses = 0;
 
 		// visual
 
@@ -92,7 +95,10 @@ struct ScreenSpaceGI : Feature
 		float ThinOccluderCompensation = 0.f;
 		float DepthMIPSamplingOffset = 3.3f;
 
+		float Thickness = 20.f;
+
 		// denoise
+		uint32_t DenoisePasses = 0;
 
 	} settings;
 

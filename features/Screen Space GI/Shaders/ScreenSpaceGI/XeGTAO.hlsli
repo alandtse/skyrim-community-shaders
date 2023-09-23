@@ -244,6 +244,20 @@ lpfloat3x3 XeGTAO_RotFromToMatrix(lpfloat3 from, lpfloat3 to)
 	return mtx;
 }
 
+lpfloat3 UnpackNormal(float2 enc)
+{
+	float2 fenc = enc * 4 - 2;
+	float f = dot(fenc, fenc);
+	float g = sqrt(1 - f * 0.25);
+	float3 normal = normalize(float3(fenc * g, 1 - f * 0.5)) * float3(1, 1, -1);
+
+#if 0  // compute worldspace to viewspace here if your engine stores normals in worldspace; if generating normals from depth here, they're already in viewspace
+    normal = mul( (float3x3)g_globals.View, normal );
+#endif
+
+	return (lpfloat3)normal;
+}
+
 // HBIL pp.29
 float IlIntegral(float2 integral_factor, float cos_prev, float cos_new)
 {
@@ -257,7 +271,7 @@ float IlIntegral(float2 integral_factor, float cos_prev, float cos_new)
 void XeGTAO_MainPass(
 	const uint2 pixCoord,
 	lpfloat sliceCount, lpfloat stepsPerSlice, const lpfloat2 localNoise, lpfloat3 viewspaceNormal, const GTAOConstants consts,
-	Texture2D<lpfloat> sourceViewspaceDepth, Texture2D<float4> sourceRadiance,
+	Texture2D<lpfloat> sourceViewspaceDepth, Texture2D<float4> sourceNormal, Texture2D<float4> sourceRadiance,
 	SamplerState depthSampler, SamplerState radianceSampler,
 	RWTexture2D<float4> outWorkingAOTerm, RWTexture2D<unorm float> outWorkingEdges)
 {
@@ -348,7 +362,7 @@ void XeGTAO_MainPass(
 	// see "Algorithm 1" in https://www.activision.com/cdn/research/Practical_Real_Time_Strategies_for_Accurate_Indirect_Occlusion_NEW%20VERSION_COLOR.pdf
 	{
 		const lpfloat noiseSlice = (lpfloat)localNoise.x;
-		const lpfloat noiseSample = (lpfloat)localNoise.y;
+		const lpfloat noiseStep = (lpfloat)localNoise.y;
 
 		// quality settings / tweaks / hacks
 		const lpfloat pixelTooCloseThreshold = 1.3;  // if the offset is under approx pixel size (pixelTooCloseThreshold), push it out to the minimum distance
@@ -423,6 +437,9 @@ void XeGTAO_MainPass(
 			// line 15 from the paper
 			lpfloat n = signNorm * XeGTAO_FastACos(cosNorm);
 
+#if defined(SSGI_USE_BITMASK)
+			uint bitmask = 0;
+#else
 			// this is a lower weight target; not using -1 as in the original paper because it is under horizon, so a 'weight' has different meaning based on the normal
 			const lpfloat lowHorizonCos0 = cos(n + XE_GTAO_PI_HALF);
 			const lpfloat lowHorizonCos1 = cos(n - XE_GTAO_PI_HALF);
@@ -432,11 +449,14 @@ void XeGTAO_MainPass(
 			lpfloat horizonCos1 = lowHorizonCos1;  //-1;
 
 			lpfloat3 sampleRadiance = 0;
+#endif  // defined(SSGI_USE_BITMASK)
+
+			bool2 stopside = false;
 
 			for (lpfloat step = 0; step < stepsPerSlice; step++) {
 				// R1 sequence (http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/)
 				const lpfloat stepBaseNoise = lpfloat(slice + step * stepsPerSlice) * 0.6180339887498948482;  // <- this should unroll
-				lpfloat stepNoise = frac(noiseSample + stepBaseNoise);
+				lpfloat stepNoise = frac(noiseStep + stepBaseNoise);
 
 				// approx line 20 from the paper, with added noise
 				lpfloat s = (step + stepNoise) / (stepsPerSlice);  // + (lpfloat2)1e-6f);
@@ -462,7 +482,16 @@ void XeGTAO_MainPass(
 				// un-unroll the sides, but still [unroll]
 				[unroll] for (int sideSign = -1; sideSign <= 1; sideSign += 2)
 				{
+					if (any(stopside && bool2(sideSign == -1, sideSign == 1)))
+						continue;
+
 					float2 sampleScreenPos = normalizedScreenPos + sampleOffset * sideSign;
+
+					if (any(sampleScreenPos > 1.0) || any(sampleScreenPos < 0.0)) {
+						stopside = stopside || bool2(sideSign == -1, sideSign == 1);
+						continue;
+					}
+
 					float SZ = sourceViewspaceDepth.SampleLevel(depthSampler, sampleScreenPos, mipLevel).x;
 					float3 samplePos = XeGTAO_ComputeViewspacePosition(sampleScreenPos, SZ, consts);
 
@@ -472,14 +501,37 @@ void XeGTAO_MainPass(
 					// approx lines 23, 24 from the paper, unrolled
 					lpfloat3 sampleHorizonVec = (lpfloat3)(sampleDelta / sampleDist);
 
-					// any sample out of radius should be discarded - also use fallof range for smooth transitions; this is a modified idea from "4.3 Implementation details, Bounding the sampling area"
-#if XE_GTAO_USE_DEFAULT_CONSTANTS != 0 && XE_GTAO_DEFAULT_THIN_OBJECT_HEURISTIC == 0
-					lpfloat weight = saturate(sampleDist * falloffMul + falloffAdd);
+#if defined(SSGI_USE_BITMASK)
+					float3 sampleBackPos = samplePos - viewVec * consts.Thickness;
+					float3 sampleBackHorizonVec = normalize(sampleBackPos - pixCenterPos);
+
+					float angleFront = XeGTAO_FastACos(dot(sampleHorizonVec, viewVec));
+					float angleBack = XeGTAO_FastACos(dot(sampleBackHorizonVec, viewVec));
+					float2 angleRange = sideSign == -1 ? float2(angleFront, angleBack) : -float2(angleBack, angleFront);
+					angleRange = saturate((angleRange + n) / XE_GTAO_PI + .5);
+					// angleRange = clamp(angleRange, -XE_GTAO_PI_HALF, XE_GTAO_PI_HALF);
+
+					uint2 bitsRange = uint2(floor(angleRange.x * BITMASK_NUM_BITS), round((angleRange.y - angleRange.x) * BITMASK_NUM_BITS));
+					uint maskedBits = ((1 << bitsRange.y) - 1) << bitsRange.x;
+
+					// IL
+					float3 sampleNormal = UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy);
+					float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+					sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
+					sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
+					sampleRadiance *= dot(sampleNormal, sampleHorizonVec) < 0;
+					radiance += sampleRadiance;
+
+					bitmask |= maskedBits;
 #else
+					// any sample out of radius should be discarded - also use fallof range for smooth transitions; this is a modified idea from "4.3 Implementation details, Bounding the sampling area"
+#	if XE_GTAO_USE_DEFAULT_CONSTANTS != 0 && XE_GTAO_DEFAULT_THIN_OBJECT_HEURISTIC == 0
+					lpfloat weight = saturate(sampleDist * falloffMul + falloffAdd);
+#	else
 					// this is our own thickness heuristic that relies on sooner discarding samples behind the center
 					lpfloat falloffBase = length(lpfloat3(sampleDelta) * lpfloat3(1, 1, 1 + thinOccluderCompensation));
 					lpfloat weight = saturate(falloffBase * falloffMul + falloffAdd);
-#endif
+#	endif
 
 					// sample horizon cos
 					lpfloat shc = (lpfloat)dot(sampleHorizonVec, viewVec);
@@ -511,8 +563,8 @@ void XeGTAO_MainPass(
 					// 	// newSampleRadiance *= ComputeHorizonContribution(viewVec, directionVec, viewspaceNormal, XeGTAO_FastACos(horizonCos), XeGTAO_FastACos(shc));
 
 					// 	// depth filtering. HBIL pp.38
-					// 	float t = smoothstep(0, 1, dot(viewspaceNormal, sampleDelta) / sampleDist);
-					// 	// float t = dot(viewspaceNormal, sampleDelta) / sampleDist > -EPS;
+					// 	float t = smoothstep(0, 1, dot(viewspaceNormal, sampleHorizonVec));
+					// 	// float t = dot(viewspaceNormal, sampleHorizonVec) > -EPS;
 					// 	// float t = 1;
 					// 	sampleRadiance = lerp(sampleRadiance, newSampleRadiance, t);
 
@@ -525,33 +577,38 @@ void XeGTAO_MainPass(
 						horizonCos1 = horizonCos;
 					else
 						horizonCos0 = horizonCos;
+#endif  // defined(SSGI_USE_BITMASK)
 				}
 			}
 
-#if 1  // I can't figure out the slight overdarkening on high slopes, so I'm adding this fudge - in the training set, 0.05 is close (PSNR 21.34) to disabled (PSNR 21.45)
+#if defined(SSGI_USE_BITMASK)
+			visibility += 1.0 - countbits(bitmask) / float(BITMASK_NUM_BITS);
+#else
+#	if 1  // I can't figure out the slight overdarkening on high slopes, so I'm adding this fudge - in the training set, 0.05 is close (PSNR 21.34) to disabled (PSNR 21.45)
 			projectedNormalVecLength = lerp(projectedNormalVecLength, 1, 0.05);
-#endif
+#	endif
 
 			// line ~27, unrolled
 			lpfloat h0 = -XeGTAO_FastACos((lpfloat)horizonCos1);
 			lpfloat h1 = XeGTAO_FastACos((lpfloat)horizonCos0);
-#if 0  // we can skip clamping for a tiny little bit more performance
+#	if 0  // we can skip clamping for a tiny little bit more performance
             h0 = n + clamp( h0-n, (lpfloat)-XE_GTAO_PI_HALF, (lpfloat)XE_GTAO_PI_HALF );
             h1 = n + clamp( h1-n, (lpfloat)-XE_GTAO_PI_HALF, (lpfloat)XE_GTAO_PI_HALF );
-#endif
+#	endif
 			lpfloat iarc0 = ((lpfloat)cosNorm + (lpfloat)2 * (lpfloat)h0 * (lpfloat)sin(n) - (lpfloat)cos((lpfloat)2 * (lpfloat)h0 - n)) / (lpfloat)4;
 			lpfloat iarc1 = ((lpfloat)cosNorm + (lpfloat)2 * (lpfloat)h1 * (lpfloat)sin(n) - (lpfloat)cos((lpfloat)2 * (lpfloat)h1 - n)) / (lpfloat)4;
 			lpfloat localVisibility = (lpfloat)projectedNormalVecLength * (lpfloat)(iarc0 + iarc1);
 			visibility += localVisibility;
 
-#ifdef XE_GTAO_COMPUTE_BENT_NORMALS
+#	ifdef XE_GTAO_COMPUTE_BENT_NORMALS
 			// see "Algorithm 2 Extension that computes bent normals b."
 			lpfloat t0 = (6 * sin(h0 - n) - sin(3 * h0 - n) + 6 * sin(h1 - n) - sin(3 * h1 - n) + 16 * sin(n) - 3 * (sin(h0 + n) + sin(h1 + n))) / 12;
 			lpfloat t1 = (-cos(3 * h0 - n) - cos(3 * h1 - n) + 8 * cos(n) - 3 * (cos(h0 + n) + cos(h1 + n))) / 12;
 			lpfloat3 localBentNormal = lpfloat3(directionVec.x * (lpfloat)t0, directionVec.y * (lpfloat)t0, -lpfloat(t1));
 			localBentNormal = (lpfloat3)mul(XeGTAO_RotFromToMatrix(lpfloat3(0, 0, -1), viewVec), localBentNormal) * projectedNormalVecLength;
 			bentNormal += localBentNormal;
-#endif
+#	endif
+#endif  // defined(SSGI_USE_BITMASK)
 		}
 		visibility /= (lpfloat)sliceCount;
 		radiance /= (lpfloat)sliceCount;

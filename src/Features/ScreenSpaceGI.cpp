@@ -20,6 +20,7 @@ public:
 void ScreenSpaceGI::DrawSettings()
 {
 	ImGui::Checkbox("Enabled", &settings.Enabled);
+	ImGui::Checkbox("Use Bitmask", &settings.UseBitmask);
 
 	ImGui::SliderInt("Slices", (int*)&settings.SliceCount, 1, 20);
 	ImGui::SliderInt("Steps Per Slice", (int*)&settings.StepsPerSlice, 1, 10);
@@ -30,27 +31,27 @@ void ScreenSpaceGI::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("World (viewspace) effect radius\nExpected range: depends on the scene & requirements, anything from 0.01 to 1000+");
 
-	if (ImGui::CollapsingHeader("Auto-tuned settings (heuristics)", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::InputFloat("Falloff range", &settings.EffectFalloffRange, 0.05f, 0.0f, "%.2f");
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Gently reduce sample impact as it gets out of 'Effect radius' bounds\nExpected range: [0.0, 1.0].");
+	ImGui::InputFloat("Falloff range", &settings.EffectFalloffRange, 0.05f, 0.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Gently reduce sample impact as it gets out of 'Effect radius' bounds\nExpected range: [0.0, 1.0].");
 
-		ImGui::InputFloat("Sample distribution power", &settings.SampleDistributionPower, 0.05f, 0.0f, "%.2f");
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Make samples on a slice equally distributed (1.0) or focus more towards the center (>1.0)\nExpected range: [1.0, 3.0].");
+	ImGui::InputFloat("Sample distribution power", &settings.SampleDistributionPower, 0.05f, 0.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Make samples on a slice equally distributed (1.0) or focus more towards the center (>1.0)\nExpected range: [1.0, 3.0].");
 
-		ImGui::InputFloat("Thin occluder compensation", &settings.ThinOccluderCompensation, 0.05f, 0.0f, "%.2f");
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data\nExpected range: [0.0, 0.7]");
+	ImGui::InputFloat("Thin occluder compensation", &settings.ThinOccluderCompensation, 0.05f, 0.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data\nExpected range: [0.0, 0.7]");
 
-		ImGui::InputFloat("Final power", &settings.FinalValuePower, 0.05f, 0.0f, "%.2f");
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Applies power function to the final value: occlusion = pow( occlusion, finalPower )\nExpected range: [0.5, 5.0]");
+	ImGui::InputFloat("Final power", &settings.FinalValuePower, 0.05f, 0.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Applies power function to the final value: occlusion = pow( occlusion, finalPower )\nExpected range: [0.5, 5.0]");
 
-		ImGui::InputFloat("Depth MIP sampling offset", &settings.DepthMIPSamplingOffset, 0.05f, 0.0f, "%.2f");
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability\nExpected range: [2.0, 6.0]");
-	}
+	ImGui::InputFloat("Depth MIP sampling offset", &settings.DepthMIPSamplingOffset, 0.05f, 0.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability\nExpected range: [2.0, 6.0]");
+
+	ImGui::InputFloat("Thickness", &settings.Thickness, 10.f, 0.0f, "%.2f");
 
 	if (ImGui::CollapsingHeader("Debug View")) {
 		ImGui::BulletText("texColor0");
@@ -72,22 +73,20 @@ void ScreenSpaceGI::DrawSettings()
 
 void ScreenSpaceGI::ClearComputeShader()
 {
-	if (hilbertLutCompute)
-		hilbertLutCompute->Release();
-	hilbertLutCompute = nullptr;
+#define CLEARCOMP(shader)  \
+	if (shader)            \
+		shader->Release(); \
+	shader = nullptr;
+
+	CLEARCOMP(hilbertLutCompute)
 	hilbertLUTGenFlag = true;
 
-	if (prefilterDepthsCompute)
-		prefilterDepthsCompute->Release();
-	prefilterDepthsCompute = nullptr;
-
-	if (ssgiCompute)
-		ssgiCompute->Release();
-	ssgiCompute = nullptr;
-
-	if (mixCompute)
-		mixCompute->Release();
-	mixCompute = nullptr;
+	CLEARCOMP(prefilterDepthsCompute)
+	CLEARCOMP(ssgiCompute)
+	CLEARCOMP(ssgiBitmaskCompute)
+	CLEARCOMP(denoiseCompute)
+	CLEARCOMP(denoiseFinalCompute)
+	CLEARCOMP(mixCompute)
 }
 
 void ScreenSpaceGI::SetupResources()
@@ -105,6 +104,8 @@ void ScreenSpaceGI::SetupResources()
 		prefilterDepthsCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSPrefilterDepths16x16");
 	if (!ssgiCompute)
 		ssgiCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSGTAO");
+	if (!ssgiBitmaskCompute)
+		ssgiBitmaskCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "SSGI_USE_BITMASK", "" } }, "cs_5_0", "CSGTAO");
 	if (!denoiseCompute)
 		denoiseCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSDenoisePass");
 	if (!denoiseFinalCompute)
@@ -273,6 +274,8 @@ void ScreenSpaceGI::UpdateBuffer()
 		.ThinOccluderCompensation = settings.ThinOccluderCompensation,
 		.DepthMIPSamplingOffset = settings.DepthMIPSamplingOffset,
 		.NoiseIndex = (int32_t)viewport->uiFrameCount,
+
+		.Thickness = settings.Thickness
 	};
 	ssgi_cb_contents.ViewportPixelSize = { 1.f / ssgi_cb_contents.ViewportSize[0], 1.f / ssgi_cb_contents.ViewportSize[1] };
 	ssgi_cb_contents.NDCToViewMul_x_PixelSize = { ssgi_cb_contents.NDCToViewMul.x * ssgi_cb_contents.ViewportPixelSize.x,
@@ -292,7 +295,7 @@ void ScreenSpaceGI::Draw(const RE::BSShader* shader, const uint32_t)
 		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
 		ID3D11RenderTargetView* rtvs[2];
-		context->OMGetRenderTargets(2, rtvs, nullptr);
+		context->OMGetRenderTargets(3, rtvs, nullptr);
 		normalSwap = rtvs[2] == renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK_SWAP].RTV;
 	}
 }
@@ -356,7 +359,7 @@ void ScreenSpaceGI::DrawDeferred()
 
 		context->CSSetShaderResources(0, 4, srvs);
 		context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
-		context->CSSetShader(ssgiCompute, nullptr, 0);
+		context->CSSetShader(settings.UseBitmask ? ssgiBitmaskCompute : ssgiCompute, nullptr, 0);
 		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 32.0f), (uint32_t)std::ceil(dynamic_res[1] / 32.0f), 1);
 	}
 

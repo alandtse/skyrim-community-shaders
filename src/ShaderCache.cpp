@@ -1402,7 +1402,6 @@ namespace SIE
 			shaders.clear();
 		}
 
-		ssource.request_stop();
 		compilationSet.Clear();
 		std::unique_lock lock{ mapMutex };
 		shaderMap.clear();
@@ -1782,7 +1781,7 @@ namespace SIE
 	{
 		auto rate = completedTasks / totalMs;
 		auto remaining = totalTasks - completedTasks - failedTasks;
-		return remaining / rate;
+		return std::max(remaining / rate, 0.0);
 	}
 
 	std::string CompilationSet::GetStatsString(bool a_timeOnly)

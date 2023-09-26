@@ -20,7 +20,10 @@ public:
 void ScreenSpaceGI::DrawSettings()
 {
 	ImGui::Checkbox("Enabled", &settings.Enabled);
+	ImGui::Checkbox("Enable GI", &settings.EnableGI);
 	ImGui::Checkbox("Use Bitmask", &settings.UseBitmask);
+
+	ImGui::SliderInt("Debug View", (int*)&settings.DebugView, 0, 3);
 
 	ImGui::SliderInt("Slices", (int*)&settings.SliceCount, 1, 20);
 	ImGui::SliderInt("Steps Per Slice", (int*)&settings.StepsPerSlice, 1, 10);
@@ -242,6 +245,8 @@ void ScreenSpaceGI::GenerateHilbertLUT()
 		ID3D11UnorderedAccessView* uav = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 		context->CSSetShader(nullptr, nullptr, 0);
+
+		hilbertLUTGenFlag = false;
 	}
 }
 
@@ -275,11 +280,17 @@ void ScreenSpaceGI::UpdateBuffer()
 		.DepthMIPSamplingOffset = settings.DepthMIPSamplingOffset,
 		.NoiseIndex = (int32_t)viewport->uiFrameCount,
 
-		.Thickness = settings.Thickness
+		.Thickness = settings.Thickness,
+
+		.EnableGI = settings.EnableGI,
+
+		.DebugView = settings.DebugView
 	};
 	ssgi_cb_contents.ViewportPixelSize = { 1.f / ssgi_cb_contents.ViewportSize[0], 1.f / ssgi_cb_contents.ViewportSize[1] };
-	ssgi_cb_contents.NDCToViewMul_x_PixelSize = { ssgi_cb_contents.NDCToViewMul.x * ssgi_cb_contents.ViewportPixelSize.x,
-		ssgi_cb_contents.NDCToViewMul.y * ssgi_cb_contents.ViewportPixelSize.y };
+	ssgi_cb_contents.NDCToViewMul_x_PixelSize = {
+		ssgi_cb_contents.NDCToViewMul.x * ssgi_cb_contents.ViewportPixelSize.x,
+		ssgi_cb_contents.NDCToViewMul.y * ssgi_cb_contents.ViewportPixelSize.y
+	};
 
 	ssgiCB->Update(ssgi_cb_contents);
 }
@@ -305,11 +316,11 @@ void ScreenSpaceGI::DrawDeferred()
 	if (!loaded)  // need abstraction
 		return;
 
-	SetupResources();
-	GenerateHilbertLUT();
-
 	if (!settings.Enabled)
 		return;
+
+	SetupResources();
+	GenerateHilbertLUT();
 
 	UpdateBuffer();
 

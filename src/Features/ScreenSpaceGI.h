@@ -45,7 +45,10 @@ struct ScreenSpaceGI : Feature
 		// bitmask
 		float Thickness;
 
-		Vector2 Padding;
+		uint32_t EnableGI;
+
+		// debug
+		uint32_t DebugView;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -79,7 +82,9 @@ struct ScreenSpaceGI : Feature
 	struct Settings
 	{
 		bool Enabled = true;
+		bool EnableGI = true;
 		bool UseBitmask = true;
+		uint32_t DebugView = 0;
 
 		uint32_t SliceCount = 2;
 		uint32_t StepsPerSlice = 2;

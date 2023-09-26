@@ -113,6 +113,23 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 {
 	float4 color = g_srcColor[pixCoord];
 	float4 gi = g_srcGI[pixCoord];
+
+	switch (g_GTAOConsts.DebugView) {
+	case 1:
+		color = 1;
+		gi.rgb = 0;
+		break;
+	case 2:
+		color = 0;
+		gi.a = 0;
+		break;
+	case 3:
+		color = 0.5;
+		break;
+	default:
+		break;
+	}
+
 	g_outColor[pixCoord] = float4(color.rgb * gi.a + gi.rgb, 1);
 
 	// g_outColor[pixCoord] = float4(gi.rgb, 1);

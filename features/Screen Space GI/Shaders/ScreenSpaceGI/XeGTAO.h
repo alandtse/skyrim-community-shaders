@@ -99,7 +99,10 @@ namespace XeGTAO
 		// bitmask
 		float Thickness;
 
-		Vector2 Padding;
+		uint EnableGI;
+
+		// debug
+		uint DebugView;
 	};
 
 	// This is used only for the development (ray traced ground truth).

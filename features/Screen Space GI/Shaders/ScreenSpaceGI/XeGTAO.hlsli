@@ -505,22 +505,24 @@ void XeGTAO_MainPass(
 					float3 sampleBackPos = samplePos - viewVec * consts.Thickness;
 					float3 sampleBackHorizonVec = normalize(sampleBackPos - pixCenterPos);
 
-					float angleFront = XeGTAO_FastACos(dot(sampleHorizonVec, viewVec));
-					float angleBack = XeGTAO_FastACos(dot(sampleBackHorizonVec, viewVec));
-					float2 angleRange = sideSign == -1 ? float2(angleFront, angleBack) : -float2(angleBack, angleFront);
+					float angleFront = -sideSign * XeGTAO_FastACos(dot(sampleHorizonVec, viewVec));
+					float angleBack = -sideSign * XeGTAO_FastACos(dot(sampleBackHorizonVec, viewVec));
+					float2 angleRange = sideSign == -1 ? float2(angleFront, angleBack) : float2(angleBack, angleFront);
 					angleRange = saturate((angleRange + n) / XE_GTAO_PI + .5);
 					// angleRange = clamp(angleRange, -XE_GTAO_PI_HALF, XE_GTAO_PI_HALF);
 
-					uint2 bitsRange = uint2(floor(angleRange.x * BITMASK_NUM_BITS), round((angleRange.y - angleRange.x) * BITMASK_NUM_BITS));
+					uint2 bitsRange = uint2(floor(angleRange.x * BITMASK_NUM_BITS), floor((angleRange.y - angleRange.x) * BITMASK_NUM_BITS));
 					uint maskedBits = ((1 << bitsRange.y) - 1) << bitsRange.x;
 
-					// IL
-					float3 sampleNormal = UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy);
-					float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
-					sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
-					sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
-					sampleRadiance *= dot(sampleNormal, sampleHorizonVec) < 0;
-					radiance += sampleRadiance;
+					if (consts.EnableGI) {
+						// IL
+						float3 sampleNormal = UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy);
+						float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+						sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
+						sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
+						sampleRadiance *= dot(sampleNormal, sampleHorizonVec) < 0;
+						radiance += sampleRadiance;
+					}
 
 					bitmask |= maskedBits;
 #else

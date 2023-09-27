@@ -270,7 +270,7 @@ float IlIntegral(float2 integral_factor, float cos_prev, float cos_new)
 
 void XeGTAO_MainPass(
 	const uint2 pixCoord,
-	lpfloat sliceCount, lpfloat stepsPerSlice, const lpfloat2 localNoise, lpfloat3 viewspaceNormal, const GTAOConstants consts,
+	lpfloat sliceCount, lpfloat stepsPerSlice, const lpfloat2 localNoise, lpfloat3 viewspaceNormal, lpfloat3 albedo, const GTAOConstants consts,
 	Texture2D<lpfloat> sourceViewspaceDepth, Texture2D<float4> sourceNormal, Texture2D<float4> sourceRadiance,
 	SamplerState depthSampler, SamplerState radianceSampler,
 	RWTexture2D<float4> outWorkingAOTerm, RWTexture2D<unorm float> outWorkingEdges)
@@ -511,16 +511,18 @@ void XeGTAO_MainPass(
 					angleRange = saturate((angleRange + n) / XE_GTAO_PI + .5);
 					// angleRange = clamp(angleRange, -XE_GTAO_PI_HALF, XE_GTAO_PI_HALF);
 
-					uint2 bitsRange = uint2(floor(angleRange.x * BITMASK_NUM_BITS), floor((angleRange.y - angleRange.x) * BITMASK_NUM_BITS));
+					uint2 bitsRange = uint2(
+						floor(angleRange.x * BITMASK_NUM_BITS),
+						max(round((angleRange.y - angleRange.x) * BITMASK_NUM_BITS - .01), 0));  // ceil gets too gray for flat ground; -.01 as bias to remove some gray too.
 					uint maskedBits = ((1 << bitsRange.y) - 1) << bitsRange.x;
 
 					if (consts.EnableGI) {
 						// IL
-						float3 sampleNormal = UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy);
+						// float3 sampleNormal = UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy);
 						float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
 						sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
 						sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
-						sampleRadiance *= dot(sampleNormal, sampleHorizonVec) < 0;
+						// sampleRadiance *= dot(sampleNormal, sampleHorizonVec) < 0;
 						radiance += sampleRadiance;
 					}
 
@@ -542,38 +544,40 @@ void XeGTAO_MainPass(
 					shc = lerp(sideSign == -1 ? lowHorizonCos1 : lowHorizonCos0, shc, weight);
 
 					lpfloat horizonCos = sideSign == -1 ? horizonCos1 : horizonCos0;
-					// 					// thickness heuristic - see "4.3 Implementation details, Height-field assumption considerations"
-					// #if 0    // (disabled, not used) this should match the paper
-					//                 lpfloat newhorizonCos = max( horizonCos, shc );
 
-					//                 horizonCos = (horizonCos > shc)? lerp( newhorizonCos, shc, thinOccluderCompensation ) :newhorizonCos ;
-					// #elif 0  // (disabled, not used) this is slightly different from the paper but cheaper and provides very similar results
-					// 				horizonCos = lerp(max(horizonCos, shc), shc, thinOccluderCompensation);
-					// #else  // this is a version where thicknessHeuristic is completely disabled
-					horizonCos = max(horizonCos, shc);
-					// #endif
+					if (consts.EnableGI) {
+						if (shc > horizonCos) {
+							lpfloat3 newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+							// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;
 
-					// HBIL (unused)
-					// if (shc > horizonCos) {
-					// 	lpfloat3 newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
-					// 	// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;
+							float angle_prev = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(horizonCos);
+							float angle_curr = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(shc);
+							newSampleRadiance *= IlIntegral(0.5 * float2(dot(directionVec.xy, viewspaceNormal.xy) * sideSign, -viewspaceNormal.z),
+								cos(angle_prev), cos(angle_curr));
+							// newSampleRadiance *= ComputeHorizonContribution(viewVec, directionVec, viewspaceNormal, XeGTAO_FastACos(horizonCos), XeGTAO_FastACos(shc));
 
-					// 	float angle_prev = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(horizonCos);
-					// 	float angle_curr = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(shc);
-					// 	newSampleRadiance *= IlIntegral(0.5 * float2(dot(directionVec.xy, viewspaceNormal.xy) * sideSign, -viewspaceNormal.z),
-					// 		cos(angle_prev), cos(angle_curr));
-					// 	// newSampleRadiance *= ComputeHorizonContribution(viewVec, directionVec, viewspaceNormal, XeGTAO_FastACos(horizonCos), XeGTAO_FastACos(shc));
+							// depth filtering. HBIL pp.38
+							float t = smoothstep(0, 1, dot(viewspaceNormal, sampleHorizonVec));
+							// float t = dot(viewspaceNormal, sampleHorizonVec) > -EPS;
+							// float t = 1;
+							sampleRadiance = lerp(sampleRadiance, newSampleRadiance, t);
 
-					// 	// depth filtering. HBIL pp.38
-					// 	float t = smoothstep(0, 1, dot(viewspaceNormal, sampleHorizonVec));
-					// 	// float t = dot(viewspaceNormal, sampleHorizonVec) > -EPS;
-					// 	// float t = 1;
-					// 	sampleRadiance = lerp(sampleRadiance, newSampleRadiance, t);
+							radiance += max(0, sampleRadiance);
 
-					// 	radiance += max(0, sampleRadiance);
+							horizonCos = shc;
+						}
+					} else {
+						// 					// thickness heuristic - see "4.3 Implementation details, Height-field assumption considerations"
+						// #if 0    // (disabled, not used) this should match the paper
+						//                 lpfloat newhorizonCos = max( horizonCos, shc );
 
-					// 	horizonCos = shc;
-					// }
+						//                 horizonCos = (horizonCos > shc)? lerp( newhorizonCos, shc, thinOccluderCompensation ) :newhorizonCos ;
+						// #elif 0  // (disabled, not used) this is slightly different from the paper but cheaper and provides very similar results
+						// 				horizonCos = lerp(max(horizonCos, shc), shc, thinOccluderCompensation);
+						// #else  // this is a version where thicknessHeuristic is completely disabled
+						horizonCos = max(horizonCos, shc);
+						// #endif
+					}
 
 					if (sideSign == -1)
 						horizonCos1 = horizonCos;
@@ -597,9 +601,9 @@ void XeGTAO_MainPass(
             h0 = n + clamp( h0-n, (lpfloat)-XE_GTAO_PI_HALF, (lpfloat)XE_GTAO_PI_HALF );
             h1 = n + clamp( h1-n, (lpfloat)-XE_GTAO_PI_HALF, (lpfloat)XE_GTAO_PI_HALF );
 #	endif
-			lpfloat iarc0 = ((lpfloat)cosNorm + (lpfloat)2 * (lpfloat)h0 * (lpfloat)sin(n) - (lpfloat)cos((lpfloat)2 * (lpfloat)h0 - n)) / (lpfloat)4;
-			lpfloat iarc1 = ((lpfloat)cosNorm + (lpfloat)2 * (lpfloat)h1 * (lpfloat)sin(n) - (lpfloat)cos((lpfloat)2 * (lpfloat)h1 - n)) / (lpfloat)4;
-			lpfloat localVisibility = (lpfloat)projectedNormalVecLength * (lpfloat)(iarc0 + iarc1);
+			lpfloat iarc0 = ((lpfloat)cosNorm + (lpfloat)2 * (lpfloat)h0 * (lpfloat)sin(n) - (lpfloat)cos((lpfloat)2 * (lpfloat)h0 - n));
+			lpfloat iarc1 = ((lpfloat)cosNorm + (lpfloat)2 * (lpfloat)h1 * (lpfloat)sin(n) - (lpfloat)cos((lpfloat)2 * (lpfloat)h1 - n));
+			lpfloat localVisibility = (lpfloat)projectedNormalVecLength * (lpfloat)(iarc0 + iarc1) * (lpfloat).25;
 			visibility += localVisibility;
 
 #	ifdef XE_GTAO_COMPUTE_BENT_NORMALS
@@ -613,7 +617,7 @@ void XeGTAO_MainPass(
 #endif  // defined(SSGI_USE_BITMASK)
 		}
 		visibility /= (lpfloat)sliceCount;
-		radiance /= (lpfloat)sliceCount;
+		radiance *= albedo / (lpfloat)sliceCount;
 
 		visibility = pow(visibility, (lpfloat)consts.FinalValuePower);
 		visibility = max((lpfloat)0.03, visibility);  // disallow total occlusion (which wouldn't make any sense anyhow since pixel is visible but also helps with packing bent normals)

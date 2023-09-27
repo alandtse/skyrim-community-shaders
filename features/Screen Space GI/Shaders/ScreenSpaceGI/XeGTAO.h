@@ -101,6 +101,9 @@ namespace XeGTAO
 
 		uint EnableGI;
 
+		float AOStrength;
+		float GIStrength;
+
 		// debug
 		uint DebugView;
 	};

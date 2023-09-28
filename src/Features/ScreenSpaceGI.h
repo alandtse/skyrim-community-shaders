@@ -49,6 +49,7 @@ struct ScreenSpaceGI : Feature
 		uint32_t CheckBackface;
 		float BackfaceStrength;
 		float GIBounceFade;
+		float GIDistanceCompensation;
 
 		// mix
 		Vector2 AOClamp;
@@ -59,6 +60,11 @@ struct ScreenSpaceGI : Feature
 
 		// debug
 		uint32_t DebugView;
+
+		float GICompensationMaxDist;  // idk why
+		float AmbientSource;
+
+		float pad;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -100,10 +106,10 @@ struct ScreenSpaceGI : Feature
 		bool CheckBackface = true;
 
 		uint32_t SliceCount = 2;
-		uint32_t StepsPerSlice = 5;
+		uint32_t StepsPerSlice = 6;
 
 		// visual
-		float EffectRadius = 200.f;
+		float EffectRadius = 400.f;
 		float EffectFalloffRange = .615f;
 
 		float SampleDistributionPower = 2.f;
@@ -113,8 +119,11 @@ struct ScreenSpaceGI : Feature
 		float Thickness = 50.f;
 
 		// gi
-		float BackfaceStrength = 0.2f;
-		float GIBounceFade = 0.98f;
+		float AmbientSource = 0.2f;
+		float BackfaceStrength = 0.1f;
+		float GIBounceFade = 0.5f;
+		float GIDistanceCompensation = 2;
+		float GICompensationMaxDist = 300;
 
 		// mix
 		Vector2 AOClamp = { 0.03, 1 };

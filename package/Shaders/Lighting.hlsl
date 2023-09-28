@@ -515,6 +515,7 @@ struct PS_OUTPUT
 	float4 Specular : SV_Target4;
 	float4 Albedo : SV_Target5;
 	float4 Deferred : SV_Target6;
+	float4 Ambient : SV_Target7;
 };
 
 #ifdef PSHADER
@@ -1024,7 +1025,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "LightLimitFix/LightLimitFix.hlsli"
 #	endif
 
-#include "SubsurfaceScattering.hlsli"
+#	include "SubsurfaceScattering.hlsli"
 
 PS_OUTPUT main(PS_INPUT input, bool frontFace
 			   : SV_IsFrontFace)
@@ -1284,25 +1285,25 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	}
 #	endif  // defined (CPM_AVAILABLE) && defined(ENVMAP)
 
-// #	if defined(SKIN)
-// 	// float3 rmaoColor = TexRMAOSampler.Sample(SampRMAOSampler, uv).xyz;
-// 	// float roughness = rmaoColor.x;
-// 	// float metallic = rmaoColor.y;
-// 	// float ao = rmaoColor.z;
+	// #	if defined(SKIN)
+	// 	// float3 rmaoColor = TexRMAOSampler.Sample(SampRMAOSampler, uv).xyz;
+	// 	// float roughness = rmaoColor.x;
+	// 	// float metallic = rmaoColor.y;
+	// 	// float ao = rmaoColor.z;
 
-// 	float roughness = 1 - glossiness;
-// 	float metallic = 0;
-// #		if defined(ENVMAP)
-// 	float envMaskColor = TexEnvMaskSampler.Sample(SampEnvMaskSampler, uv).x;
-// 	metallic = envMaskColor * EnvmapData.x;
-// #		endif  // ENVMAP
-// 	float ao = 1;
+	// 	float roughness = 1 - glossiness;
+	// 	float metallic = 0;
+	// #		if defined(ENVMAP)
+	// 	float envMaskColor = TexEnvMaskSampler.Sample(SampEnvMaskSampler, uv).x;
+	// 	metallic = envMaskColor * EnvmapData.x;
+	// #		endif  // ENVMAP
+	// 	float ao = 1;
 
-// 	float3 F0 = 0.04.xxx;
-// 	F0 = lerp(F0, baseColor.xyz, metallic);
+	// 	float3 F0 = 0.04.xxx;
+	// 	F0 = lerp(F0, baseColor.xyz, metallic);
 
-// 	float3 totalRadiance = 0.0.xxx;
-// #	endif  // PBR
+	// 	float3 totalRadiance = 0.0.xxx;
+	// #	endif  // PBR
 
 #	if defined(FACEGEN)
 	baseColor.xyz = GetFacegenBaseColor(baseColor.xyz, uv);
@@ -1560,9 +1561,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 	float3 dirLightColor = DirLightColor.xyz;
 
-#if defined(SKIN_SHADING_LINEAR)
+#	if defined(SKIN_SHADING_LINEAR)
 	dirLightColor *= 1;
-#endif
+#	endif
 
 	float selfShadowFactor = 1.0f;
 
@@ -1615,11 +1616,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float4 blurredNormalColor = TexNormalSampler.SampleBias(SampNormalSampler, uv, 1);
 	blurredNormalColor.xyz = blurredNormalColor.xzy * 2.0.xxx + -1.0.xxx;
 
-#	if defined(MODELSPACENORMALS) && !defined(SKINNED)
+#		if defined(MODELSPACENORMALS) && !defined(SKINNED)
 	float4 blurredNormal = blurredNormalColor;
-#	else
+#		else
 	float4 blurredNormal = float4(normalize(mul(tbn, blurredNormalColor.xyz)), 1);
-#endif
+#		endif
 
 	SubsurfaceNormal subsurfaceNormal = CalculateSubsurfaceNormal(saturate(scatterColor * PI), modelNormal.xyz, blurredNormal);
 	SubsurfaceNormal subsurfaceNormalModel = subsurfaceNormal;
@@ -1632,9 +1633,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 
 #	else
 
-#if defined(SKIN_SHADING_LINEAR)
+#		if defined(SKIN_SHADING_LINEAR)
 	baseColor.xyz = sRGB2Lin(baseColor.xyz);
-#endif
+#		endif
 
 	float3 diffuseColor = 0.0.xxx;
 	float3 specularColor = 0.0.xxx;
@@ -1646,8 +1647,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace
 	float3 dirDiffuseColor = dirLightColor * saturate(dirLightAngle.xxx);
 
 #		if defined(SOFT_LIGHTING) && !(defined(FACEGEN) || defined(FACEGEN_RGB_TINT))
-if (!perPassSSS[0].SkinMode)
-	lightsDiffuseColor += nsDirLightColor.xyz * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
+	if (!perPassSSS[0].SkinMode)
+		lightsDiffuseColor += nsDirLightColor.xyz * GetSoftLightMultiplier(dirLightAngle) * rimSoftLightColor.xyz;
 #		endif
 
 #		if defined(RIM_LIGHTING)
@@ -1664,11 +1665,11 @@ if (!perPassSSS[0].SkinMode)
 #		endif
 	} else {
 #		if defined(SPECULAR) || defined(SPARKLE)
-#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+#			if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
 		lightsSpecularColor = GetPBRSpecular(input, uv, modelNormal.xyz, DirLightDirection, viewDirection, dirLightColor.xyz, glossiness, shininess);
-#else
+#			else
 		lightsSpecularColor = GetLightSpecularInput(input, DirLightDirection, viewDirection, modelNormal.xyz, dirLightColor.xyz, shininess, uv);
-#endif
+#			endif
 #		endif
 	}
 
@@ -1710,9 +1711,9 @@ if (!perPassSSS[0].SkinMode)
 			float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 
 			float3 lightColor = PointLightColor[intLightIndex].xyz;
-#if defined(SKIN_SHADING_LINEAR)
-	lightColor *= 1;
-#endif
+#		if defined(SKIN_SHADING_LINEAR)
+			lightColor *= 1;
+#		endif
 			float3 nsLightColor = lightColor;
 #		if defined(DEFSHADOW)
 			lightColor *= shadowComponent.xxx;
@@ -1766,14 +1767,14 @@ if (!perPassSSS[0].SkinMode)
 #		endif
 
 #		if defined(SKIN)
-		GetLightRadianceSubsurface(input, uv, modelNormal.xyz, normalizedLightDirection.xyz, viewDirection, lightColor.xyz * intensityMultiplier, Diffuse.xyz, ao, roughness, shininess, specularMultiplier, scatterColor, subsurfaceNormal, blurredNormal, diffuseColor, specularColor);
+			GetLightRadianceSubsurface(input, uv, modelNormal.xyz, normalizedLightDirection.xyz, viewDirection, lightColor.xyz * intensityMultiplier, Diffuse.xyz, ao, roughness, shininess, specularMultiplier, scatterColor, subsurfaceNormal, blurredNormal, diffuseColor, specularColor);
 #		else
 			float lightAngle = dot(modelNormal.xyz, normalizedLightDirection.xyz);
 			float3 lightDiffuseColor = lightColor * saturate(lightAngle.xxx);
 
 #			if defined(SOFT_LIGHTING) && !(defined(FACEGEN) || defined(FACEGEN_RGB_TINT))
-if (!perPassSSS[0].SkinMode)
-			lightDiffuseColor += nsLightColor * GetSoftLightMultiplier(dot(modelNormal.xyz, lightDirection.xyz)) * rimSoftLightColor.xyz;
+			if (!perPassSSS[0].SkinMode)
+				lightDiffuseColor += nsLightColor * GetSoftLightMultiplier(dot(modelNormal.xyz, lightDirection.xyz)) * rimSoftLightColor.xyz;
 #			endif  // SOFT_LIGHTING
 
 #			if defined(RIM_LIGHTING)
@@ -1785,11 +1786,11 @@ if (!perPassSSS[0].SkinMode)
 #			endif  // BACK_LIGHTING
 
 #			if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
-#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
-		lightsSpecularColor += GetPBRSpecular(input, uv, modelNormal.xyz, normalizedLightDirection, viewDirection, lightColor.xyz, glossiness, shininess) * intensityMultiplier.xxx;
-#else
+#				if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+			lightsSpecularColor += GetPBRSpecular(input, uv, modelNormal.xyz, normalizedLightDirection, viewDirection, lightColor.xyz, glossiness, shininess) * intensityMultiplier.xxx;
+#				else
 			lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, viewDirection, modelNormal.xyz, lightColor, shininess, uv) * intensityMultiplier.xxx;
-#endif
+#				endif
 #			endif  // defined (SPECULAR) || (defined (SPARKLE) && !defined(SNOW))
 
 			lightsDiffuseColor += lightDiffuseColor * intensityMultiplier.xxx;
@@ -1829,9 +1830,9 @@ if (!perPassSSS[0].SkinMode)
 				tbn = float3x3(input.TBN0.xyz, input.TBN1.xyz, input.TBN2.xyz);
 
 				worldSpaceVertexNormal = normalize(mul(input.World[eyeIndex], float4(vertexNormal, 0)));
-				#if defined(SKIN)
+#					if defined(SKIN)
 				subsurfaceNormal = CalculateSubsurfaceNormal(saturate(scatterColor * PI), modelNormal.xyz, blurredNormal);
-				#endif
+#					endif
 			}
 #				endif
 #			endif
@@ -1848,9 +1849,9 @@ if (!perPassSSS[0].SkinMode)
 
 				float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 				float3 lightColor = light.color.xyz;
-#if defined(SKIN_SHADING_LINEAR)
-	lightColor *= 1;
-#endif		
+#			if defined(SKIN_SHADING_LINEAR)
+				lightColor *= 1;
+#			endif
 				float3 nsLightColor = lightColor;
 				float3 normalizedLightDirection = normalize(lightDirection);
 
@@ -1886,14 +1887,14 @@ if (!perPassSSS[0].SkinMode)
 #			endif
 
 #			if defined(SKIN)
-			GetLightRadianceSubsurface(input, uv, worldSpaceNormal.xyz, normalizedLightDirection.xyz, worldSpaceViewDirection, lightColor.xyz * intensityMultiplier, Diffuse.xyz, ao, roughness, shininess, specularMultiplier, scatterColor, subsurfaceNormal, blurredNormal, diffuseColor, specularColor);
+				GetLightRadianceSubsurface(input, uv, worldSpaceNormal.xyz, normalizedLightDirection.xyz, worldSpaceViewDirection, lightColor.xyz * intensityMultiplier, Diffuse.xyz, ao, roughness, shininess, specularMultiplier, scatterColor, subsurfaceNormal, blurredNormal, diffuseColor, specularColor);
 #			else
 				float lightAngle = dot(worldSpaceNormal.xyz, normalizedLightDirection.xyz);
 				float3 lightDiffuseColor = lightColor * saturate(lightAngle.xxx);
 
 #				if defined(SOFT_LIGHTING) && !(defined(FACEGEN) || defined(FACEGEN_RGB_TINT))
-if (!perPassSSS[0].SkinMode)
-				lightDiffuseColor += nsLightColor * GetSoftLightMultiplier(dot(worldSpaceNormal.xyz, lightDirection.xyz)) * rimSoftLightColor.xyz;
+				if (!perPassSSS[0].SkinMode)
+					lightDiffuseColor += nsLightColor * GetSoftLightMultiplier(dot(worldSpaceNormal.xyz, lightDirection.xyz)) * rimSoftLightColor.xyz;
 #				endif
 
 #				if defined(RIM_LIGHTING)
@@ -1905,11 +1906,11 @@ if (!perPassSSS[0].SkinMode)
 #				endif
 
 #				if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
-#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+#					if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
 				lightsSpecularColor += GetPBRSpecular(input, uv, worldSpaceNormal.xyz, normalizedLightDirection.xyz, worldSpaceViewDirection, lightColor.xyz, glossiness, shininess) * intensityMultiplier.xxx;
-#else
+#					else
 				lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, worldSpaceViewDirection, worldSpaceNormal.xyz, lightColor, shininess, uv) * intensityMultiplier.xxx;
-#endif
+#					endif
 #				endif
 				lightsDiffuseColor += lightDiffuseColor * intensityMultiplier.xxx;
 #			endif
@@ -1922,10 +1923,10 @@ if (!perPassSSS[0].SkinMode)
 	// float3 ambientColor = 0.03 * baseColor.xyz * ao;
 
 	float3 ambientColor = float3(
-		mul(DirectionalAmbient, float4(blurredNormal.xyz, 1)).r,
-		mul(DirectionalAmbient, float4(blurredNormal.xyz, 1)).g,
-		mul(DirectionalAmbient, float4(blurredNormal.xyz, 1)).b
-	) * Diffuse * ao;
+							  mul(DirectionalAmbient, float4(blurredNormal.xyz, 1)).r,
+							  mul(DirectionalAmbient, float4(blurredNormal.xyz, 1)).g,
+							  mul(DirectionalAmbient, float4(blurredNormal.xyz, 1)).b) *
+	                      Diffuse * ao;
 
 	diffuseColor += ambientColor;
 
@@ -1965,9 +1966,9 @@ if (!perPassSSS[0].SkinMode)
 #		endif  // GLOWMAP
 
 	float3 directionalAmbientColor = mul(DirectionalAmbient, modelNormal);
-#if defined(SKIN_SHADING_LINEAR)
+#		if defined(SKIN_SHADING_LINEAR)
 	directionalAmbientColor = sRGB2Lin(directionalAmbientColor);
-#endif
+#		endif
 	diffuseColor = directionalAmbientColor + emitColor.xyz + diffuseColor;
 	diffuseColor += IBLParams.yzw * IBLParams.xxx;
 
@@ -2001,15 +2002,15 @@ if (!perPassSSS[0].SkinMode)
 	// #	else   // VR
 	// float2 screenMotionVector = GetSSMotionVector(worldPositionVR, PreviousWorldPositionVR, eyeIndex);
 // #	endif  // !VR
-#	if !defined(SKIN) 
-#if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
+#	if !defined(SKIN)
+#		if (defined(FACEGEN) || defined(FACEGEN_RGB_TINT)) && defined(PBR_SKIN)
 	//specularColor = (specularColor) * SpecularColor.xyz;
-#else
-#		if defined(SPECULAR)
+#		else
+#			if defined(SPECULAR)
 	specularColor = (specularColor * glossiness * MaterialData.yyy) * SpecularColor.xyz;
-#		elif defined(SPARKLE)
+#			elif defined(SPARKLE)
 	specularColor *= glossiness;
-#		endif  // SPECULAR
+#			endif  // SPECULAR
 #		endif
 	if (useSnowSpecular) {
 		specularColor = 0;
@@ -2170,33 +2171,41 @@ if (!perPassSSS[0].SkinMode)
 	psout.Diffuse = float4(1, 0, 0, 1);
 #	endif  // OUTLINE
 
-#if !defined(SNOW)
+#	if !defined(SNOW)
 	psout.SnowParameters = 0;
-#endif
+#	endif
 
 	psout.Deferred = 0.0;
-	
+
 	psout.Albedo.xyz = TexColorSampler.SampleBias(SampColorSampler, diffuseUv, 3).xyz;
-psout.Albedo.xyz = baseColor.xyz;
+	psout.Albedo.xyz = baseColor.xyz;
 
 	psout.Albedo.w = 0;
 
-// #if defined(SNOW)
-// 	psout.Deferred.x = psout.SnowParameters.y;
-// #endif
-// #if defined(HAIR)
-// 	psout.Deferred.x = 1;
-// #endif
+	// #if defined(SNOW)
+	// 	psout.Deferred.x = psout.SnowParameters.y;
+	// #endif
+	// #if defined(HAIR)
+	// 	psout.Deferred.x = 1;
+	// #endif
 
-if (perPassSSS[0].SkinMode){
-	psout.Deferred.x = 1;
-	if (perPassSSS[0].SkinMode == 1)
-		psout.Deferred.y = 1;
-}
+	if (perPassSSS[0].SkinMode) {
+		psout.Deferred.x = 1;
+		if (perPassSSS[0].SkinMode == 1)
+			psout.Deferred.y = 1;
+	}
 	psout.Deferred.w = psout.Diffuse.w;
 
 	psout.Specular.xyz = specularColor;
 	psout.Specular.w = psout.Diffuse.w;
+
+#	if defined(SKIN)
+	psout.Ambient.xyz = ambientColor * baseColor.xyz;
+#	else
+	psout.Ambient.xyz = directionalAmbientColor * baseColor.xyz;
+#	endif
+
+	psout.Ambient.w = psout.Diffuse.w;
 
 	return psout;
 }

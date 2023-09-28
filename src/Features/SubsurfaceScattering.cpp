@@ -68,6 +68,11 @@ void SubsurfaceScattering::Draw(const RE::BSShader* shader, const uint32_t)
 			deferredTexture->CreateSRV(srvDesc);
 			deferredTexture->CreateUAV(uavDesc);
 
+			ambientTexture = new Texture2D(texDesc);
+			ambientTexture->CreateRTV(rtvDesc);
+			ambientTexture->CreateSRV(srvDesc);
+			ambientTexture->CreateUAV(uavDesc);
+
 			auto depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 			depthTexture.texture->GetDesc(&texDesc);
 			depthTexture.depthSRV->GetDesc(&srvDesc);
@@ -90,7 +95,7 @@ void SubsurfaceScattering::Draw(const RE::BSShader* shader, const uint32_t)
 			DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, &pointSampler));
 		}
 
-		ID3D11RenderTargetView* views[7];
+		ID3D11RenderTargetView* views[8];
 		ID3D11DepthStencilView* depthStencil;
 
 		context->OMGetRenderTargets(4, views, &depthStencil);
@@ -98,7 +103,8 @@ void SubsurfaceScattering::Draw(const RE::BSShader* shader, const uint32_t)
 		views[4] = specularTexture->rtv.get();
 		views[5] = albedoTexture->rtv.get();
 		views[6] = deferredTexture->rtv.get();
-		context->OMSetRenderTargets(7, views, depthStencil);
+		views[7] = ambientTexture->rtv.get();
+		context->OMSetRenderTargets(8, views, depthStencil);
 
 		auto srv = deferredTexture->srv.get();
 		context->PSSetShaderResources(40, 1, &srv);
@@ -241,13 +247,14 @@ void SubsurfaceScattering::DrawDeferred()
 			context->CopyResource(depthTextureTemp->resource.get(), renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].texture);
 			context->CopyResource(colorTextureTemp->resource.get(), renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP].texture);
 
-			ID3D11ShaderResourceView* views[5];
+			ID3D11ShaderResourceView* views[6];
 			views[0] = colorTextureTemp->srv.get();
 			views[1] = depthTextureTemp->srv.get();
 			views[2] = specularTexture->srv.get();
 			views[3] = albedoTexture->srv.get();
 			views[4] = deferredTexture->srv.get();
-			context->CSSetShaderResources(0, 5, views);
+			views[5] = ambientTexture->srv.get();
+			context->CSSetShaderResources(0, 6, views);
 
 			ID3D11UnorderedAccessView* uav = nullptr;
 
@@ -300,6 +307,7 @@ void SubsurfaceScattering::DrawDeferred()
 		FLOAT clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 		context->ClearRenderTargetView(deferredTexture->rtv.get(), clear);
 		context->ClearRenderTargetView(specularTexture->rtv.get(), clear);
+		context->ClearRenderTargetView(ambientTexture->rtv.get(), clear);
 	}
 }
 

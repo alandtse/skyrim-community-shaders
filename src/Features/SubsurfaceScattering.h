@@ -42,6 +42,7 @@ public:
 	Texture2D* specularTexture = nullptr;
 	Texture2D* albedoTexture = nullptr;
 	Texture2D* deferredTexture = nullptr;
+	Texture2D* ambientTexture = nullptr;
 
 	Texture2D* colorTextureTemp = nullptr;
 	Texture2D* colorTextureTemp2 = nullptr;
@@ -98,5 +99,4 @@ public:
 			logger::info("[SSS] Installed hooks");
 		}
 	};
-
 };

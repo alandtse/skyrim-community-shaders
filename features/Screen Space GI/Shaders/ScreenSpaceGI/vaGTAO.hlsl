@@ -59,6 +59,7 @@ RWTexture2D<float4> g_outFinalAOTerm : register(u0);  // final AO term - just 'v
 // input output textures for XeGTAO_Mix
 Texture2D<float4> g_srcColor : register(t0);
 Texture2D<float4> g_srcGI : register(t1);
+Texture2D<float4> g_srcAmbientMix : register(t2);
 RWTexture2D<float4> g_outColor : register(u0);
 
 SamplerState g_samplerPointClamp : register(s0);
@@ -95,8 +96,8 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 	float2 prev_uv = uv + g_srcMotionVec[pixCoord].xy;
 
 	float3 radiance = g_srcDiffuse[pixCoord].rgb;
-	// radiance -= g_srcAmbient[pixCoord].rgb;
-	radiance += g_srcPrevRadiance.SampleLevel(g_samplerLinearClamp, prev_uv, 0).rgb * g_GTAOConsts.GIBounceFade * g_GTAOConsts.GIStrength * 8.f;
+	radiance -= g_srcAmbient[pixCoord].rgb * (1 - g_GTAOConsts.AmbientSource);
+	radiance += g_srcPrevRadiance.SampleLevel(g_samplerLinearClamp, prev_uv, 0).rgb * g_GTAOConsts.GIBounceFade * g_GTAOConsts.GIStrength * 10.f;
 	g_outRadiance[pixCoord] = float4(radiance, 1);
 }
 
@@ -134,18 +135,22 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 																	   : SV_DispatchThreadID) {
 	float4 color = g_srcColor[pixCoord];
 	float4 gi = g_srcGI[pixCoord];
+	float4 ambient = g_srcAmbientMix[pixCoord];
 
 	switch (g_GTAOConsts.DebugView) {
 	case 1:
+		ambient = 1;
 		color = 1;
 		gi.rgb = 0;
 		break;
 	case 2:
 		color = 0;
+		ambient = 0;
 		gi.a = 0;
 		break;
 	case 3:
 		color = 0.5;
+		ambient = 0.5;
 		break;
 	default:
 		break;
@@ -154,7 +159,8 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 	gi.a = saturate((gi.a - g_GTAOConsts.AOClamp.x) / (g_GTAOConsts.AOClamp.y - g_GTAOConsts.AOClamp.x));
 	gi.a = pow(gi.a, g_GTAOConsts.AOPower);
 	gi.a = lerp(g_GTAOConsts.AORemap.x, g_GTAOConsts.AORemap.y, gi.a);
-	g_outColor[pixCoord] = float4(color.rgb * gi.a + gi.rgb * g_GTAOConsts.GIStrength * 8.f, 1);
+	float3 finalColor = max(0, color.rgb - (1 - gi.a) * ambient.rgb + gi.rgb * g_GTAOConsts.GIStrength * 10.f);
+	g_outColor[pixCoord] = float4(finalColor, 1);
 
 	// g_outColor[pixCoord] = float4(gi.rgb, 1);
 }

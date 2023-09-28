@@ -103,15 +103,20 @@ namespace XeGTAO
 		uint CheckBackface;
 		float BackfaceStrength;
 		float GIBounceFade;
+		float GIDistanceCompensation;
 
 		// mix
 		Vector2 AOClamp;
 		float AOPower;
 		Vector2 AORemap;
+
 		float GIStrength;
 
 		// debug
 		uint DebugView;
+
+		float GICompensationMaxDist;
+		float AmbientSource;
 	};
 
 	// This is used only for the development (ray traced ground truth).

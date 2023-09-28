@@ -21,6 +21,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Thickness,
 	BackfaceStrength,
 	GIBounceFade,
+	GIDistanceCompensation,
+	GICompensationMaxDist,
 	AOClamp,
 	AOPower,
 	AORemap,
@@ -99,6 +101,24 @@ void ScreenSpaceGI::DrawSettings()
 	// ImGui::SliderInt("Denoise Passes", (int*)&settings.DenoisePasses, 0, 3);
 
 	///////////////////////////////
+	ImGui::SeparatorText("Composition");
+
+	ImGui::SliderFloat2("AO Clamp", &settings.AOClamp.x, 0.f, 1.f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Clamps Raw AO visibility. Usually don't need change");
+
+	ImGui::SliderFloat("AO Power", &settings.AOPower, 0.5f, 5.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Applies power function within the clamped range.");
+
+	ImGui::SliderFloat2("AO Remap", &settings.AORemap.x, 0.f, 1.f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Remaps the clamped value to this range. The first parameter is basically inverted AO strength.");
+
+	if (auto _ = DisableIf(!settings.EnableGI))
+		ImGui::SliderFloat("GI Strength", &settings.GIStrength, 0.f, 5.f, "%.2f");
+
+	///////////////////////////////
 	ImGui::SeparatorText("Visual");
 
 	ImGui::SliderFloat("Effect radius", &settings.EffectRadius, 10.f, 500.0f, "%.1f");
@@ -114,9 +134,21 @@ void ScreenSpaceGI::DrawSettings()
 		ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability");
 
 	if (auto _ = DisableIf(!settings.EnableGI)) {
+		ImGui::SliderFloat("Ambient Light Source", &settings.AmbientSource, 0.0f, 1.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("How much ambient light is added as light source for GI calculation.");
+
 		ImGui::SliderFloat("GI Bounce", &settings.GIBounceFade, 0.0f, 1.0f, "%.2f");
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("How much of this frame's GI gets carried to the next frame. Simulates multiple light bounces.");
+
+		ImGui::SliderFloat("GI Distance Compensation", &settings.GIDistanceCompensation, 0.0f, 9.0f, "%.1f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Brighten up further radiance samples that are otherwise too weak.");
+
+		ImGui::SliderFloat("GI Compensation Distance", &settings.GICompensationMaxDist, 10.0f, 1000.0f, "%.1f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("The distance of maximal compensation/brightening.");
 	}
 	if (auto _ = DisableIf(!settings.EnableGI || !settings.CheckBackface)) {
 		ImGui::SliderFloat("Backface Lighting Mix", &settings.BackfaceStrength, 0.f, 1.f, "%.2f");
@@ -137,24 +169,6 @@ void ScreenSpaceGI::DrawSettings()
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data");
 	}
-
-	///////////////////////////////
-	ImGui::SeparatorText("Composition");
-
-	ImGui::SliderFloat2("AO Clamp", &settings.AOClamp.x, 0.f, 1.f, "%.2f");
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("Clamps Raw AO visibility. Usually don't need change");
-	ImGui::SliderFloat("AO Power", &settings.AOPower, 0.5f, 5.0f, "%.2f");
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("Applies power function within the clamped range.");
-	ImGui::SliderFloat2("AO Remap", &settings.AORemap.x, 0.f, 1.f, "%.2f");
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("Remaps the clamped value to this range. The second parameter is basically AO strength.");
-
-	ImGui::Spacing();
-
-	if (auto _ = DisableIf(!settings.EnableGI))
-		ImGui::SliderFloat("GI Strength", &settings.GIStrength, 0.f, 5.f, "%.2f");
 
 	///////////////////////////////
 	ImGui::SeparatorText("Debug");
@@ -426,13 +440,17 @@ void ScreenSpaceGI::UpdateBuffer()
 		.CheckBackface = settings.CheckBackface,
 		.BackfaceStrength = settings.BackfaceStrength,
 		.GIBounceFade = settings.GIBounceFade,
+		.GIDistanceCompensation = settings.GIDistanceCompensation,
 
 		.AOClamp = settings.AOClamp,
 		.AOPower = settings.AOPower,
 		.AORemap = settings.AORemap,
 		.GIStrength = settings.GIStrength,
 
-		.DebugView = settings.DebugView
+		.DebugView = settings.DebugView,
+
+		.GICompensationMaxDist = settings.GICompensationMaxDist,
+		.AmbientSource = settings.AmbientSource,
 	};
 	ssgi_cb_contents.NDCToViewMul_x_PixelSize = {
 		ssgi_cb_contents.NDCToViewMul.x * ssgi_cb_contents.ViewportPixelSize.x,
@@ -527,7 +545,7 @@ void ScreenSpaceGI::DrawDeferred()
 	// fetch radiance
 	{
 		srvs[0] = texColor0->srv.get();
-		srvs[1] = nullptr;  // ambient placeholder
+		srvs[1] = SubsurfaceScattering::GetSingleton()->ambientTexture->srv.get();
 		srvs[2] = texGI0->srv.get();
 		srvs[3] = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV;
 		uavs[0] = texRadiance->uav.get();
@@ -586,9 +604,10 @@ void ScreenSpaceGI::DrawDeferred()
 	{
 		srvs[0] = texColor0->srv.get();
 		srvs[1] = isFinal0 ? texGI0->srv.get() : texGI1->srv.get();
+		srvs[2] = SubsurfaceScattering::GetSingleton()->ambientTexture->srv.get();
 		uavs[0] = texColor1->uav.get();
 
-		context->CSSetShaderResources(0, 2, srvs);
+		context->CSSetShaderResources(0, 3, srvs);
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 		context->CSSetShader(mixCompute, nullptr, 0);
 		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 32.0f), (uint32_t)std::ceil(dynamic_res[1] / 32.0f), 1);

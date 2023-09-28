@@ -474,9 +474,6 @@ void XeGTAO_MainPass(
 
 				// note: when sampling, using point_point_point or point_point_linear sampler works, but linear_linear_linear will cause unwanted interpolation between neighbouring depth values on the same MIP level!
 				const lpfloat mipLevel = (lpfloat)clamp(log2(sampleOffsetLength) - consts.DepthMIPSamplingOffset, 0, XE_GTAO_DEPTH_MIP_LEVELS);
-				// lpfloat giBoost = 1;
-				// if (consts.EnableGI)
-				// 	giBoost = exp2(mipLevel * consts.GIDistanceMult);
 
 				// Snap to pixel center (more correct direction math, avoids artifacts due to sampling pos not matching depth texel center - messes up slope - but adds other
 				// artifacts due to them being pushed off the slice). Also use full precision for high res cases.
@@ -496,10 +493,16 @@ void XeGTAO_MainPass(
 					}
 
 					float SZ = sourceViewspaceDepth.SampleLevel(depthSampler, sampleScreenPos, mipLevel).x;
+
+					if (SZ > 1e6f)  // sky
+						continue;
+
 					float3 samplePos = XeGTAO_ComputeViewspacePosition(sampleScreenPos, SZ, consts);
 
 					float3 sampleDelta = samplePos - float3(pixCenterPos);
 					lpfloat sampleDist = (lpfloat)length(sampleDelta);
+
+					float giBoost = 1 + consts.GIDistanceCompensation * smoothstep(0, consts.GICompensationMaxDist, s * consts.EffectRadius);
 
 					// approx lines 23, 24 from the paper, unrolled
 					lpfloat3 sampleHorizonVec = (lpfloat3)(sampleDelta / sampleDist);
@@ -526,7 +529,7 @@ void XeGTAO_MainPass(
 							isFrontFace = dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) < 0;
 
 						if (isFrontFace || consts.BackfaceStrength > 0.f) {
-							float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+							float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
 							sampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
 
 							sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
@@ -565,7 +568,7 @@ void XeGTAO_MainPass(
 
 							lpfloat3 newSampleRadiance = 0;
 							if (isFrontFace || consts.BackfaceStrength > 0.f) {
-								newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+								newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
 								newSampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
 
 								// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;

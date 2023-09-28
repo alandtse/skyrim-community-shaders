@@ -44,9 +44,12 @@ struct ScreenSpaceGI : Feature
 
 		// bitmask
 		float Thickness;
+		float GIDistancePower;
 
 		// gi
 		uint32_t EnableGI;
+		uint32_t CheckBackface;
+		float BackfaceStrength;
 
 		// mix
 		float AOStrength;
@@ -55,7 +58,7 @@ struct ScreenSpaceGI : Feature
 		// debug
 		uint32_t DebugView;
 
-		Vector2 padding;
+		Vector3 pad;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -91,12 +94,14 @@ struct ScreenSpaceGI : Feature
 		bool Enabled = true;
 		bool EnableGI = true;
 		bool UseBitmask = true;
-		uint32_t DebugView = 0;
+
+		bool CheckBackface = true;
 
 		uint32_t SliceCount = 2;
 		uint32_t StepsPerSlice = 5;
 
 		// visual
+		float BackfaceStrength = 0.2f;
 
 		float EffectRadius = 100.f;
 		float EffectFalloffRange = .615f;
@@ -107,7 +112,8 @@ struct ScreenSpaceGI : Feature
 		float ThinOccluderCompensation = 0.f;
 		float DepthMIPSamplingOffset = 3.3f;
 
-		float Thickness = 50.f;
+		float Thickness = 25.f;
+		float GIDistancePower = 1;
 
 		// gi
 		float AOStrength = 1;
@@ -115,6 +121,9 @@ struct ScreenSpaceGI : Feature
 
 		// denoise
 		uint32_t DenoisePasses = 0;
+
+		// debug
+		uint32_t DebugView = 0;
 
 	} settings;
 

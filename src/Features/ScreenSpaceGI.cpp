@@ -19,66 +19,155 @@ public:
 	inline bool isNewFrame() { return isNewFrame(RE::BSGraphics::State::GetSingleton()->uiFrameCount); }
 };
 
+class DisableIf
+{
+private:
+	bool disable;
+
+public:
+	DisableIf(bool disable) :
+		disable(disable)
+	{
+		if (disable)
+			ImGui::BeginDisabled();
+	}
+	~DisableIf()
+	{
+		if (disable)
+			ImGui::EndDisabled();
+	}
+
+	operator bool() { return true; }
+};
+
 void ScreenSpaceGI::DrawSettings()
 {
-	ImGui::Checkbox("Enabled", &settings.Enabled);
-	ImGui::Checkbox("Enable GI", &settings.EnableGI);
-	ImGui::Checkbox("Use Bitmask", &settings.UseBitmask);
+	///////////////////////////////
+	ImGui::SeparatorText("Toggles");
 
-	ImGui::SliderInt("Debug View", (int*)&settings.DebugView, 0, 3);
+	if (ImGui::BeginTable("Toggles", 3)) {
+		ImGui::TableNextColumn();
+		ImGui::Checkbox("Enabled", &settings.Enabled);
+		ImGui::TableNextColumn();
+		ImGui::Checkbox("GI", &settings.EnableGI);
+		ImGui::TableNextColumn();
+		ImGui::Checkbox("Bitmask", &settings.UseBitmask);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("An alternative way to calculate AO/GI");
+
+		ImGui::TableNextColumn();
+		ImGui::Checkbox("Backface Checks", &settings.CheckBackface);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("You don't care if light is as bright at the back of objects as the front, then uncheck this to get some frames.");
+		ImGui::EndTable();
+	}
+
+	///////////////////////////////
+	ImGui::SeparatorText("Quality");
 
 	ImGui::SliderInt("Slices", (int*)&settings.SliceCount, 1, 20);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("How many directions do the samples take. A greater value reduces noise but is more expensive.");
+
 	ImGui::SliderInt("Steps Per Slice", (int*)&settings.StepsPerSlice, 1, 10);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("How many samples does it take in one direction. A greater value enhances the effects but is more expensive.");
 
 	// ImGui::SliderInt("Denoise Passes", (int*)&settings.DenoisePasses, 0, 3);
 
-	ImGui::InputFloat("Effect radius", &settings.EffectRadius, 10.f, 0.0f, "%.2f");
+	///////////////////////////////
+	ImGui::SeparatorText("Visual");
+
+	ImGui::SliderFloat("Effect radius", &settings.EffectRadius, 10.f, 500.0f, "%.1f");
 	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("World (viewspace) effect radius\nExpected range: depends on the scene & requirements, anything from 0.01 to 1000+");
+		ImGui::SetTooltip("World (viewspace) effect radius. Depends on the scene & requirements");
 
-	if (settings.UseBitmask)
-		ImGui::InputFloat("Thickness", &settings.Thickness, 10.f, 0.0f, "%.2f");
-	else {
-		ImGui::InputFloat("Falloff range", &settings.EffectFalloffRange, 0.05f, 0.0f, "%.2f");
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Gently reduce sample impact as it gets out of 'Effect radius' bounds\nExpected range: [0.0, 1.0].");
+	ImGui::SliderFloat("Sample distribution power", &settings.SampleDistributionPower, 1.f, 3.f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Make samples on a slice equally distributed (1.0) or focus more towards the center (>1.0)");
 
-		ImGui::InputFloat("Thin occluder compensation", &settings.ThinOccluderCompensation, 0.05f, 0.0f, "%.2f");
+	ImGui::SliderFloat("Final power", &settings.FinalValuePower, 0.5f, 5.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Applies power function to the final value: occlusion = pow( occlusion, finalPower )");
+
+	ImGui::SliderFloat("Depth MIP sampling offset", &settings.DepthMIPSamplingOffset, 2.f, 6.f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability");
+
+	if (auto _ = DisableIf(!settings.EnableGI)) {
+		ImGui::SliderFloat("GI Distance Power", &settings.GIDistancePower, 0.0f, 1.5f, "%.2f");
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data\nExpected range: [0.0, 0.7]");
+			ImGui::SetTooltip("Compensate bounced light from some distance that is otherwise too weak.");
+	}
+	if (auto _ = DisableIf(!settings.EnableGI || !settings.CheckBackface)) {
+		ImGui::SliderFloat("Backface Lighting Mix", &settings.BackfaceStrength, 0.f, 1.f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("How bright at the back of objects is compared to the front. A small value to make up for foliage translucency.");
 	}
 
-	ImGui::InputFloat("Sample distribution power", &settings.SampleDistributionPower, 0.05f, 0.0f, "%.2f");
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("Make samples on a slice equally distributed (1.0) or focus more towards the center (>1.0)\nExpected range: [1.0, 3.0].");
+	if (settings.UseBitmask) {
+		ImGui::SliderFloat("Thickness", &settings.Thickness, 0.f, 100.0f, "%.1f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("How thick the occluders are. 20 to 30 percent of effect radius is recommended.");
+	} else {
+		ImGui::SliderFloat("Falloff range", &settings.EffectFalloffRange, 0.f, 1.f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Gently reduce sample impact as it gets out of 'Effect radius' bounds");
 
-	ImGui::InputFloat("Final power", &settings.FinalValuePower, 0.05f, 0.0f, "%.2f");
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("Applies power function to the final value: occlusion = pow( occlusion, finalPower )\nExpected range: [0.5, 5.0]");
+		ImGui::SliderFloat("Thin occluder compensation", &settings.ThinOccluderCompensation, 0.f, 0.7f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data");
+	}
 
-	ImGui::InputFloat("Depth MIP sampling offset", &settings.DepthMIPSamplingOffset, 0.05f, 0.0f, "%.2f");
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability\nExpected range: [2.0, 6.0]");
+	///////////////////////////////
+	ImGui::SeparatorText("Composition");
 
-	ImGui::InputFloat("AO Strength", &settings.AOStrength, 0.05f, 0.0f, "%.2f");
-	if (settings.EnableGI)
-		ImGui::InputFloat("GI Strength", &settings.GIStrength, 0.05f, 0.0f, "%.2f");
+	ImGui::SliderFloat("AO Strength", &settings.AOStrength, 0.f, 1.5f, "%.2f");
+	if (auto _ = DisableIf(!settings.EnableGI))
+		ImGui::SliderFloat("GI Strength", &settings.GIStrength, 0.f, 5.f, "%.2f");
 
-	if (ImGui::CollapsingHeader("Debug View")) {
-		ImGui::BulletText("texColor0");
-		ImGui::Image(texColor0->srv.get(), { texColor0->desc.Width * .3f, texColor0->desc.Height * .3f });
+	///////////////////////////////
+	ImGui::SeparatorText("Debug");
 
-		ImGui::BulletText("texColor1");
-		ImGui::Image(texColor1->srv.get(), { texColor1->desc.Width * .3f, texColor1->desc.Height * .3f });
+	if (ImGui::BeginTable("Debug Views", 4)) {
+		ImGui::TableNextColumn();
+		ImGui::RadioButton("None", (int*)&settings.DebugView, 0);
+		ImGui::TableNextColumn();
+		ImGui::RadioButton("AO", (int*)&settings.DebugView, 1);
+		ImGui::TableNextColumn();
+		ImGui::RadioButton("GI", (int*)&settings.DebugView, 2);
+		ImGui::TableNextColumn();
+		ImGui::RadioButton("AO + GI", (int*)&settings.DebugView, 3);
+		ImGui::EndTable();
+	}
 
-		ImGui::BulletText("texGI0");
-		ImGui::Image(texGI0->srv.get(), { texGI0->desc.Width * .3f, texGI0->desc.Height * .3f });
+	if (ImGui::TreeNode("Buffer Viewer")) {
+		if (ImGui::TreeNode("texColor0")) {
+			ImGui::Image(texColor0->srv.get(), { texColor0->desc.Width * .3f, texColor0->desc.Height * .3f });
+			ImGui::TreePop();
+		}
 
-		ImGui::BulletText("texGI1");
-		ImGui::Image(texGI1->srv.get(), { texGI1->desc.Width * .3f, texGI1->desc.Height * .3f });
+		if (ImGui::TreeNode("texColor1")) {
+			ImGui::Image(texColor1->srv.get(), { texColor1->desc.Width * .3f, texColor1->desc.Height * .3f });
+			ImGui::TreePop();
+		}
 
-		ImGui::BulletText("texEdge");
-		ImGui::Image(texEdge->srv.get(), { texEdge->desc.Width * .3f, texEdge->desc.Height * .3f });
+		if (ImGui::TreeNode("texGI0")) {
+			ImGui::Image(texGI0->srv.get(), { texGI0->desc.Width * .3f, texGI0->desc.Height * .3f });
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNode("texGI1")) {
+			ImGui::Image(texGI1->srv.get(), { texGI1->desc.Width * .3f, texGI1->desc.Height * .3f });
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNode("texEdge")) {
+			ImGui::Image(texEdge->srv.get(), { texEdge->desc.Width * .3f, texEdge->desc.Height * .3f });
+			ImGui::TreePop();
+		}
+
+		ImGui::TreePop();
 	}
 }
 
@@ -292,8 +381,11 @@ void ScreenSpaceGI::UpdateBuffer()
 		.NoiseIndex = (int32_t)viewport->uiFrameCount,
 
 		.Thickness = settings.Thickness,
+		.GIDistancePower = settings.GIDistancePower,
 
 		.EnableGI = settings.EnableGI,
+		.CheckBackface = settings.CheckBackface,
+		.BackfaceStrength = settings.BackfaceStrength,
 
 		.AOStrength = settings.AOStrength,
 		.GIStrength = settings.GIStrength,
@@ -308,20 +400,29 @@ void ScreenSpaceGI::UpdateBuffer()
 	ssgiCB->Update(ssgi_cb_contents);
 }
 
-void ScreenSpaceGI::Draw(const RE::BSShader*, const uint32_t)
+void ScreenSpaceGI::Draw(const RE::BSShader* shader, const uint32_t)
 {
-	// if (shader->shaderType.get() != RE::BSShader::Type::Lighting)
-	// 	return;
+	if (shader->shaderType.get() != RE::BSShader::Type::Lighting)
+		return;
 
-	// static FrameChecker frame_checker;
-	// if (frame_checker.isNewFrame()) {
-	// 	auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
-	// 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	static FrameChecker frame_checker;
+	static bool hasIdea = false;
+	if (frame_checker.isNewFrame())
+		hasIdea = false;
+	if (!hasIdea) {
+		auto context = RE::BSGraphics::Renderer::GetSingleton()->GetRuntimeData().context;
+		auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 
-	// 	ID3D11RenderTargetView* rtvs[2];
-	// 	context->OMGetRenderTargets(3, rtvs, nullptr);
-	// 	normalSwap = rtvs[2] == renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK_SWAP].RTV;
-	// }
+		ID3D11RenderTargetView* rtvs[3];
+		context->OMGetRenderTargets(3, rtvs, nullptr);
+		if (rtvs[2] == renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK_SWAP].RTV) {
+			normalSwap = true;
+			hasIdea = true;
+		} else if (rtvs[2] == renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK].RTV) {
+			normalSwap = false;
+			hasIdea = true;
+		}
+	}
 }
 
 void ScreenSpaceGI::DrawDeferred()

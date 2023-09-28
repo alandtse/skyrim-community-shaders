@@ -474,6 +474,7 @@ void XeGTAO_MainPass(
 
 				// note: when sampling, using point_point_point or point_point_linear sampler works, but linear_linear_linear will cause unwanted interpolation between neighbouring depth values on the same MIP level!
 				const lpfloat mipLevel = (lpfloat)clamp(log2(sampleOffsetLength) - consts.DepthMIPSamplingOffset, 0, XE_GTAO_DEPTH_MIP_LEVELS);
+				const lpfloat giBoost = pow(2, consts.GIDistancePower * mipLevel);
 
 				// Snap to pixel center (more correct direction math, avoids artifacts due to sampling pos not matching depth texel center - messes up slope - but adds other
 				// artifacts due to them being pushed off the slice). Also use full precision for high res cases.
@@ -513,17 +514,26 @@ void XeGTAO_MainPass(
 
 					uint2 bitsRange = uint2(
 						floor(angleRange.x * BITMASK_NUM_BITS),
-						max(round((angleRange.y - angleRange.x) * BITMASK_NUM_BITS - .01), 0));  // ceil gets too gray for flat ground; -.01 as bias to remove some gray too.
+						max(round((angleRange.y - angleRange.x) * BITMASK_NUM_BITS), 0));  // ceil gets too gray for flat ground
 					uint maskedBits = ((1 << bitsRange.y) - 1) << bitsRange.x;
 
-					if (consts.EnableGI) {
+					if (consts.EnableGI && maskedBits) {
 						// IL
-						// float3 sampleNormal = UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy);
-						float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
-						sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
-						sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
-						// sampleRadiance *= dot(sampleNormal, sampleHorizonVec) < 0;
-						radiance += sampleRadiance;
+						bool isFrontFace = true;
+						if (consts.CheckBackface)
+							isFrontFace = dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) < 0;
+
+						if (isFrontFace || consts.BackfaceStrength > 0.f) {
+							float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
+							sampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
+
+							sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
+							sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
+							// sampleRadiance *= dot(sampleNormal, sampleHorizonVec) < 0;
+							sampleRadiance = max(0, sampleRadiance);
+
+							radiance += sampleRadiance;
+						}
 					}
 
 					bitmask |= maskedBits;
@@ -547,22 +557,31 @@ void XeGTAO_MainPass(
 
 					if (consts.EnableGI) {
 						if (shc > horizonCos) {
-							lpfloat3 newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
-							// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;
+							bool isFrontFace = true;
+							if (consts.CheckBackface)
+								isFrontFace = dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) < 0;
 
-							float angle_prev = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(horizonCos);
-							float angle_curr = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(shc);
-							newSampleRadiance *= IlIntegral(0.5 * float2(dot(directionVec.xy, viewspaceNormal.xy) * sideSign, -viewspaceNormal.z),
-								cos(angle_prev), cos(angle_curr));
-							// newSampleRadiance *= ComputeHorizonContribution(viewVec, directionVec, viewspaceNormal, XeGTAO_FastACos(horizonCos), XeGTAO_FastACos(shc));
+							lpfloat3 newSampleRadiance = 0;
+							if (isFrontFace || consts.BackfaceStrength > 0.f) {
+								newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
+								newSampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
 
-							// depth filtering. HBIL pp.38
-							float t = smoothstep(0, 1, dot(viewspaceNormal, sampleHorizonVec));
-							// float t = dot(viewspaceNormal, sampleHorizonVec) > -EPS;
-							// float t = 1;
-							sampleRadiance = lerp(sampleRadiance, newSampleRadiance, t);
+								// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;
 
-							radiance += max(0, sampleRadiance);
+								float angle_prev = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(horizonCos);
+								float angle_curr = n + sideSign * XE_GTAO_PI_HALF - XeGTAO_FastACos(shc);
+								newSampleRadiance *= IlIntegral(0.5 * float2(dot(directionVec.xy, viewspaceNormal.xy) * sideSign, -viewspaceNormal.z),
+									cos(angle_prev), cos(angle_curr));
+								// newSampleRadiance *= ComputeHorizonContribution(viewVec, directionVec, viewspaceNormal, XeGTAO_FastACos(horizonCos), XeGTAO_FastACos(shc));
+
+								// depth filtering. HBIL pp.38
+								float t = smoothstep(0, 1, dot(viewspaceNormal, sampleHorizonVec));
+								// float t = dot(viewspaceNormal, sampleHorizonVec) > -EPS;
+								// float t = 1;
+								sampleRadiance = lerp(sampleRadiance, newSampleRadiance, t);
+
+								radiance += max(0, sampleRadiance);
+							}
 
 							horizonCos = shc;
 						}
@@ -620,7 +639,7 @@ void XeGTAO_MainPass(
 		radiance *= albedo / (lpfloat)sliceCount;
 
 		visibility = pow(visibility, (lpfloat)consts.FinalValuePower);
-		visibility = max((lpfloat)0.03, visibility);  // disallow total occlusion (which wouldn't make any sense anyhow since pixel is visible but also helps with packing bent normals)
+		visibility = clamp(visibility, (lpfloat)0.03, (lpfloat)1.0);  // disallow total occlusion (which wouldn't make any sense anyhow since pixel is visible but also helps with packing bent normals)
 
 #ifdef XE_GTAO_COMPUTE_BENT_NORMALS
 		bentNormal = normalize(bentNormal);

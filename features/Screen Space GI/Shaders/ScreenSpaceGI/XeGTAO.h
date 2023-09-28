@@ -98,9 +98,14 @@ namespace XeGTAO
 
 		// bitmask
 		float Thickness;
+		float GIDistancePower;
 
+		// gi
 		uint EnableGI;
+		uint CheckBackface;
+		float BackfaceStrength;
 
+		// mix
 		float AOStrength;
 		float GIStrength;
 

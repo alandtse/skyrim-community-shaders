@@ -74,7 +74,6 @@ namespace Util
 		return nullptr;
 	}
 
-	
 	ID3D11UnorderedAccessView* GetUAVFromSRV(ID3D11ShaderResourceView* a_srv)
 	{
 		if (a_srv) {
@@ -260,5 +259,25 @@ namespace Util
 			}
 		}
 		return result;
+	}
+}
+
+namespace nlohmann
+{
+	void to_json(json& j, const Vector3& v)
+	{
+		j = json{ v.x, v.y, v.z };
+	}
+	void from_json(const json& j, Vector3& v)
+	{
+		v = { j[0].get<float>(), j[1].get<float>(), j[2].get<float>() };
+	}
+	void to_json(json& j, const Vector2& v)
+	{
+		j = json{ v.x, v.y };
+	}
+	void from_json(const json& j, Vector2& v)
+	{
+		v = { j[0].get<float>(), j[1].get<float>() };
 	}
 }

@@ -34,7 +34,6 @@ struct ScreenSpaceGI : Feature
 		float EffectFalloffRange;
 
 		float RadiusMultiplier;
-		float FinalValuePower;
 		float DenoiseBlurBeta;
 
 		float SampleDistributionPower;
@@ -44,21 +43,22 @@ struct ScreenSpaceGI : Feature
 
 		// bitmask
 		float Thickness;
-		float GIDistancePower;
 
 		// gi
 		uint32_t EnableGI;
 		uint32_t CheckBackface;
 		float BackfaceStrength;
+		float GIBounceFade;
 
 		// mix
-		float AOStrength;
+		Vector2 AOClamp;
+		float AOPower;
+		Vector2 AORemap;
+
 		float GIStrength;
 
 		// debug
 		uint32_t DebugView;
-
-		Vector3 pad;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -67,6 +67,7 @@ struct ScreenSpaceGI : Feature
 
 	ID3D11ComputeShader* hilbertLutCompute = nullptr;
 	ID3D11ComputeShader* prefilterDepthsCompute = nullptr;
+	ID3D11ComputeShader* fetchRadianceCompute = nullptr;
 	ID3D11ComputeShader* ssgiCompute = nullptr;
 	ID3D11ComputeShader* ssgiBitmaskCompute = nullptr;
 	ID3D11ComputeShader* denoiseCompute = nullptr;
@@ -79,6 +80,7 @@ struct ScreenSpaceGI : Feature
 	Texture2D* texGI0 = nullptr;
 	Texture2D* texGI1 = nullptr;
 	Texture2D* texEdge = nullptr;
+	Texture2D* texRadiance = nullptr;
 	Texture2D* texColor0 = nullptr;
 	Texture2D* texColor1 = nullptr;
 
@@ -101,23 +103,24 @@ struct ScreenSpaceGI : Feature
 		uint32_t StepsPerSlice = 5;
 
 		// visual
-		float BackfaceStrength = 0.2f;
-
-		float EffectRadius = 100.f;
+		float EffectRadius = 200.f;
 		float EffectFalloffRange = .615f;
-
-		float FinalValuePower = 2.2f;
 
 		float SampleDistributionPower = 2.f;
 		float ThinOccluderCompensation = 0.f;
 		float DepthMIPSamplingOffset = 3.3f;
 
-		float Thickness = 25.f;
-		float GIDistancePower = 1;
+		float Thickness = 50.f;
 
 		// gi
-		float AOStrength = 1;
-		float GIStrength = 2;
+		float BackfaceStrength = 0.2f;
+		float GIBounceFade = 0.98f;
+
+		// mix
+		Vector2 AOClamp = { 0.03, 1 };
+		float AOPower = 2.2f;
+		Vector2 AORemap = { 0.03, 1 };
+		float GIStrength = 1;
 
 		// denoise
 		uint32_t DenoisePasses = 0;

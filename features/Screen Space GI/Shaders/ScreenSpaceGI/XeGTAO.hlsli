@@ -474,7 +474,9 @@ void XeGTAO_MainPass(
 
 				// note: when sampling, using point_point_point or point_point_linear sampler works, but linear_linear_linear will cause unwanted interpolation between neighbouring depth values on the same MIP level!
 				const lpfloat mipLevel = (lpfloat)clamp(log2(sampleOffsetLength) - consts.DepthMIPSamplingOffset, 0, XE_GTAO_DEPTH_MIP_LEVELS);
-				const lpfloat giBoost = pow(2, consts.GIDistancePower * mipLevel);
+				// lpfloat giBoost = 1;
+				// if (consts.EnableGI)
+				// 	giBoost = exp2(mipLevel * consts.GIDistanceMult);
 
 				// Snap to pixel center (more correct direction math, avoids artifacts due to sampling pos not matching depth texel center - messes up slope - but adds other
 				// artifacts due to them being pushed off the slice). Also use full precision for high res cases.
@@ -509,12 +511,12 @@ void XeGTAO_MainPass(
 					float angleFront = -sideSign * XeGTAO_FastACos(dot(sampleHorizonVec, viewVec));
 					float angleBack = -sideSign * XeGTAO_FastACos(dot(sampleBackHorizonVec, viewVec));
 					float2 angleRange = sideSign == -1 ? float2(angleFront, angleBack) : float2(angleBack, angleFront);
-					angleRange = saturate((angleRange + n) / XE_GTAO_PI + .5);
+					angleRange = smoothstep(0, 1, (angleRange + n) / XE_GTAO_PI + .5);  // https://discord.com/channels/586242553746030596/586245736413528082/1102228968247144570
 					// angleRange = clamp(angleRange, -XE_GTAO_PI_HALF, XE_GTAO_PI_HALF);
 
 					uint2 bitsRange = uint2(
 						floor(angleRange.x * BITMASK_NUM_BITS),
-						max(round((angleRange.y - angleRange.x) * BITMASK_NUM_BITS), 0));  // ceil gets too gray for flat ground
+						round((angleRange.y - angleRange.x) * BITMASK_NUM_BITS));  // ceil gets too gray for flat ground
 					uint maskedBits = ((1 << bitsRange.y) - 1) << bitsRange.x;
 
 					if (consts.EnableGI && maskedBits) {
@@ -524,7 +526,7 @@ void XeGTAO_MainPass(
 							isFrontFace = dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) < 0;
 
 						if (isFrontFace || consts.BackfaceStrength > 0.f) {
-							float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
+							float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
 							sampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
 
 							sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
@@ -563,7 +565,7 @@ void XeGTAO_MainPass(
 
 							lpfloat3 newSampleRadiance = 0;
 							if (isFrontFace || consts.BackfaceStrength > 0.f) {
-								newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
+								newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
 								newSampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
 
 								// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;
@@ -637,9 +639,6 @@ void XeGTAO_MainPass(
 		}
 		visibility /= (lpfloat)sliceCount;
 		radiance *= albedo / (lpfloat)sliceCount;
-
-		visibility = pow(visibility, (lpfloat)consts.FinalValuePower);
-		visibility = clamp(visibility, (lpfloat)0.03, (lpfloat)1.0);  // disallow total occlusion (which wouldn't make any sense anyhow since pixel is visible but also helps with packing bent normals)
 
 #ifdef XE_GTAO_COMPUTE_BENT_NORMALS
 		bentNormal = normalize(bentNormal);

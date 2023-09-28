@@ -14,3 +14,12 @@ namespace Util
 	std::string DefinesToString(std::vector<std::pair<const char*, const char*>>& defines);
 	std::string DefinesToString(std::vector<D3D_SHADER_MACRO>& defines);
 }
+
+// json io helpers
+namespace nlohmann
+{
+	void to_json(json& j, const Vector3& v);
+	void from_json(const json& j, Vector3& v);
+	void to_json(json& j, const Vector2& v);
+	void from_json(const json& j, Vector2& v);
+}

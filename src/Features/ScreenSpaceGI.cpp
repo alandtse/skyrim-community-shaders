@@ -4,6 +4,29 @@
 
 #include "SubsurfaceScattering.h"
 
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	ScreenSpaceGI::Settings,
+	Enabled,
+	EnableGI,
+	UseBitmask,
+	CheckBackface,
+	SliceCount,
+	StepsPerSlice,
+	BackfaceStrength,
+	EffectRadius,
+	EffectFalloffRange,
+	SampleDistributionPower,
+	ThinOccluderCompensation,
+	DepthMIPSamplingOffset,
+	Thickness,
+	BackfaceStrength,
+	GIBounceFade,
+	AOClamp,
+	AOPower,
+	AORemap,
+	GIStrength,
+	DebugView)
+
 class FrameChecker
 {
 private:
@@ -82,22 +105,18 @@ void ScreenSpaceGI::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("World (viewspace) effect radius. Depends on the scene & requirements");
 
-	ImGui::SliderFloat("Sample distribution power", &settings.SampleDistributionPower, 1.f, 3.f, "%.2f");
+	ImGui::SliderFloat("Sample Distribution Power", &settings.SampleDistributionPower, 1.f, 3.f, "%.2f");
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("Make samples on a slice equally distributed (1.0) or focus more towards the center (>1.0)");
 
-	ImGui::SliderFloat("Final power", &settings.FinalValuePower, 0.5f, 5.0f, "%.2f");
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip("Applies power function to the final value: occlusion = pow( occlusion, finalPower )");
-
-	ImGui::SliderFloat("Depth MIP sampling offset", &settings.DepthMIPSamplingOffset, 2.f, 6.f, "%.2f");
+	ImGui::SliderFloat("MIP Sampling Offset", &settings.DepthMIPSamplingOffset, 2.f, 6.f, "%.2f");
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability");
 
 	if (auto _ = DisableIf(!settings.EnableGI)) {
-		ImGui::SliderFloat("GI Distance Power", &settings.GIDistancePower, 0.0f, 1.5f, "%.2f");
+		ImGui::SliderFloat("GI Bounce", &settings.GIBounceFade, 0.0f, 1.0f, "%.2f");
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Compensate bounced light from some distance that is otherwise too weak.");
+			ImGui::SetTooltip("How much of this frame's GI gets carried to the next frame. Simulates multiple light bounces.");
 	}
 	if (auto _ = DisableIf(!settings.EnableGI || !settings.CheckBackface)) {
 		ImGui::SliderFloat("Backface Lighting Mix", &settings.BackfaceStrength, 0.f, 1.f, "%.2f");
@@ -110,11 +129,11 @@ void ScreenSpaceGI::DrawSettings()
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("How thick the occluders are. 20 to 30 percent of effect radius is recommended.");
 	} else {
-		ImGui::SliderFloat("Falloff range", &settings.EffectFalloffRange, 0.f, 1.f, "%.2f");
+		ImGui::SliderFloat("Falloff Range", &settings.EffectFalloffRange, 0.f, 1.f, "%.2f");
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("Gently reduce sample impact as it gets out of 'Effect radius' bounds");
 
-		ImGui::SliderFloat("Thin occluder compensation", &settings.ThinOccluderCompensation, 0.f, 0.7f, "%.2f");
+		ImGui::SliderFloat("Thin Occluder Compensation", &settings.ThinOccluderCompensation, 0.f, 0.7f, "%.2f");
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("Slightly reduce impact of samples further back to counter the bias from depth-based (incomplete) input scene geometry data");
 	}
@@ -122,7 +141,18 @@ void ScreenSpaceGI::DrawSettings()
 	///////////////////////////////
 	ImGui::SeparatorText("Composition");
 
-	ImGui::SliderFloat("AO Strength", &settings.AOStrength, 0.f, 1.5f, "%.2f");
+	ImGui::SliderFloat2("AO Clamp", &settings.AOClamp.x, 0.f, 1.f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Clamps Raw AO visibility. Usually don't need change");
+	ImGui::SliderFloat("AO Power", &settings.AOPower, 0.5f, 5.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Applies power function within the clamped range.");
+	ImGui::SliderFloat2("AO Remap", &settings.AORemap.x, 0.f, 1.f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Remaps the clamped value to this range. The second parameter is basically AO strength.");
+
+	ImGui::Spacing();
+
 	if (auto _ = DisableIf(!settings.EnableGI))
 		ImGui::SliderFloat("GI Strength", &settings.GIStrength, 0.f, 5.f, "%.2f");
 
@@ -146,22 +176,22 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::Image(texColor0->srv.get(), { texColor0->desc.Width * .3f, texColor0->desc.Height * .3f });
 			ImGui::TreePop();
 		}
-
 		if (ImGui::TreeNode("texColor1")) {
 			ImGui::Image(texColor1->srv.get(), { texColor1->desc.Width * .3f, texColor1->desc.Height * .3f });
 			ImGui::TreePop();
 		}
-
+		if (ImGui::TreeNode("texRadiance")) {
+			ImGui::Image(texRadiance->srv.get(), { texRadiance->desc.Width * .3f, texRadiance->desc.Height * .3f });
+			ImGui::TreePop();
+		}
 		if (ImGui::TreeNode("texGI0")) {
 			ImGui::Image(texGI0->srv.get(), { texGI0->desc.Width * .3f, texGI0->desc.Height * .3f });
 			ImGui::TreePop();
 		}
-
 		if (ImGui::TreeNode("texGI1")) {
 			ImGui::Image(texGI1->srv.get(), { texGI1->desc.Width * .3f, texGI1->desc.Height * .3f });
 			ImGui::TreePop();
 		}
-
 		if (ImGui::TreeNode("texEdge")) {
 			ImGui::Image(texEdge->srv.get(), { texEdge->desc.Width * .3f, texEdge->desc.Height * .3f });
 			ImGui::TreePop();
@@ -182,6 +212,7 @@ void ScreenSpaceGI::ClearComputeShader()
 	hilbertLUTGenFlag = true;
 
 	CLEARCOMP(prefilterDepthsCompute)
+	CLEARCOMP(fetchRadianceCompute)
 	CLEARCOMP(ssgiCompute)
 	CLEARCOMP(ssgiBitmaskCompute)
 	CLEARCOMP(denoiseCompute)
@@ -202,6 +233,8 @@ void ScreenSpaceGI::SetupResources()
 		hilbertLutCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSGenerateHibertLUT");
 	if (!prefilterDepthsCompute)
 		prefilterDepthsCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSPrefilterDepths16x16");
+	if (!fetchRadianceCompute)
+		fetchRadianceCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSFetchRadiance");
 	if (!ssgiCompute)
 		ssgiCompute = (ID3D11ComputeShader*)Util::CompileShader(shader_path, { { "", "" } }, "cs_5_0", "CSGTAO");
 	if (!ssgiBitmaskCompute)
@@ -253,6 +286,9 @@ void ScreenSpaceGI::SetupResources()
 			texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
 			{
+				texColor0 = new Texture2D(texDesc);
+				texColor0->CreateSRV(srvDesc);
+
 				texColor1 = new Texture2D(texDesc);
 				texColor1->CreateSRV(srvDesc);
 				texColor1->CreateUAV(uavDesc);
@@ -262,8 +298,9 @@ void ScreenSpaceGI::SetupResources()
 			texDesc.MiscFlags |= D3D11_RESOURCE_MISC_GENERATE_MIPS;
 
 			{
-				texColor0 = new Texture2D(texDesc);
-				texColor0->CreateSRV(srvDesc);
+				texRadiance = new Texture2D(texDesc);
+				texRadiance->CreateSRV(srvDesc);
+				texRadiance->CreateUAV(uavDesc);
 			}
 
 			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
@@ -325,11 +362,15 @@ void ScreenSpaceGI::SetupResources()
 
 void ScreenSpaceGI::Load(json& o_json)
 {
+	if (o_json[GetName()].is_object())
+		settings = o_json[GetName()];
+
 	Feature::Load(o_json);
 }
 
-void ScreenSpaceGI::Save(json&)
+void ScreenSpaceGI::Save(json& o_json)
 {
+	o_json[GetName()] = settings;
 }
 
 void ScreenSpaceGI::GenerateHilbertLUT()
@@ -373,7 +414,6 @@ void ScreenSpaceGI::UpdateBuffer()
 		.EffectRadius = settings.EffectRadius,
 		.EffectFalloffRange = settings.EffectFalloffRange,
 		.RadiusMultiplier = 1.f,
-		.FinalValuePower = settings.FinalValuePower,
 		.DenoiseBlurBeta = 1.2f,
 		.SampleDistributionPower = settings.SampleDistributionPower,
 		.ThinOccluderCompensation = settings.ThinOccluderCompensation,
@@ -381,13 +421,15 @@ void ScreenSpaceGI::UpdateBuffer()
 		.NoiseIndex = (int32_t)viewport->uiFrameCount,
 
 		.Thickness = settings.Thickness,
-		.GIDistancePower = settings.GIDistancePower,
 
 		.EnableGI = settings.EnableGI,
 		.CheckBackface = settings.CheckBackface,
 		.BackfaceStrength = settings.BackfaceStrength,
+		.GIBounceFade = settings.GIBounceFade,
 
-		.AOStrength = settings.AOStrength,
+		.AOClamp = settings.AOClamp,
+		.AOPower = settings.AOPower,
+		.AORemap = settings.AORemap,
 		.GIStrength = settings.GIStrength,
 
 		.DebugView = settings.DebugView
@@ -447,14 +489,21 @@ void ScreenSpaceGI::DrawDeferred()
 
 	ID3D11ShaderResourceView* srvs[5] = {
 		renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV,
-		renderer->GetRuntimeData().renderTargets[normalSwap ? RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK_SWAP : RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK].SRV,
-		texHilbertLUT->srv.get(),
-		SubsurfaceScattering::GetSingleton()->albedoTexture->srv.get(),
-		texColor0->srv.get()
+		nullptr,
+		nullptr,
+		nullptr,
+		nullptr,
 	};
+	ID3D11UnorderedAccessView* uavs[5] = { nullptr };
 	ID3D11Buffer* cbs[1] = { ssgiCB->CB() };
 	ID3D11SamplerState* samplers[2] = { pointSampler, linearSampler };
-	ID3D11UnorderedAccessView* uavs[5] = { nullptr };
+
+	auto resetVs = [&]() {
+		memset(srvs, 0, sizeof(void*) * ARRAYSIZE(srvs));
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+		memset(uavs, 0, sizeof(void*) * ARRAYSIZE(uavs));
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	};
 
 	context->CSSetConstantBuffers(0, ARRAYSIZE(cbs), cbs);
 	context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
@@ -462,24 +511,44 @@ void ScreenSpaceGI::DrawDeferred()
 	// copy color
 	context->CopySubresourceRegion(texColor0->resource.get(), 0, 0, 0, 0,
 		renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kSNOW_SWAP].texture, 0, nullptr);
-	context->GenerateMips(texColor0->srv.get());
 
 	// prefilter depths
 	{
 		memcpy(uavs, uavWorkingDepth, sizeof(void*) * ARRAYSIZE(uavWorkingDepth));
 
 		context->CSSetShaderResources(0, 1, srvs);
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavWorkingDepth), uavs, nullptr);
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 		context->CSSetShader(prefilterDepthsCompute, nullptr, 0);
 		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 16.0f), (uint32_t)std::ceil(dynamic_res[1] / 16.0f), 1);
 	}
 
-	memset(uavs, 0, sizeof(void*) * ARRAYSIZE(uavs));
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	resetVs();
+
+	// fetch radiance
+	{
+		srvs[0] = texColor0->srv.get();
+		srvs[1] = nullptr;  // ambient placeholder
+		srvs[2] = texGI0->srv.get();
+		srvs[3] = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV;
+		uavs[0] = texRadiance->uav.get();
+
+		context->CSSetShaderResources(0, 4, srvs);
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		context->CSSetShader(fetchRadianceCompute, nullptr, 0);
+		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 32.0f), (uint32_t)std::ceil(dynamic_res[1] / 32.0f), 1);
+
+		context->GenerateMips(texRadiance->srv.get());
+	}
+
+	resetVs();
 
 	// main ao/gi pass
 	{
 		srvs[0] = texWorkingDepth->srv.get();
+		srvs[1] = renderer->GetRuntimeData().renderTargets[normalSwap ? RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK_SWAP : RE::RENDER_TARGETS::kNORMAL_TAAMASK_SSRMASK].SRV;
+		srvs[2] = texHilbertLUT->srv.get();
+		srvs[3] = SubsurfaceScattering::GetSingleton()->albedoTexture->srv.get();
+		srvs[4] = texRadiance->srv.get();
 		uavs[0] = texGI0->uav.get();
 		uavs[1] = texEdge->uav.get();
 
@@ -489,10 +558,7 @@ void ScreenSpaceGI::DrawDeferred()
 		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 32.0f), (uint32_t)std::ceil(dynamic_res[1] / 32.0f), 1);
 	}
 
-	memset(srvs, 0, sizeof(void*) * ARRAYSIZE(srvs));
-	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-	memset(uavs, 0, sizeof(void*) * ARRAYSIZE(uavs));
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	resetVs();
 
 	// denoise
 	bool isFinal0 = true;
@@ -511,10 +577,7 @@ void ScreenSpaceGI::DrawDeferred()
 		context->CSSetShader(i + 1 == settings.DenoisePasses ? denoiseFinalCompute : denoiseCompute, nullptr, 0);
 		context->Dispatch((uint32_t)std::ceil(dynamic_res[0] / 16.0f), (uint32_t)std::ceil(dynamic_res[1] / 16.0f), 1);
 
-		memset(srvs, 0, sizeof(void*) * ARRAYSIZE(srvs));
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-		memset(uavs, 0, sizeof(void*) * ARRAYSIZE(uavs));
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		resetVs();
 
 		isFinal0 = !isFinal0;
 	}

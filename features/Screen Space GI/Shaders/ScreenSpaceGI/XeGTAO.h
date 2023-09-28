@@ -88,7 +88,6 @@ namespace XeGTAO
 		float EffectFalloffRange;
 
 		float RadiusMultiplier;
-		float FinalValuePower;
 		float DenoiseBlurBeta;
 
 		float SampleDistributionPower;
@@ -98,15 +97,17 @@ namespace XeGTAO
 
 		// bitmask
 		float Thickness;
-		float GIDistancePower;
 
 		// gi
 		uint EnableGI;
 		uint CheckBackface;
 		float BackfaceStrength;
+		float GIBounceFade;
 
 		// mix
-		float AOStrength;
+		Vector2 AOClamp;
+		float AOPower;
+		Vector2 AORemap;
 		float GIStrength;
 
 		// debug
@@ -237,7 +238,7 @@ namespace XeGTAO
 		consts.RadiusMultiplier = settings.RadiusMultiplier;
 		consts.SampleDistributionPower = settings.SampleDistributionPower;
 		consts.ThinOccluderCompensation = settings.ThinOccluderCompensation;
-		consts.FinalValuePower = settings.FinalValuePower;
+		// consts.FinalValuePower = settings.FinalValuePower;
 		consts.DepthMIPSamplingOffset = settings.DepthMIPSamplingOffset;
 		consts.NoiseIndex = (settings.DenoisePasses > 0) ? (frameCounter % 64) : (0);
 	}

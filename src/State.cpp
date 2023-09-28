@@ -42,8 +42,8 @@ void State::Draw()
 
 void State::DrawDeferred()
 {
-	SubsurfaceScattering::GetSingleton()->DrawDeferred();
 	ScreenSpaceGI::GetSingleton()->DrawDeferred();
+	SubsurfaceScattering::GetSingleton()->DrawDeferred();
 }
 
 void State::Reset()

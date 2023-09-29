@@ -63,8 +63,7 @@ struct ScreenSpaceGI : Feature
 
 		float GICompensationMaxDist;  // idk why
 		float AmbientSource;
-
-		float pad;
+		float DirectLightAO;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -129,6 +128,7 @@ struct ScreenSpaceGI : Feature
 		Vector2 AOClamp = { 0.03, 1 };
 		float AOPower = 2.2f;
 		Vector2 AORemap = { 0.03, 1 };
+		float DirectLightAO = 0.1f;
 		float GIStrength = 1;
 
 		// denoise

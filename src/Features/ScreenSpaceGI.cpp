@@ -65,6 +65,16 @@ public:
 	operator bool() { return true; }
 };
 
+bool percentageSlider(const char* label, float* data)
+{
+	float percentageData = (*data) * 1e2f;
+	bool retval = ImGui::SliderFloat(label, &percentageData, 0.f, 100.f, "%.1f %%");
+	(*data) = percentageData * 1e-2f;
+	return retval;
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+
 void ScreenSpaceGI::DrawSettings()
 {
 	///////////////////////////////
@@ -115,6 +125,10 @@ void ScreenSpaceGI::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("Remaps the clamped value to this range. The first parameter is basically inverted AO strength.");
 
+	percentageSlider("Direct Light AO", &settings.DirectLightAO);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("AO usually influences ambient lights only, but you can make it affect direct lights too if you wish.");
+
 	if (auto _ = DisableIf(!settings.EnableGI))
 		ImGui::SliderFloat("GI Strength", &settings.GIStrength, 0.f, 5.f, "%.2f");
 
@@ -134,11 +148,11 @@ void ScreenSpaceGI::DrawSettings()
 		ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability");
 
 	if (auto _ = DisableIf(!settings.EnableGI)) {
-		ImGui::SliderFloat("Ambient Light Source", &settings.AmbientSource, 0.0f, 1.0f, "%.2f");
+		percentageSlider("Ambient Light Source", &settings.AmbientSource);
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("How much ambient light is added as light source for GI calculation.");
 
-		ImGui::SliderFloat("GI Bounce", &settings.GIBounceFade, 0.0f, 1.0f, "%.2f");
+		percentageSlider("GI Bounce", &settings.GIBounceFade);
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("How much of this frame's GI gets carried to the next frame. Simulates multiple light bounces.");
 
@@ -161,7 +175,7 @@ void ScreenSpaceGI::DrawSettings()
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("How thick the occluders are. 20 to 30 percent of effect radius is recommended.");
 	} else {
-		ImGui::SliderFloat("Falloff Range", &settings.EffectFalloffRange, 0.f, 1.f, "%.2f");
+		percentageSlider("Falloff Range", &settings.EffectFalloffRange);
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("Gently reduce sample impact as it gets out of 'Effect radius' bounds");
 
@@ -451,6 +465,7 @@ void ScreenSpaceGI::UpdateBuffer()
 
 		.GICompensationMaxDist = settings.GICompensationMaxDist,
 		.AmbientSource = settings.AmbientSource,
+		.DirectLightAO = settings.DirectLightAO
 	};
 	ssgi_cb_contents.NDCToViewMul_x_PixelSize = {
 		ssgi_cb_contents.NDCToViewMul.x * ssgi_cb_contents.ViewportPixelSize.x,

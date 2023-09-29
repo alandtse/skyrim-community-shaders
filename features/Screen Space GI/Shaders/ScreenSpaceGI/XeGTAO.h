@@ -119,6 +119,7 @@ namespace XeGTAO
 		float AmbientSource;
 		float DirectLightAO;
 		uint BackfaceAlbedo;
+		float GISaturation;
 	};
 
 	// This is used only for the development (ray traced ground truth).

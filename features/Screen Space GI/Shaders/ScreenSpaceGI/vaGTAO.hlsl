@@ -14,6 +14,8 @@
 // Version history: see XeGTAO.h
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#include "../Common/Color.hlsl"
+
 #ifndef __INTELLISENSE__  // avoids some pesky intellisense errors
 #	include "XeGTAO.h"
 #endif
@@ -157,10 +159,14 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 		break;
 	}
 
+	gi.rgb = lerp(RGBToLuminance(gi.rgb).rrr, gi.rgb, g_GTAOConsts.GISaturation);
+
 	gi.a = saturate((gi.a - g_GTAOConsts.AOClamp.x) / (g_GTAOConsts.AOClamp.y - g_GTAOConsts.AOClamp.x));
 	gi.a = pow(gi.a, g_GTAOConsts.AOPower);
 	gi.a = lerp(g_GTAOConsts.AORemap.x, g_GTAOConsts.AORemap.y, gi.a);
+
 	float3 finalColor = max(0, lerp(1, gi.a, g_GTAOConsts.DirectLightAO) * direct + gi.a * ambient + gi.rgb * g_GTAOConsts.GIStrength * 10.f);
+
 	g_outColor[pixCoord] = float4(finalColor, 1);
 
 	// g_outColor[pixCoord] = float4(gi.rgb, 1);

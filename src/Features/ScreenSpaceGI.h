@@ -61,12 +61,13 @@ struct ScreenSpaceGI : Feature
 		// debug
 		uint32_t DebugView;
 
-		float GICompensationMaxDist;  // idk why but you have to put new variables at the end
+		float GICompensationMaxDist;  // idk why but I have to put new variables at the end
 		float AmbientSource;
 		float DirectLightAO;
 		uint32_t BackfaceAlbedo;
+		float GISaturation;
 
-		Vector3 pad;
+		Vector2 pad;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -119,9 +120,9 @@ struct ScreenSpaceGI : Feature
 		float Thickness = 50.f;
 
 		// gi
-		float AmbientSource = 0.2f;
+		float AmbientSource = 0.05f;
 		bool CheckBackface = true;
-		bool BackfaceAlbedo = true;
+		bool BackfaceAlbedo = false;
 		float BackfaceStrength = 0.1f;
 		float GIBounceFade = 0.5f;
 		float GIDistanceCompensation = 4;
@@ -132,7 +133,8 @@ struct ScreenSpaceGI : Feature
 		float AOPower = 2.2f;
 		Vector2 AORemap = { 0.03, 1 };
 		float DirectLightAO = 0.1f;
-		float GIStrength = 1;
+		float GIStrength = 1.f;
+		float GISaturation = 1.f;
 
 		// denoise
 		uint32_t DenoisePasses = 0;

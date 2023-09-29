@@ -44,25 +44,23 @@ public:
 	inline bool isNewFrame() { return isNewFrame(RE::BSGraphics::State::GetSingleton()->uiFrameCount); }
 };
 
-class DisableIf
+class DisableGuard
 {
 private:
 	bool disable;
 
 public:
-	DisableIf(bool disable) :
+	DisableGuard(bool disable) :
 		disable(disable)
 	{
 		if (disable)
 			ImGui::BeginDisabled();
 	}
-	~DisableIf()
+	~DisableGuard()
 	{
 		if (disable)
 			ImGui::EndDisabled();
 	}
-
-	operator bool() { return true; }
 };
 
 bool percentageSlider(const char* label, float* data)
@@ -91,13 +89,15 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::SetTooltip("An alternative way to calculate AO/GI");
 
 		ImGui::TableNextColumn();
-		if (auto _ = DisableIf(!settings.EnableGI)) {
+		{
+			auto _ = DisableGuard(!settings.EnableGI);
 			ImGui::Checkbox("Backface Checks", &settings.CheckBackface);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("You don't care if light is as bright at the back of objects as the front, then uncheck this to get some frames.");
 		}
 		ImGui::TableNextColumn();
-		if (auto _ = DisableIf(!settings.EnableGI || !settings.CheckBackface)) {
+		{
+			auto _ = DisableGuard(!settings.EnableGI || !settings.CheckBackface);
 			ImGui::Checkbox("Backface Albedo", &settings.BackfaceAlbedo);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("Backface lights will be multiplied with front frace albedo to simulate translucency. Performance cost.");
@@ -138,8 +138,11 @@ void ScreenSpaceGI::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("AO usually influences ambient lights only, but you can make it affect direct lights too if you wish.");
 
-	if (auto _ = DisableIf(!settings.EnableGI))
+	{
+		auto _ = DisableGuard(!settings.EnableGI);
 		ImGui::SliderFloat("GI Strength", &settings.GIStrength, 0.f, 5.f, "%.2f");
+		percentageSlider("GI Saturation", &settings.GISaturation);
+	}
 
 	///////////////////////////////
 	ImGui::SeparatorText("Visual");
@@ -156,7 +159,9 @@ void ScreenSpaceGI::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("Mainly performance (texture memory bandwidth) setting but as a side-effect reduces overshadowing by thin objects and increases temporal instability");
 
-	if (auto _ = DisableIf(!settings.EnableGI)) {
+	{
+		auto _ = DisableGuard(!settings.EnableGI);
+
 		percentageSlider("Ambient Light Source", &settings.AmbientSource);
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("How much ambient light is added as light source for GI calculation.");
@@ -167,13 +172,14 @@ void ScreenSpaceGI::DrawSettings()
 
 		ImGui::SliderFloat("GI Distance Compensation", &settings.GIDistanceCompensation, 0.0f, 9.0f, "%.1f");
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Brighten up further radiance samples that are otherwise too weak.");
+			ImGui::SetTooltip("Brighten up further radiance samples that are otherwise too weak. Creates a wider GI look.");
 
 		ImGui::SliderFloat("GI Compensation Distance", &settings.GICompensationMaxDist, 10.0f, 1000.0f, "%.1f");
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("The distance of maximal compensation/brightening.");
 	}
-	if (auto _ = DisableIf(!settings.EnableGI || !settings.CheckBackface)) {
+	{
+		auto _ = DisableGuard(!settings.EnableGI || !settings.CheckBackface);
 		ImGui::SliderFloat("Backface Lighting Mix", &settings.BackfaceStrength, 0.f, 1.f, "%.2f");
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("How bright at the back of objects is compared to the front. A small value to make up for foliage translucency.");
@@ -476,6 +482,7 @@ void ScreenSpaceGI::UpdateBuffer()
 		.AmbientSource = settings.AmbientSource,
 		.DirectLightAO = settings.DirectLightAO,
 		.BackfaceAlbedo = settings.BackfaceAlbedo,
+		.GISaturation = settings.GISaturation,
 	};
 	ssgi_cb_contents.NDCToViewMul_x_PixelSize = {
 		ssgi_cb_contents.NDCToViewMul.x * ssgi_cb_contents.ViewportPixelSize.x,

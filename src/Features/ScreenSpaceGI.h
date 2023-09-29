@@ -61,9 +61,12 @@ struct ScreenSpaceGI : Feature
 		// debug
 		uint32_t DebugView;
 
-		float GICompensationMaxDist;  // idk why
+		float GICompensationMaxDist;  // idk why but you have to put new variables at the end
 		float AmbientSource;
 		float DirectLightAO;
+		uint32_t BackfaceAlbedo;
+
+		Vector3 pad;
 	};
 	ConstantBuffer* ssgiCB = nullptr;
 
@@ -102,8 +105,6 @@ struct ScreenSpaceGI : Feature
 		bool EnableGI = true;
 		bool UseBitmask = true;
 
-		bool CheckBackface = true;
-
 		uint32_t SliceCount = 2;
 		uint32_t StepsPerSlice = 6;
 
@@ -119,10 +120,12 @@ struct ScreenSpaceGI : Feature
 
 		// gi
 		float AmbientSource = 0.2f;
+		bool CheckBackface = true;
+		bool BackfaceAlbedo = true;
 		float BackfaceStrength = 0.1f;
 		float GIBounceFade = 0.5f;
-		float GIDistanceCompensation = 2;
-		float GICompensationMaxDist = 300;
+		float GIDistanceCompensation = 4;
+		float GICompensationMaxDist = 400;
 
 		// mix
 		Vector2 AOClamp = { 0.03, 1 };

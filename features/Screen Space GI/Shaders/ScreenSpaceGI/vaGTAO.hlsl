@@ -110,7 +110,7 @@ lpfloat2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA
 		g_GTAOConsts.SliceCount, g_GTAOConsts.StepsPerSlice, SpatioTemporalNoise(pixCoord, g_GTAOConsts.NoiseIndex),
 		UnpackNormal(g_srcNormalmap[pixCoord].xy), g_srcAlbedo[pixCoord].rgb,
 		g_GTAOConsts,
-		g_srcWorkingDepth, g_srcNormalmap, g_srcRadiance,
+		g_srcWorkingDepth, g_srcNormalmap, g_srcRadiance, g_srcAlbedo,
 		g_samplerPointClamp, g_samplerPointClamp,
 		g_outWorkingAOTerm, g_outWorkingEdges);
 }

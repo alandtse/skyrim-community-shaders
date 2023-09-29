@@ -271,7 +271,7 @@ float IlIntegral(float2 integral_factor, float cos_prev, float cos_new)
 void XeGTAO_MainPass(
 	const uint2 pixCoord,
 	lpfloat sliceCount, lpfloat stepsPerSlice, const lpfloat2 localNoise, lpfloat3 viewspaceNormal, lpfloat3 albedo, const GTAOConstants consts,
-	Texture2D<lpfloat> sourceViewspaceDepth, Texture2D<float4> sourceNormal, Texture2D<float4> sourceRadiance,
+	Texture2D<lpfloat> sourceViewspaceDepth, Texture2D<float4> sourceNormal, Texture2D<float4> sourceRadiance, Texture2D<float4> sourceAlbedo,
 	SamplerState depthSampler, SamplerState radianceSampler,
 	RWTexture2D<float4> outWorkingAOTerm, RWTexture2D<unorm float> outWorkingEdges)
 {
@@ -524,13 +524,17 @@ void XeGTAO_MainPass(
 
 					if (consts.EnableGI && maskedBits) {
 						// IL
-						bool isFrontFace = true;
-						if (consts.CheckBackface)
-							isFrontFace = dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) < 0;
+						float3 frontBackMult = 1.f;
 
-						if (isFrontFace || consts.BackfaceStrength > 0.f) {
-							float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
-							sampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
+						if (consts.CheckBackface)
+							if (dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) > 0) {  // backface
+								frontBackMult *= consts.BackfaceStrength;
+								if (any(frontBackMult > 0.f) && consts.BackfaceAlbedo)
+									frontBackMult *= sourceAlbedo.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+							}
+
+						if (any(frontBackMult > 0.f)) {
+							float3 sampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * frontBackMult * giBoost;
 
 							sampleRadiance *= countbits(maskedBits & ~bitmask) / float(BITMASK_NUM_BITS);
 							sampleRadiance *= dot(viewspaceNormal, sampleHorizonVec);
@@ -562,14 +566,18 @@ void XeGTAO_MainPass(
 
 					if (consts.EnableGI) {
 						if (shc > horizonCos) {
-							bool isFrontFace = true;
-							if (consts.CheckBackface)
-								isFrontFace = dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) < 0;
+							float3 frontBackMult = 1.f;
 
-							lpfloat3 newSampleRadiance = 0;
-							if (isFrontFace || consts.BackfaceStrength > 0.f) {
-								newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * giBoost;
-								newSampleRadiance *= isFrontFace ? 1 : consts.BackfaceStrength;
+							if (consts.CheckBackface)
+								if (dot(UnpackNormal(sourceNormal.SampleLevel(depthSampler, sampleScreenPos, 0).xy), sampleHorizonVec) > 0) {  // backface
+									frontBackMult *= consts.BackfaceStrength;
+									if (any(frontBackMult > 0.f) && consts.BackfaceAlbedo)
+										frontBackMult *= sourceAlbedo.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb;
+								}
+
+							if (any(frontBackMult > 0.f)) {
+								lpfloat3 newSampleRadiance = 0;
+								newSampleRadiance = sourceRadiance.SampleLevel(radianceSampler, sampleScreenPos, mipLevel).rgb * frontBackMult * giBoost;
 
 								// newSampleRadiance = luminance(newSampleRadiance) > fLightSrcThres ? newSampleRadiance : 0;
 

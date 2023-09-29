@@ -118,6 +118,7 @@ namespace XeGTAO
 		float GICompensationMaxDist;
 		float AmbientSource;
 		float DirectLightAO;
+		uint BackfaceAlbedo;
 	};
 
 	// This is used only for the development (ray traced ground truth).

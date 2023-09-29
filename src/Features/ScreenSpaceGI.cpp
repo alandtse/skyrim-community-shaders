@@ -91,9 +91,18 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::SetTooltip("An alternative way to calculate AO/GI");
 
 		ImGui::TableNextColumn();
-		ImGui::Checkbox("Backface Checks", &settings.CheckBackface);
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("You don't care if light is as bright at the back of objects as the front, then uncheck this to get some frames.");
+		if (auto _ = DisableIf(!settings.EnableGI)) {
+			ImGui::Checkbox("Backface Checks", &settings.CheckBackface);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("You don't care if light is as bright at the back of objects as the front, then uncheck this to get some frames.");
+		}
+		ImGui::TableNextColumn();
+		if (auto _ = DisableIf(!settings.EnableGI || !settings.CheckBackface)) {
+			ImGui::Checkbox("Backface Albedo", &settings.BackfaceAlbedo);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Backface lights will be multiplied with front frace albedo to simulate translucency. Performance cost.");
+		}
+
 		ImGui::EndTable();
 	}
 
@@ -465,7 +474,8 @@ void ScreenSpaceGI::UpdateBuffer()
 
 		.GICompensationMaxDist = settings.GICompensationMaxDist,
 		.AmbientSource = settings.AmbientSource,
-		.DirectLightAO = settings.DirectLightAO
+		.DirectLightAO = settings.DirectLightAO,
+		.BackfaceAlbedo = settings.BackfaceAlbedo,
 	};
 	ssgi_cb_contents.NDCToViewMul_x_PixelSize = {
 		ssgi_cb_contents.NDCToViewMul.x * ssgi_cb_contents.ViewportPixelSize.x,

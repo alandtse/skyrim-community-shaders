@@ -12,8 +12,6 @@ static constexpr REL::Version SHADER_CACHE_VERSION = { 0, 0, 0, 12 };
 
 using namespace std::chrono;
 
-using namespace std::chrono;
-
 namespace SIE
 {
 	enum class ShaderClass

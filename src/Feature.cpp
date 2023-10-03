@@ -5,6 +5,7 @@
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
 #include "Features/LightLimitFix.h"
+#include "Features/RainWetnessEffects.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/SubsurfaceScattering.h"
@@ -80,6 +81,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		ExtendedMaterials::GetSingleton(),
 		WaterBlending::GetSingleton(),
 		LightLimitFix::GetSingleton(),
+		RainWetnessEffects::GetSingleton(),
 		SubsurfaceScattering::GetSingleton(),
 		ScreenSpaceGI::GetSingleton()
 	};
@@ -89,6 +91,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		GrassCollision::GetSingleton(),
 		ExtendedMaterials::GetSingleton(),
 		LightLimitFix::GetSingleton(),
+		RainWetnessEffects::GetSingleton(),
 		SubsurfaceScattering::GetSingleton(),
 		ScreenSpaceGI::GetSingleton()
 	};

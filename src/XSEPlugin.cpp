@@ -96,15 +96,12 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 				auto& shaderCache = SIE::ShaderCache::Instance();
 
-				shaderCache.SetEnabled(true);
-				shaderCache.SetAsync(true);
-				shaderCache.SetDiskCache(true);
-				shaderCache.SetDump(false);
 				shaderCache.ValidateDiskCache();
 
-				if (LightLimitFix::GetSingleton()->loaded) {
-					ParticleLights::GetSingleton()->GetConfigs();
-					LightLimitFix::InstallHooks();
+				for (auto* feature : Feature::GetFeatureList()) {
+					if (feature->loaded) {
+						feature->PostPostLoad();
+					}
 				}
 				if (SubsurfaceScattering::GetSingleton()->loaded) {
 					SubsurfaceScattering::InstallHooks();
@@ -124,8 +121,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				RE::BSInputDeviceManager::GetSingleton()->AddEventSink(Menu::GetSingleton());
 
 				auto& shaderCache = SIE::ShaderCache::Instance();
-
-				while (shaderCache.IsCompiling()) {
+				shaderCache.menuLoaded = true;
+				while (shaderCache.IsCompiling() && !shaderCache.backgroundCompilation) {
 					std::this_thread::sleep_for(100ms);
 				}
 
@@ -133,10 +130,11 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 					shaderCache.WriteDiskCacheInfo();
 				}
 
-				if (LightLimitFix::GetSingleton()->loaded)
-					LightLimitFix::GetSingleton()->DataLoaded();
-				if (ExtendedMaterials::GetSingleton()->loaded)
-					ExtendedMaterials::GetSingleton()->DataLoaded();
+				for (auto* feature : Feature::GetFeatureList()) {
+					if (feature->loaded) {
+						feature->DataLoaded();
+					}
+				}
 			}
 
 			break;

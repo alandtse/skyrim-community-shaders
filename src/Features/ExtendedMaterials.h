@@ -24,7 +24,7 @@ struct ExtendedMaterials : Feature
 
 		uint32_t MaxDistance = 2048;
 		float CRPMRange = 0.5f;
-		float BlendRange = 0.05f;
+		float BlendRange = 0.25f;
 		float Height = 0.1f;
 
 		uint32_t EnableShadows = 1;
@@ -32,9 +32,8 @@ struct ExtendedMaterials : Feature
 		uint32_t ShadowsEndFade = 1024;
 	};
 
-	struct alignas(16) PerPass
+	struct PerPass
 	{
-		uint32_t CullingMode = 0;
 		Settings settings;
 	};
 
@@ -47,7 +46,7 @@ struct ExtendedMaterials : Feature
 	virtual void SetupResources();
 	virtual inline void Reset() {}
 
-	void DataLoaded();
+	virtual void DataLoaded() override;
 
 	virtual void DrawSettings();
 

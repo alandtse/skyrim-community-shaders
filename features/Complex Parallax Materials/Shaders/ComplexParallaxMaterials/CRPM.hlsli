@@ -6,10 +6,13 @@
 // https://bartwronski.files.wordpress.com/2014/03/ac4_gdc.pdf
 // https://www.artstation.com/blogs/andreariccardi/3VPo/a-new-approach-for-parallax-mapping-presenting-the-contact-refinement-parallax-mapping-technique
 
+#if !defined(LINEAR_STEP)
+#	define LINEAR_STEP
 float linearstep(float edge0, float edge1, float x)
 {
 	return saturate((x - edge0) / (edge1 - edge0));
 }
+#endif
 
 float GetMipLevel(float2 coords, Texture2D<float4> tex)
 {
@@ -40,12 +43,6 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, Texture2D<float4> tex, SamplerState texSampler, uint channel)
 #endif
 {
-#if defined(ENVMAP)
-	// Cannot shift alpha tested geometry
-	if (perPassParallax[0].CullingMode == 0)
-		return coords;
-#endif
-
 	float3 viewDirTS = mul(viewDir, tbn).xyz;
 
 	distance /= (float)perPassParallax[0].MaxDistance;

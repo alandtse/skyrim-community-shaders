@@ -8,7 +8,7 @@
 constexpr std::uint32_t CLUSTER_SIZE_X = 32;
 constexpr std::uint32_t CLUSTER_SIZE_Y = 16;
 constexpr std::uint32_t CLUSTER_SIZE_Z = 16;
-constexpr std::uint32_t CLUSTER_MAX_LIGHTS = 128;
+constexpr std::uint32_t CLUSTER_MAX_LIGHTS = 1024;
 
 constexpr std::uint32_t CLUSTER_COUNT = CLUSTER_SIZE_X * CLUSTER_SIZE_Y * CLUSTER_SIZE_Z;
 
@@ -570,6 +570,12 @@ void LightLimitFix::Draw(const RE::BSShader* shader, const uint32_t descriptor)
 	}
 }
 
+void LightLimitFix::PostPostLoad()
+{
+	ParticleLights::GetSingleton()->GetConfigs();
+	LightLimitFix::InstallHooks();
+}
+
 void LightLimitFix::DataLoaded()
 {
 	auto iMagicLightMaxCount = RE::GameSettingCollection::GetSingleton()->GetSetting("iMagicLightMaxCount");
@@ -682,7 +688,7 @@ void LightLimitFix::UpdateLights()
 
 	if (settings.EnableFirstPersonShadows) {
 		if (auto playerCamera = RE::PlayerCamera::GetSingleton()) {
-			if (playerCamera->IsInFirstPerson()) {
+			if (playerCamera->IsInFirstPerson() || REL::Module::IsVR()) {
 				if (auto player = RE::PlayerCharacter::GetSingleton()) {
 					firstPersonLight = player->GetInfoRuntimeData().firstPersonLight.get();
 					thirdPersonLight = player->GetInfoRuntimeData().thirdPersonLight.get();

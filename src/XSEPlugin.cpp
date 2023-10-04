@@ -103,9 +103,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 						feature->PostPostLoad();
 					}
 				}
-				if (SubsurfaceScattering::GetSingleton()->loaded) {
-					SubsurfaceScattering::InstallHooks();
-				}
 			}
 
 			break;

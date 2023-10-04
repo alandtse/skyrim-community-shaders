@@ -172,6 +172,11 @@ void SubsurfaceScattering::SetupResources()
 	}
 }
 
+void SubsurfaceScattering::PostPostLoad()
+{
+	SubsurfaceScattering::InstallHooks();
+}
+
 void SubsurfaceScattering::Load(json& o_json)
 {
 	Feature::Load(o_json);

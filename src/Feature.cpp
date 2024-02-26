@@ -124,6 +124,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		WetnessEffects::GetSingleton(),
 		LightLimitFix::GetSingleton(),
 		TerrainBlending::GetSingleton(),
+		WaterParallax::GetSingleton(),
 		WaterCaustics::GetSingleton()
 	};
 

@@ -96,7 +96,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				FrameAnnotations::OnPostPostLoad();
 
 				auto& shaderCache = SIE::ShaderCache::Instance();
-
+				shaderCache.Init();
 				shaderCache.ValidateDiskCache();
 				if (shaderCache.UseFileWatcher())
 					shaderCache.StartFileWatcher();

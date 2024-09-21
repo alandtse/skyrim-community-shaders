@@ -176,6 +176,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 	# Create a stamp file to track timestamp changes
 	add_custom_command(
 		OUTPUT ${CMAKE_BINARY_DIR}/shaders_timestamp.stamp
+		COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/package "${AIO_DIR}"
+		COMMAND ${CMAKE_COMMAND} -E copy_directory ${FEATURE_PATHS} "${AIO_DIR}"
 		COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/shaders_timestamp.stamp
 		DEPENDS ${HLSL_FILES}
 	)
@@ -192,8 +194,8 @@ if(AUTO_PLUGIN_DEPLOYMENT)
 		)
 
 		# Copy Shaders with timestamp
-		get_filename_component(TARGET_DIR ${DEPLOY_TARGET} NAME)
-		set(TARGET_TIMESTAMP_FILE "${CMAKE_BINARY_DIR}/shader_timestamps/${TARGET_DIR}_timestamp.stamp")
+		string(MD5 DEPLOY_TARGET_HASH ${DEPLOY_TARGET})
+		set(TARGET_TIMESTAMP_FILE "${CMAKE_BINARY_DIR}/shader_timestamps/${DEPLOY_TARGET_HASH}_timestamp.stamp")
 
 		add_custom_command(
 			OUTPUT ${TARGET_TIMESTAMP_FILE}

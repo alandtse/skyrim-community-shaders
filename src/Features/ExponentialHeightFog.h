@@ -47,6 +47,12 @@ public:
 	void RegisterWeatherVariables() override;
 	/** @brief Captures the current directional shadow map SRV for use in volumetric fog light scattering. */
 	void CaptureDirectionalShadowMap();
+	/** @brief Return whether camera-attached fog can be hidden in favor of the local world-space fog. */
+	bool IsLocalFogReplacementReady() const;
+	/** @brief Return whether the local world-space density is currently being rendered. */
+	bool IsLocalFogActive() const;
+	/** @brief Return the current local volumetric density blend. */
+	float GetLocalFogBlend() const;
 
 	struct alignas(16) Settings
 	{
@@ -85,8 +91,13 @@ public:
 		float volumetricUpsampleJitterMultiplier = 1.0f;
 		float volumetricLocalLightScatteringIntensity = 1.0f;
 		float2 pad0;
+		float4 localFogDensityRadiusHeightClearance = {};
+		float4 localFogNoise = {};
+		float4 localFogColor = {};
+		float4 localFogCenterWS = {};
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
+	static_assert(sizeof(Settings) == 256);
 
 	Settings GetCommonBufferData() const;
 
@@ -104,7 +115,9 @@ private:
 	};
 	STATIC_ASSERT_ALIGNAS_16(VolumetricFogCB);
 
-	void EnsureVolumetricResources();
+	Settings BuildFrameSettings(bool localFogActive) const;
+	void UpdateLocalFogState();
+	void EnsureVolumetricResources(const Settings& frameSettings);
 	void ReleaseVolumetricResources();
 	void BindIntegratedLightScattering();
 	ID3D11ComputeShader* GetMaterialSetupCS();
@@ -131,4 +144,7 @@ private:
 	bool hasLightScatteringHistory = false;
 	bool hasConservativeDepthHistory = false;
 	uint32_t lastPrepassFrame = UINT32_MAX;
+	float localFogBlend = 0.0f;
+	bool localFogReplacementReady = false;
+	bool localFogWasActive = false;
 };

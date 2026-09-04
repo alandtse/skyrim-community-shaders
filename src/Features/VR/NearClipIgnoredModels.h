@@ -6,6 +6,18 @@
 
 namespace VRNearClipMeshes
 {
+	inline constexpr std::array kCameraAttachedFogNames{
+		std::string_view("dlc1fxcameraattachdlcsoulcairnblowingfog.nif"),
+		std::string_view("dlc1soulcairncameraattachborderfogfx.nif"),
+		std::string_view("fxcameraattachblowingfog.nif"),
+		std::string_view("fxcameraattachfinemist.nif"),
+		std::string_view("fxcameraattachfog.nif"),
+		std::string_view("fxcameraattachgroundfog.nif"),
+		std::string_view("fxcameraattachsmokeheavy.nif"),
+		std::string_view("fxcameraattachturbulentfog.nif"),
+		std::string_view("fxcameraattachwispyfog.nif")
+	};
+
 	inline constexpr std::array kIgnoredNames{
 		std::string_view("clearskyfogdistantlod.nif"),
 		std::string_view("clearskyfogfx512.nif"),
@@ -323,11 +335,23 @@ namespace VRNearClipMeshes
 		std::string_view("mpsmiststreet01.nif")
 	};
 
-	/** @brief Match an exact basename from a lower-case, slash-normalized model path. */
-	inline bool MatchesNormalizedPath(std::string_view path)
+	/** @brief Return the basename from a lower-case, slash-normalized model path. */
+	inline std::string_view GetNormalizedBasename(std::string_view path)
 	{
 		if (const auto slash = path.find_last_of('/'); slash != std::string_view::npos)
 			path.remove_prefix(slash + 1);
-		return std::ranges::find(kIgnoredNames, path) != kIgnoredNames.end();
+		return path;
+	}
+
+	/** @brief Match an exact basename from a lower-case, slash-normalized model path. */
+	inline bool MatchesNormalizedPath(std::string_view path)
+	{
+		return std::ranges::find(kIgnoredNames, GetNormalizedBasename(path)) != kIgnoredNames.end();
+	}
+
+	/** @brief Match camera-attached fog models eligible for volumetric replacement. */
+	inline bool MatchesCameraAttachedFogPath(std::string_view path)
+	{
+		return std::ranges::find(kCameraAttachedFogNames, GetNormalizedBasename(path)) != kCameraAttachedFogNames.end();
 	}
 }

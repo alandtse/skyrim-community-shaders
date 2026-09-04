@@ -9,11 +9,15 @@
 #if defined(PSHADER)
 namespace FogClearance
 {
-	/** @brief Remove listed fog fragments inside one shared headset-centered sphere. */
+	/** @brief Remove listed fog fragments inside one shared headset-centered sphere or an entire replacement draw. */
 	void Apply(float3 positionRelativeToEye, uint eyeIndex)
 	{
 #	if defined(VR)
-		[branch] if (Permutation::FogClearanceRadius > 0.0)
+		[branch] if (Permutation::FogClearanceRadius < 0.0)
+		{
+			clip(-1.0);
+		}
+		else if (Permutation::FogClearanceRadius > 0.0)
 		{
 			float3 leftEye = FrameBuffer::ViewToWorld(0.0.xxx, true, 0);
 			float3 rightEye = FrameBuffer::ViewToWorld(0.0.xxx, true, 1);
@@ -30,7 +34,11 @@ namespace FogClearance
 	void ApplyScreen(float4 screenPosition, uint eyeIndex)
 	{
 #	if defined(VR)
-		[branch] if (Permutation::FogClearanceRadius > 0.0)
+		[branch] if (Permutation::FogClearanceRadius < 0.0)
+		{
+			clip(-1.0);
+		}
+		else if (Permutation::FogClearanceRadius > 0.0)
 		{
 			float2 uv = screenPosition.xy * SharedData::BufferDim.zw * FrameBuffer::DynamicResolutionParams2.xy;
 			uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);

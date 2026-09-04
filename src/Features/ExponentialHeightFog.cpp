@@ -10,6 +10,8 @@
 #include "Features/LightLimitFix.h"
 #include "Features/Skylighting.h"
 #include "Features/TerrainShadows.h"
+#include "Features/VR.h"
+#include "Features/VR/NearClipMeshExclusions.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "State.h"
@@ -89,6 +91,18 @@ void ExponentialHeightFog::SaveSettings(json& o_json)
 
 ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 {
+	bool localFogRequested = localFogBlend > 0.0f;
+	if (globals::state && globals::game::isVR && globals::features::vr.loaded) {
+		const auto& vrSettings = globals::features::vr.settings;
+		localFogRequested |= vrSettings.ForceLocalFog;
+		if (vrSettings.ReplaceCameraFogWithVolume)
+			localFogRequested |= VRNearClipMeshes::WasCameraFogVisibleRecently(globals::state->frameCount);
+	}
+	return BuildFrameSettings(localFogRequested);
+}
+
+ExponentialHeightFog::Settings ExponentialHeightFog::BuildFrameSettings(bool localFogActive) const
+{
 	Settings data = settings;
 
 #if defined(ENABLE_EFFECTS11)
@@ -100,7 +114,81 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 	}
 #endif
 
+	if (localFogActive && globals::game::isVR && globals::features::vr.loaded) {
+		const auto& vrSettings = globals::features::vr.settings;
+		if (!data.enabled) {
+			data.fogDensity = 0.0f;
+			data.disableVanillaFog = 0;
+			data.respectVanillaFogFade = 0;
+			data.originalFogColorAmount = 0.0f;
+			data.fogInscatteringColor = {};
+		}
+		data.enabled = 1;
+		const float localFogStrength = localFogBlend > 0.0f ? localFogBlend : 1.0f;
+		data.localFogDensityRadiusHeightClearance = {
+			vrSettings.LocalFogDensity * localFogStrength,
+			vrSettings.LocalFogRadius,
+			vrSettings.LocalFogHeightScale,
+			vrSettings.FogClearance ? vrSettings.FogClearanceRadius : 0.0f
+		};
+		data.localFogNoise = {
+			vrSettings.LocalFogNoiseScale,
+			vrSettings.LocalFogNoiseAmount,
+			vrSettings.LocalFogDriftSpeed,
+			vrSettings.LocalFogColor.w
+		};
+		data.localFogColor = { vrSettings.LocalFogColor.x, vrSettings.LocalFogColor.y, vrSettings.LocalFogColor.z, 1.0f };
+		const auto leftEyePosition = Util::GetEyePosition(0);
+		const auto rightEyePosition = Util::GetEyePosition(1);
+		data.localFogCenterWS = {
+			0.5f * (leftEyePosition.x + rightEyePosition.x),
+			0.5f * (leftEyePosition.y + rightEyePosition.y),
+			0.5f * (leftEyePosition.z + rightEyePosition.z),
+			1.0f
+		};
+	}
+
 	return data;
+}
+
+bool ExponentialHeightFog::IsLocalFogReplacementReady() const
+{
+	return localFogReplacementReady && localFogBlend > 0.0f;
+}
+
+bool ExponentialHeightFog::IsLocalFogActive() const
+{
+	return localFogBlend > 0.0f;
+}
+
+float ExponentialHeightFog::GetLocalFogBlend() const
+{
+	return localFogBlend;
+}
+
+void ExponentialHeightFog::UpdateLocalFogState()
+{
+	const auto& vr = globals::features::vr;
+	const bool configured = globals::game::isVR && vr.loaded && (vr.settings.ReplaceCameraFogWithVolume || vr.settings.ForceLocalFog);
+	const bool meshTriggered = configured && vr.settings.ReplaceCameraFogWithVolume && !globals::state->IsFullScreenMenuOpen() &&
+	                           VRNearClipMeshes::WasCameraFogVisibleRecently(globals::state->frameCount);
+	const bool visible = configured && (vr.settings.ForceLocalFog || meshTriggered);
+
+	if (visible) {
+		localFogBlend = 1.0f;
+	} else if (configured) {
+		const float elapsed = std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, 0.1f);
+		localFogBlend = std::max(0.0f, localFogBlend - vr.settings.LocalFogFadeOutSpeed * elapsed);
+	} else {
+		localFogBlend = 0.0f;
+	}
+
+	if (visible != localFogWasActive) {
+		logger::info("VR local volumetric fog: {}", visible ? (vr.settings.ForceLocalFog ? "forced on" : "camera fog detected") : "inactive");
+		localFogWasActive = visible;
+	}
+	if (localFogBlend <= 0.0f)
+		localFogReplacementReady = false;
 }
 
 void ExponentialHeightFog::DrawSettings()
@@ -226,10 +314,10 @@ void ExponentialHeightFog::CaptureDirectionalShadowMap()
 		shadowMap->Release();
 }
 
-void ExponentialHeightFog::EnsureVolumetricResources()
+void ExponentialHeightFog::EnsureVolumetricResources(const Settings& frameSettings)
 {
-	uint32_t pixelSize = std::clamp(settings.volumetricGridPixelSize, 4u, 64u);
-	const uint32_t gridZ = std::clamp(settings.volumetricGridSizeZ, 16u, 160u);
+	uint32_t pixelSize = std::clamp(frameSettings.volumetricGridPixelSize, 4u, 64u);
+	const uint32_t gridZ = std::clamp(frameSettings.volumetricGridSizeZ, 16u, 160u);
 	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 
 	auto getGridSize = [&renderSize, gridZ](uint32_t a_pixelSize) {
@@ -375,20 +463,20 @@ ID3D11ComputeShader* ExponentialHeightFog::GetIntegrationCS()
 
 void ExponentialHeightFog::Prepass()
 {
-	if (!settings.enabled || !settings.volumetricFogEnabled || settings.volumetricFogExtinctionScale <= 0.0f) {
+	UpdateLocalFogState();
+	const bool localFogActive = localFogBlend > 0.0f;
+	localFogReplacementReady = localFogActive;
+	const Settings frameSettings = BuildFrameSettings(false);
+	const bool globalVolumetricFogActive = frameSettings.enabled &&
+	                                       frameSettings.volumetricFogEnabled &&
+	                                       frameSettings.fogDensity > 0.0f &&
+	                                       frameSettings.volumetricFogExtinctionScale > 0.0f;
+	if (!globalVolumetricFogActive) {
 		ReleaseVolumetricResources();
 		return;
 	}
 
-	EnsureVolumetricResources();
-
-	if (settings.fogDensity <= 0.0f) {
-		hasLightScatteringHistory = false;
-		hasConservativeDepthHistory = false;
-		lastPrepassFrame = UINT32_MAX;
-		BindIntegratedLightScattering();
-		return;
-	}
+	EnsureVolumetricResources(frameSettings);
 
 	ID3D11ShaderResourceView* directionalShadowLightData = globals::deferred && globals::deferred->directionalShadowLights ? globals::deferred->directionalShadowLights->srv.get() : nullptr;
 	auto& lightLimitFix = globals::features::lightLimitFix;
@@ -430,15 +518,15 @@ void ExponentialHeightFog::Prepass()
 		1.0f / static_cast<float>(currentGridSize.x),
 		1.0f / static_cast<float>(currentGridSize.y),
 		1.0f / static_cast<float>(currentGridSize.z),
-		settings.volumetricFogNearFadeInDistance > 0.0f ? 1.0f / settings.volumetricFogNearFadeInDistance : 100000000.0f
+		frameSettings.volumetricFogNearFadeInDistance > 0.0f ? 1.0f / frameSettings.volumetricFogNearFadeInDistance : 100000000.0f
 	};
 
 	const auto cameraData = Util::GetCameraData();
-	const double nearPlane = std::max(static_cast<double>(cameraData.y), static_cast<double>(std::max(settings.volumetricFogStartDistance, 0.0f)));
-	const double farPlane = std::max(nearPlane + 1.0, static_cast<double>(std::max(settings.volumetricFogDistance, settings.volumetricFogStartDistance + 1.0f)));
+	const double nearPlane = std::max(static_cast<double>(cameraData.y), static_cast<double>(std::max(frameSettings.volumetricFogStartDistance, 0.0f)));
+	const double farPlane = std::max(nearPlane + 1.0, static_cast<double>(std::max(frameSettings.volumetricFogDistance, frameSettings.volumetricFogStartDistance + 1.0f)));
 	const double nearWithOffset = nearPlane + 0.095 * 100.0;
 	const double depthDistributionScale = std::max(
-		static_cast<double>(settings.volumetricDepthDistributionScale),
+		static_cast<double>(frameSettings.volumetricDepthDistributionScale),
 		static_cast<double>(currentGridSize.z) / 120.0);
 	const double farExp = std::exp2(std::min(static_cast<double>(currentGridSize.z) / depthDistributionScale, 120.0));
 	const double gridZOffset = (farPlane - nearWithOffset * farExp) / (farPlane - nearWithOffset);
@@ -469,13 +557,13 @@ void ExponentialHeightFog::Prepass()
 		};
 	}
 	cb.historyParameters = {
-		temporalHistoryValid ? std::clamp(settings.volumetricHistoryWeight, 0.0f, 0.99f) : 0.0f,
-		static_cast<float>(std::clamp(settings.volumetricHistoryMissSampleCount, 1u, 16u)),
+		temporalHistoryValid ? std::clamp(frameSettings.volumetricHistoryWeight, 0.0f, 0.99f) : 0.0f,
+		static_cast<float>(std::clamp(frameSettings.volumetricHistoryMissSampleCount, 1u, 16u)),
 		0.0f,
 		0.0f
 	};
 	cb.jitterParameters = {
-		temporalReprojection ? std::max(settings.volumetricSampleJitterMultiplier, 0.0f) : 0.0f,
+		temporalReprojection ? std::max(frameSettings.volumetricSampleJitterMultiplier, 0.0f) : 0.0f,
 		static_cast<float>(globals::state->frameCount % 8u),
 		0.0f,
 		0.0f

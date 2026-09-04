@@ -1,5 +1,6 @@
 #include "DynamicNearClip.h"
 
+#include "Features/ExponentialHeightFog.h"
 #include "Features/TerrainBlending.h"
 #include "Features/VR.h"
 #include "GpuPass.h"
@@ -81,6 +82,7 @@ void VRDynamicNearClip::Install()
 {
 	if (!globals::game::isVR || REL::Module::get().version() != SKSE::RUNTIME_VR_1_4_15)
 		return;
+	VRNearClipMeshes::Install();
 	const auto call = REL::Offset(0x5B9F38).address();
 	constexpr std::array<uint8_t, 5> expected{ 0xE8, 0x93, 0x78, 0xD6, 0x00 };
 	if (std::memcmp(reinterpret_cast<const void*>(call), expected.data(), expected.size()) != 0) {
@@ -104,7 +106,6 @@ void VRDynamicNearClip::Install()
 	SKSE::GetTrampoline().write_call<5>(depthCopy, CopyWorldDepth::thunk);
 	REL::safe_fill(depthCopy + 5, REL::NOP, 2);
 	stl::write_thunk_call<RenderWorldDepth>(REL::Offset(0x5B961E).address());
-	VRNearClipMeshes::Install();
 }
 
 void VRDynamicNearClip::Fail(const char* reason)
@@ -469,6 +470,8 @@ void VRDynamicNearClip::FinishWorldDepth()
 		const auto savedState = DepthDrawState::Capture();
 		for (uint32_t index = 0; index < deferredDepthCount; ++index) {
 			auto& entry = deferredDepthDraws[index];
+			if (VRNearClipMeshes::ShouldSkipFogMesh(&entry.pass))
+				continue;
 			entry.state.Apply();
 			VRNearClipMeshes::UpdateFogClearance(&entry.pass);
 			entry.draw(&entry.pass, entry.technique, entry.alphaTest, entry.renderFlags);
@@ -591,21 +594,49 @@ void VRDynamicNearClip::DrawValues()
 
 void VRDynamicNearClip::DrawSettings()
 {
-	if (!ImGui::CollapsingHeader(T("feature.vr.near_clip.header", "Dynamic Near Clip (Experimental)")))
-		return;
 	auto& settings = globals::features::vr.settings;
-	ImGui::Checkbox(T("feature.vr.near_clip.enable", "Dynamic near clip"), &settings.DynamicNearClip);
-	ImGui::SliderFloat(T("feature.vr.near_clip.normal", "Normal near clip"), &settings.NormalNearClip, 0.1f, 30.0f, "%.2f");
-	ImGui::SliderFloat(T("feature.vr.near_clip.minimum", "Minimum near clip"), &settings.MinimumNearClip, 0.01f, settings.NormalNearClip, "%.3f", ImGuiSliderFlags_Logarithmic);
-	ImGui::SliderFloat(T("feature.vr.near_clip.scale", "Near distance scale"), &settings.NearDistanceScale, 0.05f, 0.5f, "%.2f");
-	ImGui::SliderFloat(T("feature.vr.near_clip.restore", "Restore speed (per second)"), &settings.RestoreSpeed, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-	ImGui::Checkbox(T("feature.vr.near_clip.readout", "Show near clip headset readout"), &settings.DynamicNearClipReadout);
-	ImGui::Checkbox(T("feature.vr.near_clip.fog_clearance", "Keep fog away from headset"), &settings.FogClearance);
-	ImGui::SliderFloat(T("feature.vr.near_clip.fog_radius", "Fog clearance radius"), &settings.FogClearanceRadius, 0.1f, 32.0f, "%.2f");
+	if (ImGui::CollapsingHeader(T("feature.vr.near_clip.header", "Dynamic Near Clip (Experimental)"))) {
+		ImGui::Checkbox(T("feature.vr.near_clip.enable", "Dynamic near clip"), &settings.DynamicNearClip);
+		ImGui::SliderFloat(T("feature.vr.near_clip.normal", "Normal near clip"), &settings.NormalNearClip, 0.1f, 30.0f, "%.2f");
+		ImGui::SliderFloat(T("feature.vr.near_clip.minimum", "Minimum near clip"), &settings.MinimumNearClip, 0.01f, settings.NormalNearClip, "%.3f", ImGuiSliderFlags_Logarithmic);
+		ImGui::SliderFloat(T("feature.vr.near_clip.scale", "Near distance scale"), &settings.NearDistanceScale, 0.05f, 0.5f, "%.2f");
+		ImGui::SliderFloat(T("feature.vr.near_clip.restore", "Restore speed (per second)"), &settings.RestoreSpeed, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+		ImGui::Checkbox(T("feature.vr.near_clip.readout", "Show near clip headset readout"), &settings.DynamicNearClipReadout);
+		ImGui::Checkbox(T("feature.vr.near_clip.fog_clearance", "Keep fog away from headset"), &settings.FogClearance);
+		ImGui::SliderFloat(T("feature.vr.near_clip.fog_radius", "Fog clearance radius"), &settings.FogClearanceRadius, 0.1f, 32.0f, "%.2f");
+		ImGui::TextWrapped("%s", T("feature.vr.near_clip.fog_help", "Listed fog is invisible inside this radius around the midpoint between your eyes. The rest of each mesh stays visible. This also works with dynamic near clip turned off."));
+		ImGui::TextWrapped("%s", T("feature.vr.near_clip.help", "Distances use Skyrim units. Both eyes share the smaller required near distance. The central depth probe cannot see transparent surfaces or geometry already clipped between samples."));
+		DrawValues();
+	}
+
+	if (ImGui::CollapsingHeader(T("feature.vr.local_fog.header", "Local Volumetric Fog (Experimental)"))) {
+		ImGui::Checkbox(T("feature.vr.local_fog.enable", "Replace camera-attached fog planes"), &settings.ReplaceCameraFogWithVolume);
+		ImGui::Checkbox(T("feature.vr.local_fog.force", "Force local volumetric fog"), &settings.ForceLocalFog);
+		ImGui::Checkbox(T("feature.vr.local_fog.disable_meshes", "Disable all recognized fog meshes"), &settings.DisableAllFogMeshes);
+		const auto& localFog = globals::features::exponentialHeightFog;
+		const char* localFogStatus = !localFog.loaded ?
+		                                 T("feature.vr.local_fog.status_unavailable", "Unavailable") :
+		                             !localFog.IsLocalFogActive() ?
+		                                 T("feature.vr.local_fog.status_idle", "Idle") :
+		                             localFog.IsLocalFogReplacementReady() ?
+		                                 T("feature.vr.local_fog.status_ready", "Active and ready") :
+		                                 T("feature.vr.local_fog.status_waiting", "Active, shader path not ready");
+		ImGui::Text(T("feature.vr.local_fog.status", "Status: %s | blend %.2f"), localFogStatus, localFog.GetLocalFogBlend());
+		ImGui::Text(T("feature.vr.local_fog.mesh_status", "Mesh classifier: %s | recognized loads: %u | skipped draws: %u"),
+			VRNearClipMeshes::IsInstalled() ? T("feature.vr.local_fog.mesh_installed", "installed") : T("feature.vr.local_fog.mesh_not_installed", "not installed"),
+			VRNearClipMeshes::TaggedModelCount(), VRNearClipMeshes::SkippedDrawCount());
+		ImGui::SliderFloat(T("feature.vr.local_fog.radius", "Fog field radius"), &settings.LocalFogRadius, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_Logarithmic);
+		ImGui::SliderFloat(T("feature.vr.local_fog.density", "Fog density"), &settings.LocalFogDensity, 0.00001f, 0.02f, "%.5f", ImGuiSliderFlags_Logarithmic);
+		ImGui::SliderFloat(T("feature.vr.local_fog.height", "Vertical scale"), &settings.LocalFogHeightScale, 0.1f, 2.0f, "%.2f");
+		ImGui::SliderFloat(T("feature.vr.local_fog.noise_scale", "Noise scale"), &settings.LocalFogNoiseScale, 0.0001f, 0.05f, "%.4f", ImGuiSliderFlags_Logarithmic);
+		ImGui::SliderFloat(T("feature.vr.local_fog.noise_amount", "Noise amount"), &settings.LocalFogNoiseAmount, 0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat(T("feature.vr.local_fog.drift", "Drift speed"), &settings.LocalFogDriftSpeed, 0.0f, 100.0f, "%.1f");
+		ImGui::ColorEdit3(T("feature.vr.local_fog.color", "Scattering color"), &settings.LocalFogColor.x);
+		ImGui::SliderFloat(T("feature.vr.local_fog.ambient", "Ambient scattering"), &settings.LocalFogColor.w, 0.0f, 2.0f, "%.2f");
+		ImGui::SliderFloat(T("feature.vr.local_fog.fade", "Fade-out speed"), &settings.LocalFogFadeOutSpeed, 0.1f, 10.0f, "%.2f");
+		ImGui::TextWrapped("%s", T("feature.vr.local_fog.help", "Fog density is integrated through a world-space ellipsoid around the headset. Each eye traces to the shaded surface without a screen-space grid or temporal reprojection."));
+	}
 	settings.ClampToValidRanges();
-	ImGui::TextWrapped("%s", T("feature.vr.near_clip.fog_help", "Listed fog is invisible inside this radius around the midpoint between your eyes. The rest of each mesh stays visible. This also works with dynamic near clip turned off."));
-	ImGui::TextWrapped("%s", T("feature.vr.near_clip.help", "Distances use Skyrim units. Both eyes share the smaller required near distance. The central depth probe cannot see transparent surfaces or geometry already clipped between samples."));
-	DrawValues();
 }
 
 void VRDynamicNearClip::DrawReadout()

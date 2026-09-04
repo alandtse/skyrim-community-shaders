@@ -1066,6 +1066,8 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
+		if (VRNearClipMeshes::ShouldSkipFogMesh(a_pass))
+			return;
 		if (globals::game::isVR && globals::features::vr.dynamicNearClip.DeferIgnoredDepth(a_pass, a_technique, a_alphaTest, a_renderFlags, func.get()))
 			return;
 
@@ -1082,6 +1084,8 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
+		if (VRNearClipMeshes::ShouldSkipFogMesh(a_pass))
+			return;
 		if (globals::game::isVR && globals::features::vr.dynamicNearClip.DeferIgnoredDepth(a_pass, a_technique, a_alphaTest, a_renderFlags, func.get()))
 			return;
 
@@ -1097,6 +1101,8 @@ namespace Hooks
 		uint32_t a_renderFlags)
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
+			return;
+		if (VRNearClipMeshes::ShouldSkipFogMesh(a_pass))
 			return;
 		if (globals::game::isVR && globals::features::vr.dynamicNearClip.DeferIgnoredDepth(a_pass, a_technique, a_alphaTest, a_renderFlags, func.get()))
 			return;

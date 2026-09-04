@@ -11,7 +11,20 @@ Dynamic Near Clip:
     "MinimumNearClip": 0.1,
     "NearDistanceScale": 0.25,
     "RestoreSpeed": 0.3,
-    "DynamicNearClipReadout": false
+    "DynamicNearClipReadout": false,
+    "FogClearance": true,
+    "FogClearanceRadius": 4.0,
+    "ReplaceCameraFogWithVolume": true,
+    "ForceLocalFog": false,
+    "DisableAllFogMeshes": false,
+    "LocalFogRadius": 768.0,
+    "LocalFogDensity": 0.0015,
+    "LocalFogHeightScale": 0.5,
+    "LocalFogNoiseScale": 0.006,
+    "LocalFogNoiseAmount": 0.65,
+    "LocalFogDriftSpeed": 12.0,
+    "LocalFogFadeOutSpeed": 1.5,
+    "LocalFogColor": [0.85, 0.88, 0.92, 0.18]
 }
 ```
 
@@ -252,8 +265,10 @@ readout shows the selected radius. Values are clamped to 0.1–32 units.
 
 Listed fog fragments inside a sphere around the midpoint of the two rendered
 eye positions are discarded. Whole meshes remain loaded, so walking into a
-large fog bank clears only its nearby portion. The initial implementation uses
-a hard radius boundary. It does not move meshes or change particle emitters.
+large fog bank clears only its nearby portion. Camera-attached fog eligible for
+the local volumetric replacement is the exception described below. The initial
+clearance implementation uses a hard radius boundary. It does not move meshes
+or change particle emitters.
 
 `Common/FogClearance.hlsli` uses interpolated camera-relative positions in the
 Effect and Lighting pixel shaders. Eye origins are transformed into the same
@@ -282,6 +297,50 @@ Test by approaching a listed fog bank, looking at a hand while the near plane
 changes, then turning the clearance toggle off and on. Check both eyes and the
 remaining distant fog. Clearing nearby fragments does not establish that all
 other near-plane-dependent fog behavior is correct.
+
+### Local volumetric camera fog
+
+`ReplaceCameraFogWithVolume` defaults to `true`. It applies only to the nine
+camera-attached fog basenames in `kCameraAttachedFogNames`; the broader list of
+placed mist, light beams and distant cloud meshes keeps its existing rendering.
+The setting is independent of dynamic near clip and the global Exponential
+Height Fog settings. The Exponential Height Fog shader module must be loaded
+because its material fog hooks carry the world-space integration.
+
+`ForceLocalFog` keeps the local volume active without a camera-attached mesh
+trigger. It defaults to `false` and provides a deterministic visual test in any
+location. The menu reports the current blend and whether the world-space path is
+active.
+
+`DisableAllFogMeshes` defaults to `false`. When enabled, the render hooks skip
+every geometry draw tagged from `kIgnoredNames` before it reaches the engine draw
+call. This CPU-side diagnostic does not depend on the fog-clearance shader. The
+menu reports matching model loads and the number of skipped draws so mesh
+classification can be distinguished from shader behavior.
+
+The model-load hook stores a distinct metadata value on camera fog geometry.
+When one of those draws appears through the main world camera, the current frame
+is recorded without a reference or filename lookup. The following frame uploads
+a player-centered local density field through the shared feature buffer. The
+camera fog draw is discarded once that field is active.
+
+The density is an ellipsoid centered at the midpoint of the rendered eye world
+positions. Its boundary follows the player, while smooth procedural noise uses
+absolute world position plus time-based drift. The existing headset clearance
+radius forms a soft empty sphere inside the volume.
+
+Each shaded pixel integrates four deterministic density samples along the
+physical ray from that eye to the shaded surface, clipped to the ellipsoid. Both
+eyes use the same absolute density field and headset center. The local path does
+not sample scene depth, allocate a screen-aligned grid, reproject history or copy
+results between eyes. First-person hands and weapons therefore terminate their
+own rays without clearing a coarse tile behind them. Global Exponential Height
+Fog can still use its separate froxel pipeline when enabled.
+
+The original camera plane remains for its first detected frame because the
+visibility trigger is recorded by that plane's draw. It is replaced from the
+next active frame onward. Headset testing is required to tune density, noise,
+ambient strength and the fixed four-sample integration cost.
 
 ## Depth-effect audit
 

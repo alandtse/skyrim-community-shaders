@@ -100,6 +100,7 @@ private:
 		float4 frameJitterOffsets[16] = {};
 		float4 historyParameters = {};
 		float4 jitterParameters = {};  // x = LightScatteringSampleJitterMultiplier, y = StateFrameIndexMod8, zw = unused
+		float4 previousGridZParams = {};
 	};
 	STATIC_ASSERT_ALIGNAS_16(VolumetricFogCB);
 
@@ -126,6 +127,7 @@ private:
 	Util::LazyShader<ID3D11ComputeShader> lightScatteringCS;
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;
 	DirectX::XMUINT4 currentGridSize = {};
+	float4 historyGridZParams = {};
 	bool hasLightScatteringHistory = false;
 	bool hasConservativeDepthHistory = false;
 	uint32_t lastPrepassFrame = UINT32_MAX;

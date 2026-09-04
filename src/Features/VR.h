@@ -3,6 +3,7 @@
 #include "Menu.h"
 #include "OverlayFeature.h"
 #include "Utils/Input.h"
+#include "VR/DynamicNearClip.h"
 #include "VR/OpenVRDetection.h"  // In Features/VR/
 #include "VRStereoOptimizations.h"
 #include <algorithm>
@@ -137,8 +138,11 @@ public:
 	 * visual customization options. Settings are automatically validated and clamped
 	 * to valid ranges when loaded or modified.
 	 */
-	struct Settings
+	struct Settings : VRNearClipSettings
 	{
+		bool FogClearance = true;         ///< Hide listed fog geometry inside the headset clearance radius.
+		float FogClearanceRadius = 4.0f;  ///< Radius in Skyrim units, shared by both eyes.
+
 		// Performance optimization settings
 		bool EnableDepthBufferCullingExterior = true;  ///< Enable depth buffer culling for VR performance
 		bool EnableDepthBufferCullingInterior = true;
@@ -179,6 +183,8 @@ public:
 		 */
 		void ClampToValidRanges()
 		{
+			ClampNearClipSettings();
+			FogClearanceRadius = std::clamp(std::isfinite(FogClearanceRadius) ? FogClearanceRadius : 4.0f, 0.1f, 32.0f);
 			mouseDeadzone = std::clamp(mouseDeadzone, 0.0f, 1.0f);
 			StereoBlendDepthSigma = std::clamp(StereoBlendDepthSigma, 0.001f, 0.1f);
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);
@@ -225,6 +231,7 @@ public:
 	eastl::unique_ptr<ConstantBuffer> stereoBlendCB;
 
 	VRStereoOptimizations stereoOpt;
+	VRDynamicNearClip dynamicNearClip;
 
 	struct alignas(16) StereoBlendCB
 	{

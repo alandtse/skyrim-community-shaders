@@ -1,6 +1,7 @@
 #define LIGHTING
 
 #include "Common/Color.hlsli"
+#include "Common/FogClearance.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/LodLandscape.hlsli"
@@ -968,6 +969,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout;
 	uint eyeIndex = Stereo::GetEyeIndexPS(input.Position, VPOSOffset);
+	FogClearance::Apply(input.WorldPosition.xyz, eyeIndex);
 
 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float3 viewDirection = -normalize(input.WorldPosition.xyz);

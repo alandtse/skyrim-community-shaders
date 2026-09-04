@@ -1,6 +1,7 @@
 #include "D3D.h"
 
 #include "Features/TerrainBlending.h"
+#include "Features/VR.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/Format.h"
@@ -14,6 +15,9 @@ namespace Util
 
 	ID3D11ShaderResourceView* GetCurrentSceneDepthSRV(bool prefer16bit)
 	{
+		// Preserve depth precision for consumers while the camera's near plane is adaptive.
+		if (globals::game::isVR && globals::features::vr.dynamicNearClip.IsControllingCamera())
+			prefer16bit = false;
 		auto& tb = globals::features::terrainBlending;
 		if (tb.loaded && tb.settings.Enabled) {
 			auto* srv = prefer16bit ? (tb.blendedDepthTexture16 ? tb.blendedDepthTexture16->srv.get() : nullptr) : (tb.blendedDepthTexture ? tb.blendedDepthTexture->srv.get() : nullptr);

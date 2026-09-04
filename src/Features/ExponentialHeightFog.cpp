@@ -449,6 +449,7 @@ void ExponentialHeightFog::Prepass()
 		static_cast<float>(depthDistributionScale),
 		0.0f
 	};
+	cb.previousGridZParams = temporalHistoryValid ? historyGridZParams : cb.gridZParams;
 
 	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
 	for (uint32_t eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
@@ -597,6 +598,7 @@ void ExponentialHeightFog::Prepass()
 
 	if (temporalReprojection && allStagesOk) {
 		context->CopyResource(lightScatteringHistory->resource.get(), lightScattering->resource.get());
+		historyGridZParams = cb.gridZParams;
 		hasLightScatteringHistory = true;
 		if (depthSrv) {
 			context->CopyResource(conservativeDepthHistory->resource.get(), conservativeDepth->resource.get());

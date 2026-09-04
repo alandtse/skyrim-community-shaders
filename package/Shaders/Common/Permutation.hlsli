@@ -100,6 +100,7 @@ namespace Permutation
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
+		float FogClearanceRadius;
 	};
 
 }

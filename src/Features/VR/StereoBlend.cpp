@@ -32,6 +32,7 @@ void VR::CompileStereoBlendShaders()
 
 void VR::ClearShaderCache()
 {
+	dynamicNearClip.ClearShaderCache();
 	stereoBlendCS = nullptr;
 	stereoBlendDebugBackCheckCS = nullptr;
 	stereoBlendDebugBlendWeightCS = nullptr;

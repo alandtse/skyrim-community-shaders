@@ -807,6 +807,8 @@ void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk(RE::BSShaderAccumula
 	auto depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
 	context->CopyResource(depthCopy.texture, depth.texture);
+	if (globals::game::isVR)
+		globals::features::vr.dynamicNearClip.CaptureDepth(This->camera);
 
 	// After this point, water starts rendering
 };

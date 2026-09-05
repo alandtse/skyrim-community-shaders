@@ -79,6 +79,8 @@ namespace Permutation
 		static const uint AdditiveLighting = (1 << 6);
 		// Fork-only flags reserve the high end so upstream's next sequential flag never collides.
 		static const uint IsEye = (1u << 31);
+		static const uint IsCharacterRainSurface = (1u << 30);
+		static const uint IsHeldWeapon = (1u << 29);
 	}
 
 	namespace ExtraFeatureFlags

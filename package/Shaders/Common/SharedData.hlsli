@@ -120,7 +120,7 @@ namespace SharedData
 		float PuddleMinWetness;
 
 		float MinRainWetness;
-		float SkinWetness;
+		float HairWetness;
 		float WeatherTransitionSpeed;
 		bool EnableRaindropFx;
 
@@ -142,6 +142,43 @@ namespace SharedData
 		float RippleRadius;
 		float RippleBreadth;
 		float RippleLifetimeRcp;
+
+		uint EnableCharacterRainSpots;
+		float CharacterSpotDensity;
+		float CharacterSpotRadius;
+		float CharacterSpotLifetime;
+		float CharacterSpotInterval;
+		float CharacterSpotStrength;
+		float CharacterSpotDarkening;
+		float CharacterSpotRoughness;
+		float CharacterSpotRange;
+		float CharacterSpotVerticalCoverage;
+		float CharacterSpotNormalStrength;
+		uint CharacterSpotDebug;
+		float CharacterDropTravel;
+		float CharacterDropTrailLength;
+		float CharacterDropTrailStrength;
+		float CharacterDropPause;
+		float CharacterStaticBeadStrength;
+		float CharacterImpactStrength;
+		float CharacterFlowStrength;
+		float CharacterFlowDistortion;
+		float CharacterCoatIntensity;
+		float CharacterWetSheen;
+		float CharacterRainActivityMultiplier;
+		float CharacterDryTime;
+		uint EnableWeaponRainDrops;
+		float WeaponSpotDensity;
+		float WeaponSpotRadius;
+		float WeaponSpotStrength;
+		float WeaponWetSheen;
+		float WeaponCoatIntensity;
+		float WeaponSpotRoughness;
+		float pad0;
+		float CharacterImpactIntensity;
+		float CharacterRetainedWetness;
+		float CharacterShowcaseCoverage;
+		float CharacterStatePadding;
 	};
 
 	struct SkylightingSettings

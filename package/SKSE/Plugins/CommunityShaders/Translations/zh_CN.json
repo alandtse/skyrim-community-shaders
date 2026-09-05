@@ -3107,8 +3107,6 @@
     "feature.wetness_effects.shore_range": "岸边范围",
     "feature.wetness_effects.shore_range_tooltip": "岸边湿润效果影响水体的最大距离",
     "feature.wetness_effects.shore_wetness": "岸边湿润度",
-    "feature.wetness_effects.skin_wetness": "皮肤湿润度",
-    "feature.wetness_effects.skin_wetness_tooltip": "雨天时角色皮肤和头发的湿润程度。",
     "feature.wetness_effects.splashes": "飞溅",
     "feature.wetness_effects.strength": "强度",
     "feature.wetness_effects.transition_speed_default_format": "",

@@ -40,28 +40,36 @@ namespace CharacterRainSpots
 		return float2(coverage, height) * detailFade;
 	}
 
+	/** @brief Evaluates a bead layer from its caller-specific placement and intensity. */
+	float3 EvaluateBead(float2 surfacePosition, float3 surfaceMetric, float footprint, float baseRadius,
+		int2 cell, float cellSize, float centerJitter, float radiusScale, float radiusVariation,
+		float3 variation, float intensity)
+	{
+		float3 result = float3(0.0f, 0.0f, 0.0f);
+		[branch] if (intensity > 0.0f)
+		{
+			float2 center = (float2(cell) + 0.5f + (variation.xy - 0.5f) * centerJitter) * cellSize;
+			float radius = baseRadius * radiusScale * lerp(0.65f, 1.0f, radiusVariation);
+			float2 bead = BeadProfile(surfacePosition - center, radius, baseRadius, surfaceMetric, footprint, variation);
+			result = float3(bead, 0.0f) * intensity;
+		}
+		return result;
+	}
+
 	/** @brief Adds small stable water beads whose placement has no time-dependent component. */
 	float3 SettledBeads(float2 surfacePosition, float3 surfaceMetric, float footprint, float baseRadius, uint projectionIndex, float density)
 	{
-		float3 result = float3(0.0f, 0.0f, 0.0f);
 		float cellSize = baseRadius * 2.0f;
 		int2 cell = int2(floor(surfacePosition / cellSize));
 		float3 variation = float3(Random::pcg3d(uint3(asuint(cell), projectionIndex + 191u)) >> 8u) * UintToUnit;
 		float selection = smoothstep(variation.z * 0.9f, variation.z * 0.9f + 0.1f, density);
-		[branch] if (selection > 0.0f)
-		{
-			float2 center = (float2(cell) + 0.5f + (variation.xy - 0.5f) * 0.4f) * cellSize;
-			float radius = baseRadius * SettledBeadRadius * lerp(0.65f, 1.0f, variation.z);
-			float2 bead = BeadProfile(surfacePosition - center, radius, baseRadius, surfaceMetric, footprint, variation);
-			result = float3(bead, 0.0f) * selection;
-		}
-		return result;
+		return EvaluateBead(surfacePosition, surfaceMetric, footprint, baseRadius,
+			cell, cellSize, 0.4f, SettledBeadRadius, variation.z, variation, selection);
 	}
 
 	/** @brief Adds independently timed fresh drops without enlarging or sliding their footprint. */
 	float3 ArrivingDrops(float2 surfacePosition, float3 surfaceMetric, float footprint, float baseRadius, uint projectionIndex, float density)
 	{
-		float3 result = float3(0.0f, 0.0f, 0.0f);
 		const SharedData::WetnessEffectsSettings settings = SharedData::wetnessEffectsSettings;
 		float cellSize = baseRadius * 3.0f;
 		int2 cell = int2(floor(surfacePosition / cellSize));
@@ -74,14 +82,8 @@ namespace CharacterRainSpots
 		float3 variation = float3(Random::pcg3d(cellHash ^ uint3(uint(floor(cycle)), 0u, 0u)) >> 8u) * UintToUnit;
 		float eventFade = smoothstep(variation.z * 0.9f, variation.z * 0.9f + 0.1f, density) *
 		                  smoothstep(0.0f, 0.035f, age) * (1.0f - smoothstep(0.25f, 1.0f, age));
-		[branch] if (eventFade > 0.0f)
-		{
-			float2 center = (float2(cell) + 0.5f + (variation.xy - 0.5f) * 0.35f) * cellSize;
-			float radius = baseRadius * ArrivingBeadRadius * lerp(0.65f, 1.0f, variation.y);
-			float2 bead = BeadProfile(surfacePosition - center, radius, baseRadius, surfaceMetric, footprint, variation);
-			result = float3(bead, 0.0f) * eventFade;
-		}
-		return result;
+		return EvaluateBead(surfacePosition, surfaceMetric, footprint, baseRadius,
+			cell, cellSize, 0.35f, ArrivingBeadRadius, variation.y, variation, eventFade);
 	}
 
 	/** @brief Warps a rivulet sideways with smooth low-frequency advection instead of reseeding it. */

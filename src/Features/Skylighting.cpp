@@ -320,6 +320,13 @@ void Skylighting::PostPostLoad()
 	MenuOpenCloseEventHandler::Register();
 }
 
+void Skylighting::GameLoaded()
+{
+	queuedResetSkylighting = true;
+	previousInteriorState.reset();
+	lastOcclusionRenderFrame = static_cast<uint>(-1);
+}
+
 //////////////////////////////////////////////////////////////
 
 struct BSParticleShaderRainEmitter

@@ -112,13 +112,15 @@ namespace CharacterRainSurfaces
 			const auto* lightingProperty = a_pass->shaderProperty->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ?
 			                                   static_cast<const RE::BSLightingShaderProperty*>(a_pass->shaderProperty) :
 			                                   nullptr;
-			if (!lightingProperty || lightingProperty->alpha < 0.999f ||
+			if (!lightingProperty || !lightingProperty->material || lightingProperty->alpha < 0.999f ||
+				lightingProperty->material->GetFeature() == RE::BSShaderMaterial::Feature::kHairTint ||
+				lightingProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kHairTint) ||
 				lightingProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kRefraction,
 					RE::BSShaderProperty::EShaderPropertyFlag::kTempRefraction))
 				return false;
 
 			const auto& alphaProperty = a_pass->geometry->GetGeometryRuntimeData().alphaProperty;
-			return !alphaProperty || !alphaProperty->GetAlphaBlending();
+			return !alphaProperty || (!alphaProperty->GetAlphaBlending() && !alphaProperty->GetAlphaTesting());
 		}
 
 		void UpdatePermutation(RE::BSRenderPass* a_pass)

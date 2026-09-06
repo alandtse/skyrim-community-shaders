@@ -793,7 +793,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 		ImGui::TextUnformatted(T(TKEY("character_rain_activity_tooltip"), "Saved multiplier for character-drop density and arrival rate. Reduce it for low wetness or raise it for saturated surfaces and showcase captures."));
 	ImGui::SliderFloat(T(TKEY("character_dry_time"), "Character Dry Time"), &settings.CharacterDryTime, 2.0f, 60.0f, "%.0f sec");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("character_dry_time_tooltip"), "How long retained character water takes to fade after global weather wetness begins drying. Sky occlusion suppresses local water separately."));
+		ImGui::TextUnformatted(T(TKEY("character_dry_time_tooltip"), "How long broad retained character sheen takes to fade after global weather wetness falls. Cover immediately suppresses localized beads, impacts, and rivulets; shelter does not start a separate per-character dry timer."));
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();

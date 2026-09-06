@@ -2981,7 +2981,7 @@
     "feature.wetness_effects.character_drop_travel": "Slide Distance",
     "feature.wetness_effects.character_drops_trails": "Drops & Trails",
     "feature.wetness_effects.character_dry_time": "Character Dry Time",
-    "feature.wetness_effects.character_dry_time_tooltip": "How long retained character water takes to fade after global weather wetness begins drying. Sky occlusion suppresses local water separately.",
+    "feature.wetness_effects.character_dry_time_tooltip": "How long broad retained character sheen takes to fade after global weather wetness falls. Cover immediately suppresses localized beads, impacts, and rivulets; shelter does not start a separate per-character dry timer.",
     "feature.wetness_effects.character_equipped_weapons": "Equipped Weapons",
     "feature.wetness_effects.character_flow_distortion": "Flow Distortion",
     "feature.wetness_effects.character_flowing_water": "Flowing Rivulets",

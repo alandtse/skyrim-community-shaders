@@ -40,14 +40,14 @@ namespace CharacterRainSpots
 		return float2(coverage, height) * detailFade;
 	}
 
-	/** @brief Adds small persistent water beads whose placement has no time-dependent component. */
+	/** @brief Adds small stable water beads whose placement has no time-dependent component. */
 	float3 SettledBeads(float2 surfacePosition, float3 surfaceMetric, float footprint, float baseRadius, uint projectionIndex, float density)
 	{
 		float cellSize = baseRadius * 2.0f;
 		int2 cell = int2(floor(surfacePosition / cellSize));
 		float3 variation = float3(Random::pcg3d(uint3(asuint(cell), projectionIndex + 191u)) >> 8u) * UintToUnit;
 		float selection = smoothstep(variation.z * 0.9f, variation.z * 0.9f + 0.1f, density);
-		[branch] if (selection <= 0.0f) return 0.0f;
+		[branch] if (selection <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
 		float2 center = (float2(cell) + 0.5f + (variation.xy - 0.5f) * 0.4f) * cellSize;
 		float radius = baseRadius * SettledBeadRadius * lerp(0.65f, 1.0f, variation.z);
 		float2 bead = BeadProfile(surfacePosition - center, radius, baseRadius, surfaceMetric, footprint, variation);
@@ -69,7 +69,7 @@ namespace CharacterRainSpots
 		float3 variation = float3(Random::pcg3d(cellHash ^ uint3(uint(floor(cycle)), 0u, 0u)) >> 8u) * UintToUnit;
 		float eventFade = smoothstep(variation.z * 0.9f, variation.z * 0.9f + 0.1f, density) *
 		                  smoothstep(0.0f, 0.035f, age) * (1.0f - smoothstep(0.25f, 1.0f, age));
-		[branch] if (eventFade <= 0.0f) return 0.0f;
+		[branch] if (eventFade <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
 		float2 center = (float2(cell) + 0.5f + (variation.xy - 0.5f) * 0.35f) * cellSize;
 		float radius = baseRadius * ArrivingBeadRadius * lerp(0.65f, 1.0f, variation.y);
 		float2 bead = BeadProfile(surfacePosition - center, radius, baseRadius, surfaceMetric, footprint, variation);
@@ -88,7 +88,7 @@ namespace CharacterRainSpots
 	float3 FlowingRivulets(float2 surfacePosition, float3 surfaceMetric, float footprint, float baseRadius, uint projectionIndex, float density)
 	{
 		const SharedData::WetnessEffectsSettings settings = SharedData::wetnessEffectsSettings;
-		[branch] if (projectionIndex >= 2u || settings.CharacterDropTravel <= 0.0f || settings.CharacterDropTrailLength <= 0.0f) return 0.0f;
+		[branch] if (projectionIndex >= 2u || settings.CharacterDropTravel <= 0.0f || settings.CharacterDropTrailLength <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
 		float activityRate = sqrt(max(settings.CharacterRainActivityMultiplier, 0.25f));
 		float lifetime = max(settings.CharacterSpotLifetime, 0.5f);
 		float streakLength = settings.CharacterDropTrailLength;
@@ -103,7 +103,7 @@ namespace CharacterRainSpots
 		int2 cell = int2(floor(flowPosition / cellSize));
 		float3 variation = float3(Random::pcg3d(uint3(asuint(cell), projectionIndex + 1319u)) >> 8u) * UintToUnit;
 		float selection = smoothstep(variation.z * 0.9f, variation.z * 0.9f + 0.1f, density);
-		[branch] if (selection <= 0.0f) return 0.0f;
+		[branch] if (selection <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
 		float2 localPosition = flowPosition - (float2(cell) + 0.5f) * cellSize;
 		float headY = -streakLength * 0.5f + (variation.y - 0.5f) * baseRadius * 1.5f;
 		float centerX = (variation.x - 0.5f) * cellSize.x * 0.2f;
@@ -165,7 +165,7 @@ namespace CharacterRainSpots
 		float retainedWetness = settings.CharacterRetainedWetness;
 		[branch] if (!settings.EnableCharacterRainSpots || !inWorld ||
 					 max(settings.CharacterImpactIntensity, retainedWetness) <= 0.0f ||
-					 (heldWeapon && !settings.EnableWeaponRainDrops)) return 0.0f;
+					 (heldWeapon && !settings.EnableWeaponRainDrops)) return float3(0.0f, 0.0f, 0.0f);
 
 		// Derivatives filter edges and select surface projections, but never seed or animate drops.
 		float3 modelDx = ddx(modelPosition);
@@ -193,7 +193,7 @@ namespace CharacterRainSpots
 		facingCoverage = lerp(facingCoverage, 1.0f, saturate(settings.CharacterShowcaseCoverage));
 		float visibility = distanceFade;
 		float configuredDensity = heldWeapon ? settings.WeaponSpotDensity : settings.CharacterSpotDensity;
-		[branch] if (visibility <= 0.0f || rainExposure <= 0.0f || configuredDensity <= 0.0f) return 0.0f;
+		[branch] if (visibility <= 0.0f || rainExposure <= 0.0f || configuredDensity <= 0.0f) return float3(0.0f, 0.0f, 0.0f);
 
 		float activity = max(settings.CharacterRainActivityMultiplier, 0.25f);
 		float baseRainDensity = saturate(configuredDensity * settings.CharacterImpactIntensity * rainExposure * facingCoverage);
@@ -219,6 +219,7 @@ namespace CharacterRainSpots
 				         projectionWeights[projectionIndex];
 			}
 		}
+		// Shelter suppresses localized water here; the broad retained sheen is applied separately in Lighting.hlsl.
 		// Coverage fades the coat contribution; flattening its height as well would attenuate normals twice.
 		float surfaceStrength = heldWeapon ? settings.WeaponSpotStrength : settings.CharacterSpotStrength;
 		water.xz *= visibility * rainExposure * surfaceStrength;

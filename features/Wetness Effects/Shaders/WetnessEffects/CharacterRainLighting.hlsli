@@ -52,19 +52,19 @@ namespace CharacterRainSpots
 	}
 
 	/** @brief Builds the bead normal in world units independently of mesh UV scale or seams. */
-	float3 GetSurfaceNormal(float height, float3 worldPosition, float3 surfaceNormal)
+	float3 GetSurfaceNormal(float dropHeight, float3 surfaceWorldPosition, float3 baseSurfaceNormal)
 	{
-		float3 positionDx = ddx(worldPosition);
-		float3 positionDy = ddy(worldPosition);
-		float2 heightGradient = float2(ddx(height), ddy(height));
-		float3 basisX = cross(positionDy, surfaceNormal);
-		float3 basisY = cross(surfaceNormal, positionDx);
-		float determinant = dot(positionDx, basisX);
+		float3 surfaceDx = ddx(surfaceWorldPosition);
+		float3 surfaceDy = ddy(surfaceWorldPosition);
+		float2 dropHeightGradient = float2(ddx(dropHeight), ddy(dropHeight));
+		float3 tangentBasisX = cross(surfaceDy, baseSurfaceNormal);
+		float3 tangentBasisY = cross(baseSurfaceNormal, surfaceDx);
+		float determinant = dot(surfaceDx, tangentBasisX);
 		if (abs(determinant) <= 1e-8f)
-			return surfaceNormal;
-		float3 gradient = (heightGradient.x * basisX + heightGradient.y * basisY) / determinant;
-		gradient *= min(1.0f, 2.0f * rsqrt(max(dot(gradient, gradient), 1e-8f)));
-		return normalize(surfaceNormal - gradient);
+			return baseSurfaceNormal;
+		float3 normalGradient = (dropHeightGradient.x * tangentBasisX + dropHeightGradient.y * tangentBasisY) / determinant;
+		normalGradient *= min(1.0f, 2.0f * rsqrt(max(dot(normalGradient, normalGradient), 1e-8f)));
+		return normalize(baseSurfaceNormal - normalGradient);
 	}
 }
 

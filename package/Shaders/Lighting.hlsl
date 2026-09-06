@@ -2175,11 +2175,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	                                    (!heldWeapon || SharedData::wetnessEffectsSettings.EnableWeaponRainDrops);
 	[branch] if (evaluateCharacterDrops)
 	{
-#			if defined(SKYLIGHTING)
-		sh2 characterRainSkySH = Skylighting::SampleNoBiasIncludingInteriors(positionMSSkylight);
-		characterRainSkyVisibility = Skylighting::CosineLobeVisibility(characterRainSkySH, float3(0, 0, 1),
-			Skylighting::GetFadeOutFactor(positionMSSkylight));
-#			endif
 		characterDrop = CharacterRainSpots::Evaluate(input.ModelPosition.xyz,
 			input.WorldPosition.xyz, vertexNormal.xyz, characterRainSkyVisibility, inWorld, heldWeapon, eyeIndex);
 	}
@@ -2288,8 +2283,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float characterSpotRoughness = 1.0f;
 	float characterCoatIntensity = 0.0f;
 	float characterCoatMask = 0.0f;
+	float3 characterDropNormal = worldNormal.xyz;
 	[branch] if (characterRainSurface)
 	{
+		// Keep derivative-based drop normals outside the per-pixel coverage branch.
+		float3 characterDropBaseNormal = normalize(lerp(worldNormal.xyz, vertexNormal.xyz, 0.75f));
+		float configuredRadius = heldWeapon ? SharedData::wetnessEffectsSettings.WeaponSpotRadius :
+		                                      SharedData::wetnessEffectsSettings.CharacterSpotRadius;
+		float characterDropHeight = characterDrop.y * configuredRadius * 0.5f *
+		                            SharedData::wetnessEffectsSettings.CharacterSpotNormalStrength;
+		characterDropNormal = CharacterRainSpots::GetSurfaceNormal(characterDropHeight,
+			input.WorldPosition.xyz, characterDropBaseNormal);
 		characterSpotRoughness = heldWeapon ? SharedData::wetnessEffectsSettings.WeaponSpotRoughness :
 		                                      SharedData::wetnessEffectsSettings.CharacterSpotRoughness;
 		characterSpotRoughness = clamp(characterSpotRoughness, 0.05f, 0.6f);
@@ -2306,13 +2310,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// The thin surface film supplies broad gloss while localized drops retain their own normal and absorption.
 	[branch] if (characterRainSurface && characterCoatMask > 0.0f && inWorld)
 	{
-		float3 waterBaseNormal = normalize(lerp(worldNormal.xyz, vertexNormal.xyz, 0.75f));
-		float configuredRadius = heldWeapon ? SharedData::wetnessEffectsSettings.WeaponSpotRadius :
-		                                      SharedData::wetnessEffectsSettings.CharacterSpotRadius;
-		float waterHeight = characterDrop.y * configuredRadius * 0.5f *
-		                    SharedData::wetnessEffectsSettings.CharacterSpotNormalStrength;
 		if (characterSpotMask > 0.0f)
-			characterSpotSurfaceNormal = CharacterRainSpots::GetSurfaceNormal(waterHeight, input.WorldPosition.xyz, waterBaseNormal);
+			characterSpotSurfaceNormal = characterDropNormal;
 		float spotAbsorption = SharedData::wetnessEffectsSettings.CharacterSpotDarkening * 0.25f *
 		                       saturate(max(characterDrop.z, characterDrop.x * 0.35f + characterDrop.y * 0.65f));
 #			if defined(SKIN)

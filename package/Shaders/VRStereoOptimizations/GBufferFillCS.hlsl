@@ -80,7 +80,7 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 		weight[i] = (relDiff <= DisocclusionThreshold) ? bilinear[i] : 0.0;
 		weightSum += weight[i];
 
-		if (bilinear[i] > bestBilinear) {
+		if (weight[i] > 0.0 && bilinear[i] > bestBilinear) {
 			bestBilinear = bilinear[i];
 			nearest = idx[i];
 		}
@@ -102,7 +102,7 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 			float candidateDepth = DepthTexture[candidate];
 			float maxRaw = max(max(candidateDepth, depth), EPSILON_DIVISION);
 			bool agrees = (abs(candidateDepth - depth) / maxRaw) <= DisocclusionThreshold;
-			bool better = (agrees && !fallbackAgrees) || (agrees == fallbackAgrees && candidateDepth < fallbackDepth);
+			bool better = (agrees && !fallbackAgrees) || (agrees == fallbackAgrees && candidateDepth > fallbackDepth);
 			if (better) {
 				fallback = candidate;
 				fallbackDepth = candidateDepth;
@@ -162,5 +162,7 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 	ReflectanceRW[px] = reflectanceSum / weightSum;
 	MasksRW[px] = masksSum / weightSum;
 	Masks2RW[px] = masks2Sum / weightSum;
-	NormalRoughnessRW[px] = float4(GBuffer::EncodeNormal(normalize(normalSum / weightSum)), glossSum / weightSum, stochasticSelector);
+	float3 averagedNormal = normalSum / weightSum;
+	float2 encodedNormal = length(averagedNormal) > EPSILON_DIVISION ? GBuffer::EncodeNormal(normalize(averagedNormal)) : NormalRoughnessRW[nearest].xy;
+	NormalRoughnessRW[px] = float4(encodedNormal, glossSum / weightSum, stochasticSelector);
 }

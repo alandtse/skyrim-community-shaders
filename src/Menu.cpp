@@ -900,7 +900,8 @@ void Menu::DrawAdvancedSettings()
 void Menu::DrawDisableAtBootSettings()
 {
 	auto state = globals::state;
-	static bool preferenceSaveFailed = false;
+	static std::unordered_set<std::string> preferenceSaveFailures;
+	static int lastVisibleFrame = -1;
 
 	ImGui::Text("%s",
 		T("menu.disable_at_boot_desc",
@@ -911,6 +912,11 @@ void Menu::DrawDisableAtBootSettings()
 	ImGui::Spacing();
 
 	if (ImGui::CollapsingHeader(T("menu.features", "Features"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		const int currentFrame = ImGui::GetFrameCount();
+		if (ImGui::IsWindowAppearing() || currentFrame > lastVisibleFrame + 1)
+			preferenceSaveFailures.clear();
+		lastVisibleFrame = currentFrame;
+
 		// Prepare a sorted list of feature pointers
 		auto featureList = Feature::GetFeatureList();
 		std::sort(featureList.begin(), featureList.end(), [](Feature* a, Feature* b) {
@@ -927,12 +933,15 @@ void Menu::DrawDisableAtBootSettings()
 			bool isDisabled = state->IsFeatureDisabled(featureName);
 
 			if (ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled)) {
-				preferenceSaveFailed = !state->SetFeatureBootEnabled(featureName, !isDisabled);
+				if (state->SetFeatureBootEnabled(featureName, !isDisabled))
+					preferenceSaveFailures.erase(featureName);
+				else
+					preferenceSaveFailures.insert(featureName);
 			}
+			if (preferenceSaveFailures.contains(featureName))
+				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 		}
 	}
-	if (preferenceSaveFailed)
-		Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 }
 
 void Menu::DrawFooter()

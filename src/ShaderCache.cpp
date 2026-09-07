@@ -1684,6 +1684,12 @@ namespace SIE
 
 		std::wstring GetDiskPath(const std::string_view& name, uint32_t descriptor, ShaderClass shaderClass)
 		{
+			// Both grass depth techniques share bytecode and must use the same disk entry.
+			if (name == "RunGrass" &&
+				(descriptor & 0b1111) == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepthStencil)) {
+				descriptor = (descriptor & ~0b1111u) | static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth);
+			}
+
 			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
 			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 

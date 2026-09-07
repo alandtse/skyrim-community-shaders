@@ -141,8 +141,8 @@ public:
 
 	bool deferredPass = false;
 
-	/// True from the post-geometry depth copy in DeferredPasses until the next frame's
-	/// EarlyPrepasses; Util::GetCurrentSceneDepthSRV returns final opaque depth while set.
+	/// Set once DeferredPasses copies the finished opaque depth, cleared at frame start;
+	/// Util::GetCurrentSceneDepthSRV returns that final depth while set.
 	bool sceneDepthFinal = false;
 
 	ID3D11SamplerState* linearSampler = nullptr;

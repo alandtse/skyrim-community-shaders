@@ -36,6 +36,8 @@ RWTexture2D<float3> ReflectanceRW : register(u5);            // R11G11B10
 RWTexture2D<float3> MasksRW : register(u6);                  // R11G11B10
 RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 
+static const int kEpipolarSearchRadius = 4;
+
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	const uint eyeWidth = uint(FrameDim.x) / 2;
 	if (dtid.x >= eyeWidth || dtid.y >= uint(FrameDim.y))
@@ -54,9 +56,6 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 	if (!r.valid)
 		return;  // classification marks invalid reprojection MODE_DISOCCLUDED, so this is rare
 
-	// 2x2 bilinear taps around the true (sub-texel) reprojected position. A tap whose raw
-	// depth disagrees with this pixel's by more than DisocclusionThreshold is zeroed out of
-	// the blend rather than averaged in.
 	float2 samplePos = r.otherStereoUV * FrameDim - 0.5;
 	int2 base = int2(floor(samplePos));
 	float2 frac2 = frac(samplePos);
@@ -80,19 +79,14 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 		weight[i] = (relDiff <= DisocclusionThreshold) ? bilinear[i] : 0.0;
 		weightSum += weight[i];
 
-		if (bilinear[i] > bestBilinear) {
+		if (weight[i] > 0.0 && bilinear[i] > bestBilinear) {
 			bestBilinear = bilinear[i];
 			nearest = idx[i];
 		}
 	}
 
 	if (weightSum <= EPSILON_DIVISION) {
-		// Every 2x2 tap disagreed in depth: the true match may sit just outside this
-		// footprint. Eye 0/Eye 1 share a horizontal baseline, so reprojection error only
-		// ever displaces along x -- search that row for a texel that agrees with this
-		// pixel's own depth, preferring the farthest (background) match, since a
-		// disocclusion by definition reveals background hidden behind nearer foreground.
-		const int kEpipolarSearchRadius = 4;
+		// The eyes differ only by a horizontal baseline, so a missed match can only lie on this row.
 		uint2 fallback = nearest;
 		float fallbackDepth = DepthTexture[nearest];
 		bool fallbackAgrees = false;
@@ -102,7 +96,7 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 			float candidateDepth = DepthTexture[candidate];
 			float maxRaw = max(max(candidateDepth, depth), EPSILON_DIVISION);
 			bool agrees = (abs(candidateDepth - depth) / maxRaw) <= DisocclusionThreshold;
-			bool better = (agrees && !fallbackAgrees) || (agrees == fallbackAgrees && candidateDepth < fallbackDepth);
+			bool better = agrees && (!fallbackAgrees || candidateDepth > fallbackDepth);
 			if (better) {
 				fallback = candidate;
 				fallbackDepth = candidateDepth;
@@ -112,10 +106,8 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 		nearest = fallback;
 	}
 
-	// Motion feeds the upscaler's temporal history (an averaged vector implies a
-	// velocity nothing in the scene had); the dither selector is a discrete 0/1
-	// choice with no meaningful average. Both always take the single nearest (or,
-	// on total blend failure, epipolar-searched) tap.
+	// Motion and the dither selector have no meaningful average; both take the single
+	// accepted tap.
 	MotionRW[px] = MotionRW[nearest];
 	float stochasticSelector = NormalRoughnessRW[nearest].w;
 
@@ -162,5 +154,7 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 	ReflectanceRW[px] = reflectanceSum / weightSum;
 	MasksRW[px] = masksSum / weightSum;
 	Masks2RW[px] = masks2Sum / weightSum;
-	NormalRoughnessRW[px] = float4(GBuffer::EncodeNormal(normalize(normalSum / weightSum)), glossSum / weightSum, stochasticSelector);
+	float3 averagedNormal = normalSum / weightSum;
+	float2 encodedNormal = length(averagedNormal) > EPSILON_DIVISION ? GBuffer::EncodeNormal(normalize(averagedNormal)) : NormalRoughnessRW[nearest].xy;
+	NormalRoughnessRW[px] = float4(encodedNormal, glossSum / weightSum, stochasticSelector);
 }

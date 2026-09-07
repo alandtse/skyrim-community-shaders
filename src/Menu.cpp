@@ -835,7 +835,6 @@ void Menu::DrawSettings()
 
 		// Static storage for menu state - must persist across frames
 		static size_t selectedMenu = 0;
-		static std::map<std::string, bool> categoryExpansionStates;
 
 		// Render feature list using extracted component
 		FeatureListRenderer::RenderFeatureList(
@@ -843,7 +842,6 @@ void Menu::DrawSettings()
 			selectedMenu,
 			featureSearch,
 			pendingFeatureSelection,
-			categoryExpansionStates,
 			[&]() { DrawGeneralSettings(); },
 			[&]() { DrawAdvancedSettings(); });
 
@@ -902,7 +900,7 @@ void Menu::DrawAdvancedSettings()
 void Menu::DrawDisableAtBootSettings()
 {
 	auto state = globals::state;
-	auto& disabledFeatures = state->GetDisabledFeatures();
+	static bool preferenceSaveFailed = false;
 
 	ImGui::Text("%s",
 		T("menu.disable_at_boot_desc",
@@ -926,14 +924,15 @@ void Menu::DrawDisableAtBootSettings()
 
 			const std::string featureName = feature->GetShortName();
 			const auto checkboxLabel = std::format("{}##DisableAtBoot{}", feature->GetDisplayName(), featureName);
-			bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+			bool isDisabled = state->IsFeatureDisabled(featureName);
 
 			if (ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled)) {
-				// Update the disabledFeatures map based on user interaction
-				disabledFeatures[featureName] = isDisabled;
+				preferenceSaveFailed = !state->SetFeatureBootEnabled(featureName, !isDisabled);
 			}
 		}
 	}
+	if (preferenceSaveFailed)
+		Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 }
 
 void Menu::DrawFooter()

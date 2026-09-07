@@ -776,7 +776,23 @@ namespace Util
 		drawList->AddTriangleFilled(points[0], points[1], points[2], ImGui::GetColorU32(ImGuiCol_Text));
 	}
 
-	bool FlyoutMenuItem(const char* label, bool selected, bool enabled, float checkmarkLeftOffset)
+	void DrawStarIcon(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, ImU32 color)
+	{
+		constexpr int pointCount = 5;
+		constexpr int vertexCount = pointCount * 2;
+		constexpr float innerRadiusRatio = 0.381966f;
+		const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+		const float outerRadius = std::min(max.x - min.x, max.y - min.y) * 0.5f;
+		std::array<ImVec2, vertexCount> points;
+		for (int i = 0; i < vertexCount; ++i) {
+			const float angle = std::numbers::pi_v<float> * (static_cast<float>(i) / pointCount - 0.5f);
+			const float radius = outerRadius * (i % 2 == 0 ? 1.0f : innerRadiusRatio);
+			points[i] = ImVec2(center.x + std::cos(angle) * radius, center.y + std::sin(angle) * radius);
+		}
+		drawList->AddConcavePolyFilled(points.data(), vertexCount, color);
+	}
+
+	bool FlyoutMenuItem(const char* label, std::optional<bool> selected, bool enabled, float checkmarkLeftOffset, IconDrawCallback selectedIcon)
 	{
 		IM_ASSERT(checkmarkLeftOffset >= 0.0f);
 
@@ -799,21 +815,42 @@ namespace Util
 			ImGui::PushStyleColor(ImGuiCol_NavCursor, transparent);
 			const SKSE::stl::scope_exit restoreColors([]() noexcept { ImGui::PopStyleColor(4); });
 
-			auto& menuColumns = window->DC.MenuColumns;
-			const ImU16 originalMarkOffset = menuColumns.OffsetMark;
-			ImU16 baseMarkOffset = originalMarkOffset;
-			if (baseMarkOffset == 0) {
-				const float fallbackMarkOffset = std::trunc(ImGui::CalcTextSize(label, nullptr, true).x) + menuColumns.Spacing;
-				baseMarkOffset = static_cast<ImU16>(std::clamp(
-					fallbackMarkOffset, 0.0f, static_cast<float>(std::numeric_limits<ImU16>::max())));
-			}
-			const auto markShift = static_cast<ImU16>(std::clamp(
-				std::lround(checkmarkLeftOffset), 0L, static_cast<long>(baseMarkOffset)));
-			menuColumns.OffsetMark = static_cast<ImU16>(baseMarkOffset - (selected ? markShift : 0));
-			const SKSE::stl::scope_exit restoreMarkOffset(
-				[&menuColumns, originalMarkOffset]() noexcept { menuColumns.OffsetMark = originalMarkOffset; });
+			if (!selected.has_value()) {
+				constexpr ImGuiSelectableFlags flags = ImGuiSelectableFlags_SelectOnRelease | ImGuiSelectableFlags_NoHoldingActiveID |
+				                                       ImGuiSelectableFlags_SetNavIdOnHover | ImGuiSelectableFlags_SpanAvailWidth;
+				pressed = ImGui::Selectable(label, false, flags | (enabled ? ImGuiSelectableFlags_None : ImGuiSelectableFlags_Disabled));
+			} else {
+				auto& menuColumns = window->DC.MenuColumns;
+				const ImU16 originalMarkOffset = menuColumns.OffsetMark;
+				ImU16 baseMarkOffset = originalMarkOffset;
+				if (baseMarkOffset == 0) {
+					const float fallbackMarkOffset = std::trunc(ImGui::CalcTextSize(label, nullptr, true).x) + menuColumns.Spacing;
+					baseMarkOffset = static_cast<ImU16>(std::clamp(
+						fallbackMarkOffset, 0.0f, static_cast<float>(std::numeric_limits<ImU16>::max())));
+				}
+				const auto markShift = static_cast<ImU16>(std::clamp(
+					std::lround(checkmarkLeftOffset), 0L, static_cast<long>(baseMarkOffset)));
+				menuColumns.OffsetMark = static_cast<ImU16>(baseMarkOffset - (*selected ? markShift : 0));
+				const SKSE::stl::scope_exit restoreMarkOffset(
+					[&menuColumns, originalMarkOffset]() noexcept { menuColumns.OffsetMark = originalMarkOffset; });
 
-			pressed = ImGui::MenuItem(label, nullptr, selected, enabled);
+				const ImVec2 textPos(window->DC.CursorPos.x, window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset);
+				const float availableWidth = ImGui::GetContentRegionAvail().x;
+				pressed = ImGui::MenuItem(label, nullptr, *selected && !selectedIcon, enabled);
+				if (*selected && selectedIcon) {
+					constexpr float checkmarkOffsetXRatio = 0.40f;
+					constexpr float checkmarkOffsetYRatio = 0.134f * 0.5f;
+					constexpr float checkmarkSizeRatio = 0.866f;
+					const float fontSize = ImGui::GetFontSize();
+					const float iconSize = fontSize * checkmarkSizeRatio;
+					const float minimumWidth = static_cast<float>(std::max(menuColumns.TotalWidth, menuColumns.NextTotalWidth));
+					const float stretchWidth = std::max(0.0f, availableWidth - minimumWidth);
+					const ImVec2 iconMin(textPos.x + menuColumns.OffsetMark + stretchWidth + fontSize * checkmarkOffsetXRatio,
+						textPos.y + fontSize * checkmarkOffsetYRatio);
+					selectedIcon(drawList, iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize),
+						ImGui::GetColorU32(enabled ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+				}
+			}
 		}
 
 		const ImRect itemRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
@@ -1002,130 +1039,37 @@ namespace Util
 		return m_shouldDraw;
 	}
 
-	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount)
+	ID3D11ShaderResourceView* GetCategoryIcon(std::string_view category)
 	{
-		// Get the appropriate icon for this category
 		ID3D11ShaderResourceView* categoryIcon = nullptr;
-		auto& menu = Menu::GetSingleton()->uiIcons;
+		auto& menu = globals::menu->uiIcons;
 
-		if (strcmp(categoryKey, "Characters") == 0) {
+		if (category == "Characters") {
 			categoryIcon = menu.characters.texture;
-		} else if (strcmp(categoryKey, "Display") == 0) {
+		} else if (category == "Display") {
 			categoryIcon = menu.display.texture;
-		} else if (strcmp(categoryKey, "Foliage") == 0) {
+		} else if (category == "Foliage") {
 			categoryIcon = menu.foliage.texture;
-		} else if (strcmp(categoryKey, "Lighting") == 0) {
+		} else if (category == "Lighting") {
 			categoryIcon = menu.lighting.texture;
-		} else if (strcmp(categoryKey, "Sky") == 0) {
+		} else if (category == "Sky") {
 			categoryIcon = menu.sky.texture;
-		} else if (strcmp(categoryKey, "Landscape & Textures") == 0) {
+		} else if (category == "Landscape & Textures") {
 			categoryIcon = menu.landscape.texture;
-		} else if (strcmp(categoryKey, "Water") == 0) {
+		} else if (category == "Water") {
 			categoryIcon = menu.water.texture;
-		} else if (strcmp(categoryKey, "Utility") == 0) {
+		} else if (category == "Utility") {
 			categoryIcon = menu.debug.texture;
-		} else if (strcmp(categoryKey, "Materials") == 0) {
+		} else if (category == "Materials") {
 			categoryIcon = menu.materials.texture;
-		} else if (strcmp(categoryKey, "Post-Processing") == 0) {
+		} else if (category == "Post-Processing") {
 			categoryIcon = menu.postProcessing.texture;
 		}
 
-		// Keep icon lookup on the stable category key and render the translated label separately.
-		std::string headerText = std::format("{} ({})", displayName, categoryCount);
-
-		// Draw category header with custom styling
-		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		ImVec2 pos = ImGui::GetCursorScreenPos();
-		float availableWidth = ImGui::GetContentRegionAvail().x;
-
-		// Calculate icon size based on current font size to match text scaling
-		// This ensures icons scale consistently with text when the font scale changes
-		const float currentFontSize = ImGui::GetFontSize();
-		const float iconSize = currentFontSize * 1.2f;     // 20% larger than font height
-		const float iconSpacing = currentFontSize * 0.3f;  // 30% of font height for spacing
-		ImVec2 textSize = ImGui::CalcTextSize(headerText.c_str());
-
-		// Calculate total content width (icon + spacing + text)
-		float contentWidth = textSize.x;
-		if (categoryIcon) {
-			contentWidth += iconSize + iconSpacing;
-		}
-
-		// Calculate line positions
-		float lineY = pos.y + textSize.y * 0.5f;
-		float lineLength = (availableWidth - contentWidth - 20.0f) * 0.5f;  // 20px for padding
-
-		// Create selectable area for the entire header
-		ImGui::PushID(categoryKey);
-		bool hovered = false;
-		bool clicked = false;
-
-		// Invisible button for hover detection and clicking
-		ImGui::SetCursorScreenPos(pos);
-		if (ImGui::InvisibleButton("##CategoryHeader", ImVec2(availableWidth, textSize.y + 4.0f))) {
-			clicked = true;
-		}
-		hovered = ImGui::IsItemHovered();
-
-		// Draw the lines and text using Menu theme colors
-		auto& themeSettings = globals::menu->GetSettings().Theme;
-		auto& palette = themeSettings.Palette;
-
-		// Use theme text color
-		ImVec4 color = palette.Text;
-
-		// If minimized, apply reduced alpha
-		if (!isExpanded) {
-			color.w *= 0.7f;  // 70% alpha when minimized
-		}
-		// If hovered, slightly dim the color
-		if (hovered) {
-			color.w *= 0.8f;  // 80% alpha when hovered
-		}
-		ImU32 headerColor = ImGui::GetColorU32(color);  // Left line
-		if (lineLength > 0) {
-			drawList->AddLine(ImVec2(pos.x, lineY), ImVec2(pos.x + lineLength, lineY), headerColor, 1.0f);
-		}
-
-		// Right line
-		float rightLineStart = pos.x + lineLength + 10.0f + contentWidth + 10.0f;
-		if (rightLineStart < pos.x + availableWidth) {
-			drawList->AddLine(ImVec2(rightLineStart, lineY), ImVec2(pos.x + availableWidth, lineY), headerColor, 1.0f);
-		}
-
-		// Draw icon and text
-		float currentX = pos.x + lineLength + 10.0f;
-
-		// Draw icon if available
-		if (categoryIcon) {
-			ImVec2 iconPos = ImVec2(currentX, pos.y + (textSize.y - iconSize) * 0.5f + 2.0f);
-			ImVec2 iconMax = ImVec2(iconPos.x + iconSize, iconPos.y + iconSize);
-
-			// Apply the same color tint as the text
-			ImU32 iconTint = headerColor;
-			drawList->AddImage(categoryIcon, iconPos, iconMax, ImVec2(0, 0), ImVec2(1, 1), iconTint);
-
-			currentX += iconSize + iconSpacing;
-		}
-
-		// Center text
-		ImVec2 textPos = ImVec2(currentX, pos.y + 2.0f);
-		drawList->AddText(textPos, headerColor, headerText.c_str());
-
-		// Handle click to toggle expansion
-		if (clicked) {
-			isExpanded = !isExpanded;
-		}
-
-		ImGui::PopID();
-
-		// Move cursor to next line
-		ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + textSize.y + 8.0f));
-		ImGui::Dummy(ImVec2(availableWidth, 0.0f));
-		return clicked;
+		return categoryIcon;
 	}
 
-	bool DrawSectionHeader(const char* sectionName, bool useWhiteText, bool isCollapsible, bool* isExpanded)
+	bool DrawSectionHeader(const char* sectionName, bool useWhiteText, bool isCollapsible, bool* isExpanded, IconDrawCallback icon)
 	{
 		bool stateChanged = false;
 
@@ -1163,10 +1107,13 @@ namespace Util
 			ImVec2 pos = ImGui::GetCursorScreenPos();
 			float availableWidth = ImGui::GetContentRegionAvail().x;
 			ImVec2 textSize = ImGui::CalcTextSize(sectionName);
+			const float iconSize = icon ? ImGui::GetFontSize() : 0.0f;
+			const float iconWidth = icon ? iconSize + ImGui::GetStyle().ItemInnerSpacing.x : 0.0f;
+			const float contentWidth = textSize.x + iconWidth;
 
 			// Calculate line positions
 			float lineY = pos.y + textSize.y * 0.5f;
-			float lineLength = (availableWidth - textSize.x - 20.0f) * 0.5f;  // 20px for padding
+			float lineLength = (availableWidth - contentWidth - 20.0f) * 0.5f;  // 20px for padding
 
 			// Left line
 			if (lineLength > 0) {
@@ -1174,13 +1121,18 @@ namespace Util
 			}
 
 			// Right line
-			float rightLineStart = pos.x + lineLength + 10.0f + textSize.x + 10.0f;
+			float rightLineStart = pos.x + lineLength + 10.0f + contentWidth + 10.0f;
 			if (rightLineStart < pos.x + availableWidth) {
 				drawList->AddLine(ImVec2(rightLineStart, lineY), ImVec2(pos.x + availableWidth, lineY), headerColor, 1.0f);
 			}
 
 			// Center text
 			ImVec2 textPos = ImVec2(pos.x + lineLength + 10.0f, pos.y + 2.0f);
+			if (icon) {
+				const ImVec2 iconMin(textPos.x, textPos.y + (textSize.y - iconSize) * 0.5f);
+				icon(drawList, iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize), headerColor);
+				textPos.x += iconWidth;
+			}
 			drawList->AddText(textPos, headerColor, sectionName);
 
 			// Move cursor to next line
@@ -1379,19 +1331,10 @@ namespace Util
 		if (searchQuery.empty())
 			return true;
 
-		// Get both short name and display name
-		std::string shortName = feat->GetShortName();
-		std::string displayName = feat->GetDisplayName();
-		std::string query = searchQuery;
-
-		// Convert all to lowercase for case-insensitive search
-		std::transform(shortName.begin(), shortName.end(), shortName.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
-		std::transform(displayName.begin(), displayName.end(), displayName.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
-		std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
-
-		// Search in both short name and display name
-		return shortName.find(query) != std::string::npos ||
-		       displayName.find(query) != std::string::npos;
+		return StringMatchesSearch(feat->GetShortName(), searchQuery) ||
+		       StringMatchesSearch(feat->GetDisplayName(), searchQuery) ||
+		       StringMatchesSearch(std::string(feat->GetCategory()), searchQuery) ||
+		       StringMatchesSearch(feat->GetDisplayCategory(), searchQuery);
 	}
 
 	bool StringMatchesSearch(const std::string& text, const std::string& searchQuery)
@@ -1403,8 +1346,8 @@ namespace Util
 		std::string lowerQuery = searchQuery;
 
 		// Convert all to lowercase for case-insensitive search
-		std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), ::tolower);
-		std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+		std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
+		std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
 
 		return lowerText.find(lowerQuery) != std::string::npos;
 	}
@@ -1518,18 +1461,16 @@ namespace Util
 
 	void DrawFeatureSearchBar(std::string& searchString, float availableWidth)
 	{
+		MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
 		ImGui::PushID("FeatureSearchBar");
 
-		const float scale = GetSearchUIScale();
-		const float iconSize = ThemeManager::Constants::SEARCH_ICON_SIZE * scale;
-		const float iconSpace = iconSize + ThemeManager::Constants::SEARCH_INPUT_PADDING_EXTRA * scale;
+		const float iconColumnWidth = ImGui::GetTextLineHeight();
+		const float iconSize = std::min(iconColumnWidth, ThemeManager::Constants::SEARCH_ICON_SIZE * GetSearchUIScale());
+		const float iconSpace = iconColumnWidth + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(" ").x;
 
-		// Get the current cursor position and available width
-		ImVec2 cursorPos = ImGui::GetCursorScreenPos();
 		if (availableWidth <= 0.0f) {
 			availableWidth = ImGui::GetContentRegionAvail().x;
 		}
-		float frameHeight = ImGui::GetFrameHeight();
 
 		// Custom style - always transparent background to avoid click blocking
 		ImVec4 bgColor = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1544,7 +1485,7 @@ namespace Util
 		ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
 		ImGui::PushStyleColor(ImGuiCol_Text, textColor);
 		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(iconSpace, ThemeManager::Constants::SEARCH_INPUT_FRAME_PADDING_Y * scale));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(iconSpace, 0.0f));
 
 		// Draw the input field
 		ImGui::SetNextItemWidth(availableWidth);
@@ -1557,7 +1498,8 @@ namespace Util
 		}
 
 		// Draw search icon using the reusable function
-		ImVec2 iconPos = ImVec2(cursorPos.x + ThemeManager::Constants::SEARCH_ICON_OFFSET_X * scale, cursorPos.y + (frameHeight - iconSize) * 0.5f);
+		const ImVec2 inputMin = ImGui::GetItemRectMin();
+		const ImVec2 iconPos(inputMin.x + (iconColumnWidth - iconSize) * 0.5f, inputMin.y + (ImGui::GetItemRectSize().y - iconSize) * 0.5f);
 		DrawSearchIcon(iconPos, iconSize, ThemeManager::Constants::SEARCH_ICON_ALPHA);
 
 		ImGui::PopStyleVar(2);

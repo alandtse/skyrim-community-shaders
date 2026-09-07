@@ -60,7 +60,7 @@ void RainRendering::DrawPerformanceSettings()
 		const auto radii = GetLayerRadii(settings.RainFarDistance);
 		ImGui::Text(T(TKEY("allocated_drops"), "Reserved drops: %u near / %u mid / %u far"), counts[0], counts[1], counts[2]);
 		ImGui::Text(T(TKEY("effective_layer_radii"), "Effective outer ranges: %.0f / %.0f / %.0f"), radii.x, radii.y, radii.z);
-		ImGui::TextWrapped(T(TKEY("layer_budget_help"), "Weights split the existing maximum drop count. Adjacent layers overlap and fade smoothly; near/mid ranges are limited by the far range."));
+		ImGui::TextWrapped("%s", T(TKEY("layer_budget_help"), "Weights split the existing maximum drop count. Adjacent layers overlap and fade smoothly; near/mid ranges are limited by the far range."));
 		ImGui::TreePop();
 	}
 	NormalizeSettings();

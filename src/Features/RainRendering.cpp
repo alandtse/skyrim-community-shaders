@@ -680,7 +680,7 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 			const float verticalGravity = std::abs(rainEmitter->gravityVelocity.z);
 			if (std::isfinite(wind.x) && std::isfinite(wind.y) &&
 				std::isfinite(verticalGravity) && verticalGravity > 1.0f) {
-				sample.windSlope = { wind.x / verticalGravity, wind.y / verticalGravity };
+				sample.windSlope = float2{ wind.x / verticalGravity, wind.y / verticalGravity };
 				const float slopeLength = sample.windSlope.Length();
 				if (slopeLength > 2.0f)
 					sample.windSlope *= 2.0f / slopeLength;
@@ -815,7 +815,7 @@ bool RainRendering::EnsureRainTexture()
 		logger::warn("[RainRendering] Bundled drop texture unavailable; glassy rain cannot render");
 		return false;
 	}
-	rainTextureSize = { dimensions.x, dimensions.y };
+	rainTextureSize = float2{ dimensions.x, dimensions.y };
 	winrt::com_ptr<ID3D11Resource> resource;
 	rainTextureSRV->GetResource(resource.put());
 	Util::SetResourceName(resource.get(), "RainRendering::DropNormalOpacity");
@@ -979,26 +979,26 @@ void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2
 {
 	const auto& defaults = GetDefaultSettings();
 	const bool glassy = UsesWaterMaterial();
-	a_data.Glassy = { glassy ? 1.0f : 0.0f,
+	a_data.Glassy = float4{ glassy ? 1.0f : 0.0f,
 		ClampFinite(settings.RainCoreDarkening, kCoreDarkeningRange.minimum, kCoreDarkeningRange.maximum, defaults.RainCoreDarkening),
 		ClampFinite(settings.RainEdgeHighlight, kEdgeHighlightRange.minimum, kEdgeHighlightRange.maximum, defaults.RainEdgeHighlight),
 		ClampFinite(settings.RainRefractionStrength, kUnitRange.minimum, kMaximumRefractionPixels, defaults.RainRefractionStrength) };
-	a_data.Refraction = { ClampFinite(settings.RainRefractionDistance, kRefractionDistanceRange.minimum, kRefractionDistanceRange.maximum, defaults.RainRefractionDistance),
+	a_data.Refraction = float4{ ClampFinite(settings.RainRefractionDistance, kRefractionDistanceRange.minimum, kRefractionDistanceRange.maximum, defaults.RainRefractionDistance),
 		a_hasSceneColor ? 1.0f : 0.0f,
 		glassy ? ClampFinite(settings.RainStreakVariation, kUnitRange.minimum, kUnitRange.maximum, defaults.RainStreakVariation) : 0.0f,
 		ClampFinite(settings.RainEnvironmentTransmission, kUnitRange.minimum, kUnitRange.maximum, defaults.RainEnvironmentTransmission) };
-	a_data.ScreenSize = { a_size.x, a_size.y, 1.0f / a_description.Width, 1.0f / a_description.Height };
-	a_data.TexturedRain = { glassy && rainTextureSRV && refractionSampler ? 1.0f : 0.0f,
+	a_data.ScreenSize = float4{ a_size.x, a_size.y, 1.0f / a_description.Width, 1.0f / a_description.Height };
+	a_data.TexturedRain = float4{ glassy && rainTextureSRV && refractionSampler ? 1.0f : 0.0f,
 		ClampFinite(settings.RainTextureNormalStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainTextureNormalStrength),
 		ClampFinite(settings.RainTextureReflectionStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainTextureReflectionStrength), refractionSampler && GetRainEnvironment() ? 1.0f : 0.0f };
-	a_data.RainTextureShape = { rainTextureSize.x, rainTextureSize.y,
+	a_data.RainTextureShape = float4{ rainTextureSize.x, rainTextureSize.y,
 		ClampFinite(settings.RainTextureUVWidth, kTextureUVWidthRange.minimum, kTextureUVWidthRange.maximum, defaults.RainTextureUVWidth), 0.0f };
-	a_data.MaterialLighting = { ClampFinite(settings.RainHighlightRoughness, kHighlightRoughnessRange.minimum, kHighlightRoughnessRange.maximum, defaults.RainHighlightRoughness),
+	a_data.MaterialLighting = float4{ ClampFinite(settings.RainHighlightRoughness, kHighlightRoughnessRange.minimum, kHighlightRoughnessRange.maximum, defaults.RainHighlightRoughness),
 		ClampFinite(settings.RainLightScattering, kUnitRange.minimum, kUnitRange.maximum, defaults.RainLightScattering),
 		ClampFinite(settings.RainSceneRefractionMix, kUnitRange.minimum, kUnitRange.maximum, defaults.RainSceneRefractionMix), 0.0f };
 	const auto& lightLimitFix = globals::features::lightLimitFix;
 	if (glassy && lightLimitFix.loaded && lightLimitFix.lights && lightLimitFix.lightGrid && lightLimitFix.lightIndexList) {
-		a_data.LocalLighting = { ClampFinite(settings.RainLocalLightResponse, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainLocalLightResponse),
+		a_data.LocalLighting = float4{ ClampFinite(settings.RainLocalLightResponse, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainLocalLightResponse),
 			a_data.Refraction.x, std::max(lightLimitFix.lightsNear, 0.1f), std::max(lightLimitFix.lightsFar, lightLimitFix.lightsNear + 1.0f) };
 		a_data.LightGrid = { lightLimitFix.clusterSize[0], lightLimitFix.clusterSize[1], lightLimitFix.clusterSize[2], lightLimitFix.lightCount };
 	}
@@ -1016,50 +1016,50 @@ RainRendering::PerFrame RainRendering::BuildPerFrameData(
 	const auto lightColor = GetRainLightColor();
 
 	PerFrame data{};
-	data.HeadPositionAndTime = { head.x, head.y, head.z, globals::state->timer };
-	data.VolumeSizeAndDensity = {
+	data.HeadPositionAndTime = float4{ head.x, head.y, head.z, globals::state->timer };
+	data.VolumeSizeAndDensity = float4{
 		farDistance * 2.0f,
 		farDistance * 2.0f,
 		farDistance * 2.0f,
 		ClampFinite(settings.RainDensity, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainDensity)
 	};
-	data.WeatherFallDepth = {
+	data.WeatherFallDepth = float4{
 		a_weather.intensity,
 		ClampFinite(settings.RainFallSpeed, kRuntimeFallSpeedRange.minimum, kRuntimeFallSpeedRange.maximum, defaults.RainFallSpeed) * a_weather.fallSpeedScale,
 		0.0f,
 		ClampFinite(settings.RainIntersectionFadeDistance, kRuntimeIntersectionFadeRange.minimum, kRuntimeIntersectionFadeRange.maximum, defaults.RainIntersectionFadeDistance)
 	};
-	data.Streak = {
+	data.Streak = float4{
 		ClampFinite(settings.RainStreakLength, kRuntimeStreakLengthRange.minimum, kRuntimeStreakLengthRange.maximum, defaults.RainStreakLength),
 		ClampFinite(settings.RainVelocityStretch, kUnitRange.minimum, kUnitRange.maximum, defaults.RainVelocityStretch),
 		ClampFinite(settings.RainStreakWidth, kRuntimeStreakWidthRange.minimum, kRuntimeStreakWidthRange.maximum, defaults.RainStreakWidth),
 		ClampFinite(settings.RainOpacity, kUnitRange.minimum, kUnitRange.maximum, defaults.RainOpacity)
 	};
-	data.Appearance = {
+	data.Appearance = float4{
 		ClampFinite(settings.RainBrightness, kRuntimeBrightnessRange.minimum, kRuntimeBrightnessRange.maximum, defaults.RainBrightness),
 		ClampFinite(settings.RainLightingResponse, kUnitRange.minimum, kUnitRange.maximum, defaults.RainLightingResponse),
 		ClampFinite(settings.RainMinimumVisibility, kUnitRange.minimum, kUnitRange.maximum, defaults.RainMinimumVisibility),
 		ClampFinite(settings.RainNearCutoffDistance, kNearCutoffDistanceRange.minimum, kNearCutoffDistanceRange.maximum, defaults.RainNearCutoffDistance)
 	};
-	data.DistanceNoise = {
+	data.DistanceNoise = float4{
 		farDistance,
 		ClampFinite(settings.RainDensityNoiseScale, kRuntimeDensityNoiseScaleRange.minimum, kRuntimeDensityNoiseScaleRange.maximum, defaults.RainDensityNoiseScale),
 		ClampFinite(settings.RainDensityNoiseStrength, kUnitRange.minimum, kUnitRange.maximum, defaults.RainDensityNoiseStrength),
 		0.0f
 	};
-	data.Curtain = {
+	data.Curtain = float4{
 		ClampFinite(settings.RainCurtainScale, kRuntimeCurtainScaleRange.minimum, kRuntimeCurtainScaleRange.maximum, defaults.RainCurtainScale),
 		ClampFinite(settings.RainCurtainStrength, kUnitRange.minimum, kUnitRange.maximum, defaults.RainCurtainStrength),
 		ClampFinite(settings.RainCurtainContrast, kRuntimeCurtainContrastRange.minimum, kRuntimeCurtainContrastRange.maximum, defaults.RainCurtainContrast),
 		0.0f
 	};
-	data.CurtainDensity = {
+	data.CurtainDensity = float4{
 		ClampFinite(settings.RainCurtainMinDensity, kRuntimeCurtainDensityRange.minimum, kRuntimeCurtainDensityRange.maximum, defaults.RainCurtainMinDensity),
 		ClampFinite(settings.RainCurtainMaxDensity, kRuntimeCurtainDensityRange.minimum, kRuntimeCurtainDensityRange.maximum, defaults.RainCurtainMaxDensity),
 		0.0f,
 		0.0f
 	};
-	data.LightColor = { lightColor.x, lightColor.y, lightColor.z, 0.0f };
+	data.LightColor = float4{ lightColor.x, lightColor.y, lightColor.z, 0.0f };
 	data.CameraData = Util::GetCameraData();
 	data.GridAndDebug = {
 		kGridWidth,
@@ -1076,13 +1076,13 @@ RainRendering::PerFrame RainRendering::BuildPerFrameData(
 		ClampFinite(settings.RainRoofOcclusionFadeEnd, kUnitRange.minimum, kUnitRange.maximum, defaults.RainRoofOcclusionFadeEnd),
 		roofFadeStart + 0.01f);
 	const uint32_t overheadDropCount = std::min(settings.RainOverheadDropCount, data.LayerCounts[0]);
-	data.RoofOcclusion = {
+	data.RoofOcclusion = float4{
 		hasRoofOcclusion ? 1.0f : 0.0f,
 		roofFadeStart,
 		roofFadeEnd,
 		static_cast<float>(overheadDropCount)
 	};
-	data.VanillaWind = {
+	data.VanillaWind = float4{
 		a_weather.windSlope.x,
 		a_weather.windSlope.y,
 		settings.EnableRainWind ?

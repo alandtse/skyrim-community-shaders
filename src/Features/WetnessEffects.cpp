@@ -1176,7 +1176,7 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data, bool a_updateStat
 
 	a_data.CharacterImpactIntensity = weatherIntensity;
 	a_data.CharacterRetainedWetness = characterSurfaceWetness;
-	a_data.CharacterStatePadding = {};
+	a_data.CharacterStatePadding = float2(0.0f, 0.0f);
 }
 
 void WetnessEffects::Prepass()

@@ -13,8 +13,8 @@ Texture2D<float4> InputTexture : register(t0);
 
 struct VS_OUTPUT
 {
-	float4 Position : SV_POSITION;
-	float2 TexCoord : TEXCOORD0;
+	float4 Position: SV_POSITION;
+	float2 TexCoord: TEXCOORD0;
 };
 
 VS_OUTPUT VS_Main(uint vertexID : SV_VertexID)
@@ -39,10 +39,12 @@ namespace BackgroundBlur
 	float4 SampleGaussian(float2 uv, float2 direction)
 	{
 		float4 result = InputTexture.SampleLevel(LinearSampler, uv, 0) * kCenterWeight;
-		[unroll] for (int i = 0; i < 2; ++i) {
+		[unroll] for (int i = 0; i < 2; ++i)
+		{
 			float2 offset = direction * kPairOffsets[i];
 			result += (InputTexture.SampleLevel(LinearSampler, uv + offset, 0) +
-				InputTexture.SampleLevel(LinearSampler, uv - offset, 0)) * kPairWeights[i];
+						  InputTexture.SampleLevel(LinearSampler, uv - offset, 0)) *
+			          kPairWeights[i];
 		}
 		return result;
 	}

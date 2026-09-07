@@ -755,7 +755,7 @@ void VRStereoOptimizations::RepairCulledEye1()
 
 void VRStereoOptimizations::ExecuteDepthFillPass()
 {
-	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS)
+	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS || !texScatterDepth || !paramsCB)
 		return;
 
 	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
@@ -811,8 +811,8 @@ void VRStereoOptimizations::DispatchDepthScatter()
 	auto context = globals::d3d::context;
 	RenderTargetUnbindScope rtScope(context);
 
-	const UINT farthest[4] = { kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty };
-	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), farthest);
+	const UINT scatterEmpty[4] = { kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty };
+	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), scatterEmpty);
 
 	auto cbPtr = paramsCB->CB();
 	ID3D11ShaderResourceView* srv = mainDepthSRV.get();

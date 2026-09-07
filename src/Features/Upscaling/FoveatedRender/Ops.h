@@ -19,6 +19,18 @@ namespace FoveatedRenderImpl::Ops
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags = false, bool createSRV = false, bool createUAV = false, const char* name = nullptr);
 
+	// Depth-stencil resources cannot be copied directly into the typed R32_FLOAT
+	// guide textures used by Feature 18. Convert through the native depth SRV and
+	// crop the requested eye/region explicitly.
+	bool CopyDepthRegionToTexture(
+		ID3D11Resource* source,
+		ID3D11ShaderResourceView* sourceSRV,
+		ID3D11UnorderedAccessView* destinationUAV,
+		uint32_t sourceOffsetX,
+		uint32_t sourceOffsetY,
+		uint32_t width,
+		uint32_t height);
+
 	// Lazy/idempotent resource ensure helpers.
 	void EnsureVRIntermediateTextures(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
 		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);

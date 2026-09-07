@@ -38,6 +38,23 @@ TEST_CASE("Controller defaults to mono mode", "[subrect]")
 	REQUIRE(UVApprox(c.GetUV(), c.GetRightEyeUV()));
 }
 
+TEST_CASE("SeedDefaultPresets selects the named first-run preset", "[subrect][defaults]")
+{
+	Controller c;
+	c.LoadSettings(json::object());
+	c.SeedDefaultPresets({
+							 Preset{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+							 Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+						 },
+		"Center 75%");
+	c.MaterializeNewDefaults();
+
+	REQUIRE(UVApprox(c.GetUV(), { 0.125f, 0.125f, 0.75f, 0.75f }));
+	json saved;
+	c.SaveSettings(saved);
+	REQUIRE(saved["SelectedPresetIndex"] == 1);
+}
+
 TEST_CASE("SaveSettings in mono mode emits no right-eye keys", "[subrect][backcompat]")
 {
 	// Pre-stereo screenshot JSON shape must round-trip bit-identically: this is

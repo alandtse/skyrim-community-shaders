@@ -365,7 +365,16 @@ public:
 	/** @brief Gameplay is paused or suspended behind a menu. Cached menus are kept explicit in case a mod clears kPausesGame. */
 	bool IsPausedOrMenuOpen(RE::UI* ui) const
 	{
-		return (ui && ui->GameIsPaused()) || IsMainOrLoadingMenuOpen(ui) || isMapMenuOpen;
+		return (ui && ui->GameIsPaused()) || IsMainOrLoadingMenuOpen(ui) || isMapMenuOpen || isStatsMenuOpen;
+	}
+	/** @brief Full-screen menu backdrops that need the menu compositor instead of the live-world swap path. */
+	bool IsStaticMenuBackdropOpen(RE::UI* ui) const
+	{
+		if (!IsPausedOrMenuOpen(ui))
+			return false;
+		// Map and stats render their own full-screen art. Other pause/menu states
+		// are static only when no live world was rendered this frame.
+		return isMapMenuOpen || isStatsMenuOpen || !worldRenderedThisFrame;
 	}
 
 	/**

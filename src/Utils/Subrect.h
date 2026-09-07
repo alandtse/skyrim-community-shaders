@@ -96,8 +96,11 @@ namespace Util::Subrect
 		 * CropPresets entry. User edits and deletions of presets persist across saves.
 		 *
 		 * @param defaults The default presets to seed.
+		 * @param defaultPresetName Optional preset selected when no persisted
+		 *                          crop state exists. The first preset remains
+		 *                          the Reset Crop target.
 		 */
-		void SeedDefaultPresets(std::vector<Preset> defaults);
+		void SeedDefaultPresets(std::vector<Preset> defaults, std::string a_defaultPresetName = {});
 
 		/**
 		 * @brief Add any seeded default not yet in the live preset list to it, so a
@@ -192,6 +195,8 @@ namespace Util::Subrect
 	private:
 		std::vector<Preset> presets;
 		std::vector<Preset> seededDefaults;
+		std::string defaultPresetName;
+		bool placeholderDefaultPreset = false;
 		// Names of seeded defaults ever offered via presets/ApplyPresetByName --
 		// lets a later-added seed stay reachable while an explicitly deleted
 		// default is never silently resurrected.

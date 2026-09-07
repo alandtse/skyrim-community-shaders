@@ -4,7 +4,7 @@
 # ShaderTestFramework). Add test sources here for any plugin code that
 # doesn't require a live DirectX device or ImGui context.
 
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.31)
 
 option(BUILD_CPP_TESTS "Build C++ unit tests for plugin utilities" ON)
 

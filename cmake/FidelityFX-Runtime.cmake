@@ -12,15 +12,21 @@ file(MAKE_DIRECTORY "${FFX_RUNTIME_DIRECTORY}")
 
 function(download_ffx_runtime _filename _sha256)
     set(_destination "${FFX_RUNTIME_DIRECTORY}/${_filename}")
-    file(
-        DOWNLOAD "${FFX_RUNTIME_BASE_URL}/${_filename}"
-        "${_destination}"
-        EXPECTED_HASH "SHA256=${_sha256}"
-        STATUS _download_status
-        TLS_VERIFY ON
-        TIMEOUT 120
-        INACTIVITY_TIMEOUT 20
-    )
+    set(_download_status 0 "cached")
+    if(EXISTS "${_destination}")
+        file(SHA256 "${_destination}" _existing_sha256)
+    endif()
+    if(NOT _existing_sha256 STREQUAL _sha256)
+        file(
+            DOWNLOAD "${FFX_RUNTIME_BASE_URL}/${_filename}"
+            "${_destination}"
+            EXPECTED_HASH "SHA256=${_sha256}"
+            STATUS _download_status
+            TLS_VERIFY ON
+            TIMEOUT 120
+            INACTIVITY_TIMEOUT 20
+        )
+    endif()
     list(GET _download_status 0 _status_code)
     list(GET _download_status 1 _status_message)
     if(NOT _status_code EQUAL 0)

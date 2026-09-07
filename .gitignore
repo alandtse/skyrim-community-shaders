@@ -28,3 +28,6 @@ tools/__pycache__/
 # tools/gen-clangd-db.ps1)
 /compile_commands.json
 .github/scripts/__pycache__/
+
+# Proprietary DLSS Neural Rendering runtime; install locally, never distribute.
+**/nvngx_dlssnr.dll

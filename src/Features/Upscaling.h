@@ -193,6 +193,10 @@ public:
 	// FG FPS Measurement for Overlay
 	bool IsFrameGenerationDx12PathActive() const;
 	bool IsFrameGenerationActive() const;
+	bool IsFrameGenerationConfiguredForSession() const
+	{
+		return IsFrameGenerationDx12PathActive() && settings.frameGenerationMode != 0;
+	}
 	bool ShouldUseFrameGenerationThisFrame() const;
 	bool IsUpscalingActive() const;
 
@@ -249,7 +253,12 @@ public:
 	/// @brief Renders the Foveated DLSS enable + tuning tree. Shared by the upscaler
 	/// panel and the Performance hub. VR-only; self-gates via IsRuntimeSupported()
 	/// (shown disabled off-VR rather than hidden).
-	void DrawFoveationControls(bool showTuning = true);
+	void DrawFoveationControls(bool showTuning = true, bool showSharedPanelNote = true, bool tuningDefaultOpen = false);
+	/// @brief Draws the method, preset, sharpening and DLSS model controls shared by
+	/// Upscaling and the dedicated DLSS 5 NR page.
+	void DrawDLSSNRSharedControls();
+	/// @brief Renders the dedicated DLSS 5 NR page, including shared upscaler controls.
+	void DrawDLSSNRPage();
 	const char* GetQualityModeName(uint qualityMode) const;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;
@@ -264,6 +273,7 @@ public:
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
+	virtual void OnSceneTransitionReset(bool opening) override;
 
 	UpscaleMethod GetUpscaleMethod() const;
 	FrameGenMethod GetFrameGenMethod() const;

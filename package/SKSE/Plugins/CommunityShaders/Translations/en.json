@@ -2620,6 +2620,8 @@
     "feature.upscaling.foveated_edge_blend_label": "Edge Blend",
     "feature.upscaling.foveated_enable": "Enable Foveated Upscaling (region source)",
     "feature.upscaling.foveated_feather_width": "Feather Width",
+    "feature.upscaling.foveated_falloff_curve": "Falloff Curve",
+    "feature.upscaling.foveated_falloff_curve_tooltip": "Controls how the oval transition distributes the fade. 1.00 is balanced; lower values carry the neural result farther into the band, higher values hold the periphery longer.",
     "feature.upscaling.foveated_noise_amount": "Noise Amount",
     "feature.upscaling.foveated_overview": "Foveated subrect upscaling: only the user-selected region gets full DLSS/FSR upscaling, the periphery is cheaply stretched. Significant upscaler cost reduction at the cost of peripheral sharpness. VR only.",
     "feature.upscaling.foveated_periphery_aa_label": "Periphery AA",

@@ -112,7 +112,7 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 		return;
 	if (!testTexture || !testTextureSRV)
 		return;
-	if (!globals::state || !globals::state->IsMainOrLoadingMenuOpen())
+	if (!globals::state || !globals::state->IsStaticMenuBackdropOpen(globals::game::ui))
 		return;
 	if (boundRTIdx != RE::RENDER_TARGETS::kTOTAL &&
 		boundRTIdx != RE::RENDER_TARGETS::kMENUBG)

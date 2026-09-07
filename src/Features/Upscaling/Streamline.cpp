@@ -481,9 +481,10 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
-	// Menus render no motion vectors; camera-derived MVs restore valid reprojection there.
-	// Reset only when that fill couldn't run — accumulating against zero MVs ghosts.
-	slConstants.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ?
+	// Static menu backdrops render no reliable motion vectors; camera-derived MVs
+	// restore valid reprojection there. Reset only when that fill could not run —
+	// accumulating against zero MVs ghosts.
+	slConstants.reset = (state->IsStaticMenuBackdropOpen(globals::game::ui) && !upscaling.menuCameraMVsValid) ?
 	                        sl::Boolean::eTrue :
 	                        sl::Boolean::eFalse;
 

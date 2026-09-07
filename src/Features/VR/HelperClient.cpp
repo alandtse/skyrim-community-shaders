@@ -84,7 +84,7 @@ void VR::ConnectHelper()
 	const auto versionStr = std::format("{}.{}.{}", Plugin::VERSION.major(), Plugin::VERSION.minor(), Plugin::VERSION.patch());
 	if (!g_client.Connect(clientName.c_str(), versionStr.c_str(),
 			API::kClientFlag_RendersOnFocus | API::kClientFlag_OwnCursor)) {
-		logger::info("ImGuiVRHelper not detected; VR menus will only render on the desktop monitor");
+		logger::warn("ImGuiVRHelper not detected; VR menus remain desktop-only. Install the bundled ImGuiVRHelper v1.7.0 runtime plugin.");
 		return;
 	}
 	logger::info("ImGuiVRHelper handshake successful (build {}), client_id={}, vr_keyboard={}",

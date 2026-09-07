@@ -14,6 +14,7 @@
 #include "I18n/I18n.h"
 #include "ShadowCasterInternal.h"
 
+#include <SKSE/ContextHook.h>
 #include <Windows.h>  // CONTEXT for the register-context hook thunks
 
 namespace ShadowCasterManager

@@ -13,6 +13,7 @@
 #include "FeatureConstraints.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/Upscaling.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -488,6 +489,13 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	// Define category order
 	std::vector<std::string> categoryOrder = { "Display", "Utility", "Characters", "Foliage", "Lighting", "Materials", "Post-Processing", "Sky", "Landscape & Textures", "Water", "Other" };
 	// Add categorized features to menu with collapsible headers
+	const auto addDLSSNRPage = [&menuList]() {
+		menuList.push_back(BuiltInMenu{
+			T("menu.features.dlssnr", "DLSS 5 NR"),
+			"DLSSNR",
+			[]() { globals::features::upscaling.DrawDLSSNRPage(); } });
+	};
+	bool dlssNrPageAdded = false;
 	for (const std::string& category : categoryOrder) {
 		if (categorizedFeatures.find(category) != categorizedFeatures.end() && !categorizedFeatures[category].empty()) {
 			// Initialize expansion state if not exists
@@ -500,9 +508,26 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 
 			// Add features only if category is expanded
 			if (categoryExpansionStates[category]) {
-				std::ranges::copy(categorizedFeatures[category], std::back_inserter(menuList));
+				for (Feature* feature : categorizedFeatures[category]) {
+					// Keep the dedicated page immediately above Upscaling in the Display group.
+					if (category == "Display" && !dlssNrPageAdded && feature->GetShortName() == "Upscaling") {
+						addDLSSNRPage();
+						dlssNrPageAdded = true;
+					}
+					menuList.push_back(feature);
+				}
+				// If filtering hides Upscaling, retain the page in the Display group so it
+				// remains discoverable while searching for DLSS or NR settings.
+				if (category == "Display" && !dlssNrPageAdded) {
+					addDLSSNRPage();
+					dlssNrPageAdded = true;
+				}
 			}
 		}
+	}
+	if (!dlssNrPageAdded) {
+		// The feature can be unloaded while the menu still needs a stable landing page.
+		addDLSSNRPage();
 	}
 
 	// Add any categories not in the predefined order

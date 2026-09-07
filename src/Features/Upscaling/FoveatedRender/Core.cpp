@@ -1,15 +1,164 @@
 #include "Core.h"
 #include "Ops.h"
 
+#include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../../Util.h"
+#include "../../../Utils/D3D.h"
 #include "../../Upscaling.h"
 #include "../FoveatedRender.h"
+#include "../NeuralRendering/Integration.h"
 
 #include <cstring>
 
 namespace FoveatedRenderImpl::Ops
 {
+	namespace
+	{
+		struct DepthCopyConstants
+		{
+			uint32_t sourceOffsetX = 0;
+			uint32_t sourceOffsetY = 0;
+			uint32_t width = 0;
+			uint32_t height = 0;
+		};
+		static_assert(sizeof(DepthCopyConstants) == 16);
+
+		ID3D11ShaderResourceView* ResolveDepthSRV(
+			ID3D11Resource* source,
+			ID3D11ShaderResourceView* sourceSRV,
+			winrt::com_ptr<ID3D11ShaderResourceView>& ownedSRV)
+		{
+			if (sourceSRV)
+				return sourceSRV;
+			if (!source || !globals::d3d::device)
+				return nullptr;
+
+			// The engine already exposes the correctly typed view for its depth
+			// resource. Reuse it instead of guessing the view format.
+			if (auto* renderer = globals::game::renderer) {
+				auto& depth = renderer->GetDepthStencilData()
+				                  .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+				if (depth.texture == source && depth.depthSRV)
+					return depth.depthSRV;
+			}
+
+			winrt::com_ptr<ID3D11Texture2D> texture;
+			if (FAILED(source->QueryInterface(IID_PPV_ARGS(texture.put()))))
+				return nullptr;
+			D3D11_TEXTURE2D_DESC desc{};
+			texture->GetDesc(&desc);
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+			viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			viewDesc.Texture2D.MostDetailedMip = 0;
+			viewDesc.Texture2D.MipLevels = 1;
+			switch (desc.Format) {
+			case DXGI_FORMAT_R32_TYPELESS:
+			case DXGI_FORMAT_D32_FLOAT:
+				viewDesc.Format = DXGI_FORMAT_R32_FLOAT;
+				break;
+			case DXGI_FORMAT_R24G8_TYPELESS:
+				viewDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+				break;
+			case DXGI_FORMAT_R32G8X24_TYPELESS:
+				viewDesc.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+				break;
+			case DXGI_FORMAT_R16_TYPELESS:
+			case DXGI_FORMAT_D16_UNORM:
+				viewDesc.Format = DXGI_FORMAT_R16_UNORM;
+				break;
+			default:
+				viewDesc.Format = desc.Format;
+				break;
+			}
+			if (FAILED(globals::d3d::device->CreateShaderResourceView(source, &viewDesc, ownedSRV.put())))
+				return nullptr;
+			return ownedSRV.get();
+		}
+
+		bool EnsureDepthCopyResources()
+		{
+			if (!globals::d3d::device)
+				return false;
+			if (!Core::vrDepthCopyCS) {
+				Core::vrDepthCopyCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(
+					L"Data\\Shaders\\Upscaling\\FoveatedRender\\DepthToPerEyeCS.hlsl", {}, "cs_5_0")));
+				if (!Core::vrDepthCopyCS)
+					return false;
+				Util::SetResourceName(Core::vrDepthCopyCS.get(), "FoveatedRender::DepthToPerEyeCS");
+			}
+			if (!Core::vrDepthCopyCB) {
+				D3D11_BUFFER_DESC cbDesc{};
+				cbDesc.ByteWidth = sizeof(DepthCopyConstants);
+				cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+				cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				if (FAILED(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, Core::vrDepthCopyCB.put()))) {
+					logger::error("[FOVEATED] Failed to create DepthToPerEye constant buffer");
+					return false;
+				}
+				Util::SetResourceName(Core::vrDepthCopyCB.get(), "FoveatedRender::DepthToPerEyeCB");
+			}
+			return true;
+		}
+	}
+
+	bool CopyDepthRegionToTexture(
+		ID3D11Resource* source,
+		ID3D11ShaderResourceView* sourceSRV,
+		ID3D11UnorderedAccessView* destinationUAV,
+		uint32_t sourceOffsetX,
+		uint32_t sourceOffsetY,
+		uint32_t width,
+		uint32_t height)
+	{
+		auto* context = globals::d3d::context;
+		if (!source || !context || !destinationUAV || width == 0 || height == 0 || !EnsureDepthCopyResources())
+			return false;
+
+		winrt::com_ptr<ID3D11Texture2D> sourceTexture;
+		if (FAILED(source->QueryInterface(IID_PPV_ARGS(sourceTexture.put()))))
+			return false;
+		D3D11_TEXTURE2D_DESC sourceDesc{};
+		sourceTexture->GetDesc(&sourceDesc);
+		if (sourceDesc.ArraySize != 1 || sourceDesc.MipLevels != 1 || sourceDesc.SampleDesc.Count != 1 ||
+			sourceOffsetX > sourceDesc.Width || width > sourceDesc.Width - sourceOffsetX ||
+			sourceOffsetY > sourceDesc.Height || height > sourceDesc.Height - sourceOffsetY)
+			return false;
+
+		winrt::com_ptr<ID3D11ShaderResourceView> ownedSRV;
+		auto* resolvedSRV = ResolveDepthSRV(source, sourceSRV, ownedSRV);
+		if (!resolvedSRV)
+			return false;
+
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		if (FAILED(context->Map(Core::vrDepthCopyCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)) || !mapped.pData)
+			return false;
+		const DepthCopyConstants constants{ sourceOffsetX, sourceOffsetY, width, height };
+		std::memcpy(mapped.pData, &constants, sizeof(constants));
+		context->Unmap(Core::vrDepthCopyCB.get(), 0);
+
+		CS_GPU_PASS("FoveatedRender::DepthToPerEye");
+		context->CSSetShader(Core::vrDepthCopyCS.get(), nullptr, 0);
+		ID3D11Buffer* cbs[1]{ Core::vrDepthCopyCB.get() };
+		context->CSSetConstantBuffers(0, 1, cbs);
+		ID3D11ShaderResourceView* srvs[1]{ resolvedSRV };
+		context->CSSetShaderResources(0, 1, srvs);
+		ID3D11UnorderedAccessView* uavs[1]{ destinationUAV };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+
+		ID3D11ShaderResourceView* nullSRV[1]{};
+		ID3D11UnorderedAccessView* nullUAV[1]{};
+		ID3D11Buffer* nullCB[1]{};
+		context->CSSetShaderResources(0, 1, nullSRV);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+		context->CSSetConstantBuffers(0, 1, nullCB);
+		context->CSSetShader(nullptr, nullptr, 0);
+		return true;
+	}
+
 	// Mirrors the StretchCB layout in SubrectStretchCS.hlsl — 8 dims + mode +
 	// blur radius + debug flag + pad. Kept at namespace scope so the create-CB
 	// path can size against sizeof(StretchCB) instead of a magic number.
@@ -133,7 +282,7 @@ namespace FoveatedRenderImpl::Ops
 			depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 			depthDesc.SampleDesc.Count = 1;
 			depthDesc.Usage = D3D11_USAGE_DEFAULT;
-			depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 			Core::vrIntermediateDepth[i] = eastl::make_unique<Texture2D>(depthDesc);
 			Util::SetResourceName(Core::vrIntermediateDepth[i]->resource.get(), ("FoveatedRender_Depth_" + suffix).c_str());
 
@@ -142,6 +291,12 @@ namespace FoveatedRenderImpl::Ops
 			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
 			Core::vrIntermediateDepth[i]->CreateSRV(srvDesc);
+
+			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+			uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+			uavDesc.Texture2D.MipSlice = 0;
+			Core::vrIntermediateDepth[i]->CreateUAV(uavDesc);
 
 			Core::vrIntermediateMotionVectors[i] = CreateTextureFromSource(mvecSrc, inWidth, inHeight, false, true, false, ("FoveatedRender_MVec_" + suffix).c_str());
 			if (reactiveSrc)
@@ -188,7 +343,7 @@ namespace FoveatedRenderImpl::Ops
 				depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 				depthDesc.SampleDesc.Count = 1;
 				depthDesc.Usage = D3D11_USAGE_DEFAULT;
-				depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 				Core::vrSubrectDepth[i] = eastl::make_unique<Texture2D>(depthDesc);
 				Util::SetResourceName(Core::vrSubrectDepth[i]->resource.get(), ("FoveatedRender_Subrect_Depth_" + suffix).c_str());
 
@@ -197,6 +352,12 @@ namespace FoveatedRenderImpl::Ops
 				srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 				srvDesc.Texture2D.MipLevels = 1;
 				Core::vrSubrectDepth[i]->CreateSRV(srvDesc);
+
+				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+				uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
+				uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+				uavDesc.Texture2D.MipSlice = 0;
+				Core::vrSubrectDepth[i]->CreateUAV(uavDesc);
 
 				Core::vrSubrectMotionVectors[i] = CreateTextureFromSource(mvecSrc, subInW, subInH, false, true, false, ("FoveatedRender_Subrect_MVec_" + suffix).c_str());
 				if (reactiveSrc)
@@ -259,12 +420,18 @@ namespace FoveatedRenderImpl::Ops
 		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
 		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
 		                     .depthSRV;
+		if (!depthSRV)
+			return false;
 		for (uint32_t i = 0; i < 2; ++i) {
 			uint32_t offsetXIn = (i == 1) ? eyeWidthIn : 0;
 			D3D11_BOX srcBox = { offsetXIn, 0, 0, offsetXIn + eyeWidthIn, eyeHeightIn, 1 };
 
 			context->CopySubresourceRegion(Core::vrIntermediateColorIn[i]->resource.get(), 0, 0, 0, 0, colorSrc, 0, &srcBox);
-			context->CopySubresourceRegion(Core::vrIntermediateDepth[i]->resource.get(), 0, 0, 0, 0, depthSrc, 0, &srcBox);
+			if (!CopyDepthRegionToTexture(depthSrc, nullptr, Core::vrIntermediateDepth[i]->uav.get(),
+					offsetXIn, 0, eyeWidthIn, eyeHeightIn)) {
+				logger::error("[FOVEATED] Failed to convert native depth for eye {}", i);
+				return false;
+			}
 			context->CopySubresourceRegion(Core::vrIntermediateMotionVectors[i]->resource.get(), 0, 0, 0, 0, mvecSrc, 0, &srcBox);
 			if (transparencySrc)
 				context->CopySubresourceRegion(Core::vrIntermediateTransparencyMask[i]->resource.get(), 0, 0, 0, 0, transparencySrc, 0, &srcBox);
@@ -632,12 +799,19 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t SubWidth;
 		uint32_t SubHeight;
 		uint32_t BlendMode;
-		float FeatherWidth;
+		uint32_t MaskMode;
 		uint32_t FrameIndex;
 		uint32_t SrcOffsetX;
+		float FeatherWidth;
 		float DitherStrength;
-		uint32_t _pad0, _pad1, _pad2;
+		float FalloffCurve;
+		float MaskCenterX;
+		float MaskCenterY;
+		float MaskRadiusX;
+		float MaskRadiusY;
+		float _pad0;
 	};
+	static_assert(sizeof(BlendCB) == 64);
 
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
 		const Util::Subrect::UVRegion& rightUV, uint32_t mode)
@@ -772,11 +946,23 @@ namespace FoveatedRenderImpl::Ops
 			cb->SubWidth = subWidth;
 			cb->SubHeight = subHeight;
 			cb->BlendMode = (blendMode == FoveatedRender::SubrectBlendMode::kDither) ? 1 : 0;
-			cb->FeatherWidth = foveated.settings.subrectFeatherWidth;
+			cb->MaskMode = (foveated.GetSubrectMaskMode() == FoveatedRender::SubrectMaskMode::kOval) ? 1 : 0;
 			cb->FrameIndex = globals::state->frameCount;
 			cb->SrcOffsetX = srcOffsetX;
+			cb->FeatherWidth = foveated.settings.subrectFeatherWidth;
 			cb->DitherStrength = foveated.settings.subrectDitherStrength;
-			cb->_pad0 = cb->_pad1 = cb->_pad2 = 0;
+			cb->FalloffCurve = foveated.settings.subrectFalloffCurve;
+			const float width = static_cast<float>(std::max(subWidth, 1u));
+			const float height = static_cast<float>(std::max(subHeight, 1u));
+			// Use the subrect's geometric center and half-extent so the ellipse is
+			// tangent to the bounding rectangle at the midpoint of each edge. The
+			// shader evaluates pixel centers, which keeps the first/last columns
+			// symmetric instead of trimming one pixel from the oval.
+			cb->MaskCenterX = 0.5f * width;
+			cb->MaskCenterY = 0.5f * height;
+			cb->MaskRadiusX = std::max(0.5f, cb->MaskCenterX);
+			cb->MaskRadiusY = std::max(0.5f, cb->MaskCenterY);
+			cb->_pad0 = 0.0f;
 			context->Unmap(Core::vrSubrectBlendCB.get(), 0);
 		}
 
@@ -836,6 +1022,7 @@ namespace FoveatedRenderImpl
 
 	void Core::ClearResources()
 	{
+		NeuralRendering::Reset();
 		for (int i = 0; i < 2; ++i) {
 			vrIntermediateColorIn[i].reset();
 			vrIntermediateColorOut[i].reset();
@@ -859,6 +1046,9 @@ namespace FoveatedRenderImpl
 		vrRenderSBS.reset();
 		vrRenderSBSW = vrRenderSBSH = 0;
 
+		vrDepthCopyCS = nullptr;
+		vrDepthCopyCB = nullptr;
+
 		vrFasterOutW = vrFasterOutH = 0;
 
 		vrMvecSRV = nullptr;
@@ -871,6 +1061,18 @@ namespace FoveatedRenderImpl
 		vrBlendSrcSRVOwner = nullptr;
 
 		activeSubrectUVHash = 0;
+		neuralGuidesFrame = UINT32_MAX;
+	}
+
+	void Core::InvalidateTemporalState()
+	{
+		// A crop can move without changing the intermediate dimensions. In that
+		// case resource recreation alone is insufficient: the old guide snapshot,
+		// periphery history, and DLSSNR history all describe the previous region.
+		vrTemporalFrameIdx = 0;
+		vrTemporalHistoryValid = false;
+		neuralGuidesFrame = UINT32_MAX;
+		NeuralRendering::ResetHistory();
 	}
 
 	void Core::ClearShaderCache()
@@ -878,6 +1080,8 @@ namespace FoveatedRenderImpl
 		vrSubrectStretchCS = nullptr;
 		vrSubrectStretchCB = nullptr;
 		vrSubrectStretchSampler = nullptr;
+		vrDepthCopyCS = nullptr;
+		vrDepthCopyCB = nullptr;
 
 		vrTemporalSmoothCS = nullptr;
 		vrTemporalSmoothCB = nullptr;

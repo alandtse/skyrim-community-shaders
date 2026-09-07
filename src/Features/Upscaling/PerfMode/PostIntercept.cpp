@@ -29,11 +29,10 @@ void PerfMode::RenderTonemapWithSwap(void* imageSpaceShader, RE::BSTriShape* sha
 		return;
 	}
 
-	// Flat menu / loading backdrop: no live world, so the engine's kTOTAL bridge
-	// leaves the BG missing under renderRes; MaybeBlitMenuBG upscales+blits it in.
-	// VR Playroom renders a live head-tracked world behind the menu, so it must
-	// take the gameplay swap below or it presents as a frozen head-locked backdrop.
-	if (globals::state && globals::state->IsMainOrLoadingMenuOpen() && !globals::state->worldRenderedThisFrame) {
+	// Static menu/map backdrops: the engine's kTOTAL bridge leaves the BG missing
+	// under renderRes; MaybeBlitMenuBG upscales+blits it in. A live VR Playroom
+	// world remains on the gameplay path so it cannot become head-locked.
+	if (globals::state && globals::state->IsStaticMenuBackdropOpen(globals::game::ui)) {
 		Hook::func(imageSpaceShader, shape, param);
 		perfMode.MaybeBlitMenuBG(RE::RENDER_TARGETS::kTOTAL);
 		return;

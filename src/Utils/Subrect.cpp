@@ -78,6 +78,7 @@ namespace Util::Subrect
 {
 	void Controller::LoadSettings(const json& a_json)
 	{
+		placeholderDefaultPreset = false;
 		if (a_json.contains("CropX"))
 			currentUV.x = a_json["CropX"];
 		if (a_json.contains("CropY"))
@@ -211,13 +212,24 @@ namespace Util::Subrect
 		a_json["SeenDefaultPresetNames"] = seenDefaultNames;
 	}
 
-	void Controller::SeedDefaultPresets(std::vector<Preset> defaults)
+	void Controller::SeedDefaultPresets(std::vector<Preset> defaults, std::string a_defaultPresetName)
 	{
 		seededDefaults = std::move(defaults);
+		this->defaultPresetName = std::move(a_defaultPresetName);
 	}
 
 	void Controller::MaterializeNewDefaults()
 	{
+		// LoadSettings may have created a temporary Full Frame placeholder before
+		// the host had a chance to seed its named defaults. Replace only that
+		// internally-created placeholder so a named first-run selection can win.
+		if (placeholderDefaultPreset) {
+			presets.clear();
+			placeholderDefaultPreset = false;
+			selectedPresetIndex = 0;
+			currentUV = {};
+			currentRightUV = {};
+		}
 		EnsureDefaultPreset();
 		for (const auto& preset : seededDefaults) {
 			if (std::find(seenDefaultNames.begin(), seenDefaultNames.end(), preset.name) != seenDefaultNames.end())
@@ -432,15 +444,26 @@ namespace Util::Subrect
 				if (std::find(seenDefaultNames.begin(), seenDefaultNames.end(), preset.name) == seenDefaultNames.end())
 					seenDefaultNames.push_back(preset.name);
 			}
+			int defaultIndex = 0;
+			if (!defaultPresetName.empty()) {
+				for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
+					if (presets[i].name == defaultPresetName) {
+						defaultIndex = i;
+						break;
+					}
+				}
+			}
 			// currentUV must match what the combo shows as selected; otherwise
-			// the first preset appears chosen but the crop region stays full-frame.
-			currentUV = presets[0].uv;
+			// the selected preset appears chosen but the crop region stays stale.
+			currentUV = presets[defaultIndex].uv;
 			// nullopt rightUV means "auto-mirror" — match the same fallback
 			// ApplyPreset uses below.
-			currentRightUV = presets[0].rightUV.value_or(MirrorUVHorizontal(currentUV));
-			selectedPresetIndex = 0;
+			currentRightUV = presets[defaultIndex].rightUV.value_or(MirrorUVHorizontal(currentUV));
+			selectedPresetIndex = defaultIndex;
+			placeholderDefaultPreset = false;
 		} else {
 			presets.push_back(Preset{ .name = "Full Frame", .uv = DefaultUV() });
+			placeholderDefaultPreset = true;
 		}
 	}
 

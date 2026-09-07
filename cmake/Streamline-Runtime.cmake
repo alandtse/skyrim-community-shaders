@@ -28,15 +28,21 @@ file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_ROOT}")
 file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_DIRECTORY}")
 file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_DX12_DIRECTORY}")
 
-file(
-    DOWNLOAD "${STREAMLINE_RUNTIME_ARCHIVE_URL}"
-    "${STREAMLINE_RUNTIME_ARCHIVE}"
-    EXPECTED_HASH "SHA256=${STREAMLINE_RUNTIME_ARCHIVE_SHA256}"
-    STATUS _streamline_download_status
-    TLS_VERIFY ON
-    TIMEOUT 600
-    INACTIVITY_TIMEOUT 60
-)
+set(_streamline_download_status 0 "cached")
+if(EXISTS "${STREAMLINE_RUNTIME_ARCHIVE}")
+    file(SHA256 "${STREAMLINE_RUNTIME_ARCHIVE}" _streamline_existing_sha256)
+endif()
+if(NOT _streamline_existing_sha256 STREQUAL "${STREAMLINE_RUNTIME_ARCHIVE_SHA256}")
+    file(
+        DOWNLOAD "${STREAMLINE_RUNTIME_ARCHIVE_URL}"
+        "${STREAMLINE_RUNTIME_ARCHIVE}"
+        EXPECTED_HASH "SHA256=${STREAMLINE_RUNTIME_ARCHIVE_SHA256}"
+        STATUS _streamline_download_status
+        TLS_VERIFY ON
+        TIMEOUT 600
+        INACTIVITY_TIMEOUT 60
+    )
+endif()
 list(GET _streamline_download_status 0 _streamline_download_code)
 list(GET _streamline_download_status 1 _streamline_download_message)
 if(NOT _streamline_download_code EQUAL 0)

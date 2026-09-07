@@ -1,5 +1,7 @@
 #include "UnifiedWater.h"
 
+#include <SKSE/ContextHook.h>
+
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/ThemeManager.h"

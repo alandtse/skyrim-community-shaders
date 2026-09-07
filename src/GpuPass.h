@@ -65,5 +65,31 @@ private:
 		ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { (cond) ? std::string_view(name1) : std::string_view(name2) }
 #endif
 
+#ifdef TRACY_ENABLE
+#	define CS_GPU_PASS_SELECT3(index, name0, name1, name2)                                                                                                  \
+		static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc0_, __LINE__){ name0, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
+		static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc1_, __LINE__){ name1, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
+		static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc2_, __LINE__){ name2, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
+		const auto CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) = (index);                                                                                 \
+		ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__)                                                                                               \
+		{                                                                                                                                                    \
+			CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) == 0 ? &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc0_, __LINE__) :                                        \
+			CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) == 1 ? &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc1_, __LINE__) :                                        \
+																  &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc2_, __LINE__),                                         \
+				CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) == 0 ? std::string_view(name0) :                                                              \
+				CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) == 1 ? std::string_view(name1) :                                                              \
+																	  std::string_view(name2)                                                                \
+		}
+#else
+#	define CS_GPU_PASS_SELECT3(index, name0, name1, name2)                                 \
+		const auto CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) = (index);                \
+		ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__)                              \
+		{                                                                                   \
+			CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) == 0 ? std::string_view(name0) : \
+			CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) == 1 ? std::string_view(name1) : \
+																  std::string_view(name2)   \
+		}
+#endif
+
 #define CS_GPU_PASS_DYNAMIC(name) \
 	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { name }

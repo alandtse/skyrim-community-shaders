@@ -60,6 +60,8 @@ namespace FoveatedRenderImpl
 		if (uvHash != Core::activeSubrectUVHash) {
 			logger::info("[FOVEATED] Subrect UV or mode changed, recreating DLSS resources");
 			streamline.DestroyDLSSResources();
+			Core::InvalidateTemporalState();
+			logger::debug("[FOVEATED] Temporal state invalidated after subrect/mode change; waiting for fresh per-eye guides");
 			Core::activeSubrectUVHash = uvHash;
 		}
 
@@ -103,7 +105,10 @@ namespace FoveatedRenderImpl
 				}
 			}
 
-			return FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
+			const bool finalized = FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
+			if (finalized)
+				Core::neuralGuidesFrame = globals::state ? globals::state->frameCount : UINT32_MAX;
+			return finalized;
 		}
 
 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
@@ -153,7 +158,11 @@ namespace FoveatedRenderImpl
 			D3D11_BOX sbsCrop = { sbsX, cropY, 0, sbsX + subInW, cropY + subInH, 1 };
 
 			context->CopySubresourceRegion(Core::vrSubrectColorIn[i]->resource.get(), 0, 0, 0, 0, Core::vrRenderSBS->resource.get(), 0, &sbsCrop);
-			context->CopySubresourceRegion(Core::vrSubrectDepth[i]->resource.get(), 0, 0, 0, 0, p.depthTexture, 0, &sbsCrop);
+			if (!CopyDepthRegionToTexture(p.depthTexture, nullptr, Core::vrSubrectDepth[i]->uav.get(),
+					sbsX, cropY, subInW, subInH)) {
+				logger::error("[FOVEATED] Failed to convert native depth for subrect eye {}", i);
+				return false;
+			}
 			context->CopySubresourceRegion(Core::vrSubrectMotionVectors[i]->resource.get(), 0, 0, 0, 0, p.motionVectors, 0, &sbsCrop);
 			if (p.reactiveMask)
 				context->CopySubresourceRegion(Core::vrSubrectReactiveMask[i]->resource.get(), 0, 0, 0, 0, p.reactiveMask, 0, &sbsCrop);
@@ -171,6 +180,7 @@ namespace FoveatedRenderImpl
 				return false;
 			}
 		}
+		Core::neuralGuidesFrame = globals::state ? globals::state->frameCount : UINT32_MAX;
 
 		// Write DLSS output back at subrect position (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {

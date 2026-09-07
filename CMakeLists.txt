@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.31)
 cmake_policy(SET CMP0116 NEW)
 set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
@@ -69,12 +69,18 @@ option(
     "Include features whose .ini has autoupload != true in the AIO. Off by default — the AIO ships only release-ready features. Turn on for local dev builds that want every feature regardless of release status."
     OFF
 )
+option(
+    SKIP_RUNTIME_DOWNLOADS
+    "Skip redistributable runtime downloads for DLL-only development builds."
+    OFF
+)
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")
 message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
 message("\tTracy profiler: ${TRACY_SUPPORT}")
 message("\tShader tests: ${BUILD_SHADER_TESTS}")
 message("\tAIO include non-autoupload features: ${AIO_INCLUDE_NON_AUTOUPLOAD}")
+message("\tSkip runtime downloads: ${SKIP_RUNTIME_DOWNLOADS}")
 message("\tEffects11: ${ENABLE_EFFECTS11}")
 
 # #######################################################################################################################
@@ -144,6 +150,15 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
+
+# The SDK's component targets are emitted as plain library names (for example
+# ffx_fsr3upscaler_x64.lib) rather than imported targets on the VS generator.
+# Keep the SDK output directory on the link search path so multi-config builds
+# resolve those libraries without relying on a machine-specific CMake cache.
+target_link_directories(
+    ${PROJECT_NAME}
+    PRIVATE "${CMAKE_SOURCE_DIR}/bin/ffx_sdk"
+)
 
 target_compile_definitions(
     ${PROJECT_NAME}
@@ -660,8 +675,10 @@ install(
     PATTERN "Tests" EXCLUDE
 )
 include(FeaturePackaging)
-include(FidelityFX-Runtime)
-include(Streamline-Runtime)
+if(NOT SKIP_RUNTIME_DOWNLOADS)
+    include(FidelityFX-Runtime)
+    include(Streamline-Runtime)
+endif()
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################

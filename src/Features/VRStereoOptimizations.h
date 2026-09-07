@@ -78,9 +78,11 @@ struct VRStereoOptimizations
 		StereoMode stereoMode = StereoMode::Off;
 		float disocclusionDepthThreshold = 0.01f;
 		float edgeDepthThreshold = 0.05f;
-		float minEdgeDistance = 5000.0f;     ///< Minimum linearized depth for edge AA (game units)
-		float fullBlendDistance = 0.0f;      ///< Linearized depth below which near-camera geometry is excluded from culling (game units)
-		float forwardOcclusionScale = 0.1f;  ///< Eye 0 depth multiplier for directional disocclusion; 0 = disabled
+		float minEdgeDistance = 5000.0f;  ///< Minimum linearized depth for edge AA (game units)
+		float fullBlendDistance = 0.0f;   ///< Linearized depth below which near-camera geometry is excluded from culling (game units)
+		/// Eye 0 must be within this fraction of Eye 1's depth to count as a genuine occluding
+		/// edge (isDisoccluded when eye0Depth < eye1Depth * ratio); 0 = disabled.
+		float directionalOcclusionRatio = 0.9f;
 		// reserved for foveated reprojection — see alandtse/open-shaders#143
 		float foveatedRegionRadius = 0.3f;
 		float foveatedRegionCenterX = 0.5f;
@@ -118,8 +120,8 @@ struct VRStereoOptimizations
 		uint32_t _pad0;
 
 		float _pad1[2];
-		float FoveatedRadius;         // reserved for foveated reprojection — see alandtse/open-shaders#143
-		float ForwardOcclusionScale;  ///< Eye 0 depth multiplier for directional disocclusion (0 = disabled)
+		float FoveatedRadius;  // reserved for foveated reprojection — see alandtse/open-shaders#143
+		float DirectionalOcclusionRatio;
 
 		float FoveatedCenter[2];  // reserved for foveated reprojection — see alandtse/open-shaders#143
 		float MinEdgeDistance;
@@ -139,6 +141,24 @@ struct VRStereoOptimizations
 	 * Called from Deferred::StartDeferred() after OverrideBlendStates().
 	 */
 	void DispatchStencil();
+
+	/// @brief Live sizes and per-frame flags for devbench diagnostics.
+	json GetDiagnostics() const;
+
+	/// @brief True when the classification (mode texture) pass is ready, independent of stereoMode.
+	bool CanClassify() const
+	{
+		return loaded && stencilCS && texPerPixelMode && paramsCB;
+	}
+
+	/// @brief True when the mode texture holds real classification values, not debugDepthMap's
+	/// unrelated visualization overload -- the gate external consumers (SSGI, Shadows) must use.
+	/// Also requires this frame's classify dispatch to have actually written the texture: a null
+	/// depth SRV (see DispatchStencil) skips the write and leaves stale/previous-frame data.
+	bool CanExternallyConsumeClassification() const
+	{
+		return CanClassify() && !settings.debugDepthMap && classifiedThisFrame;
+	}
 
 	/**
 	 * @brief Returns true when stencil classification/write resources are ready.
@@ -217,7 +237,7 @@ private:
 	/// light Eye 1 natively (RepairCulledEye1 step 3).
 	void DispatchGBufferFill();
 
-	/// Sets the rasterizer viewport to the Eye 1 (right) half of the SBS buffer.
+	/// Sets the rasterizer viewport to the Eye 1 (right) half of the classified SBS area (frameDim).
 	void SetEye1Viewport();
 
 	/// Compiles all shaders used by this feature
@@ -249,6 +269,10 @@ private:
 
 	bool stencilActive = false;
 	uint32_t stencilSwapCount = 0;
+	/// Classified SBS size this frame (dynamic-resolution scaled).
+	float2 frameDim{};
+	/// True once DispatchStencil() has written texPerPixelMode for the current frame.
+	bool classifiedThisFrame = false;
 
 	// GBufferFillCS does typed UAV loads on the G-buffer formats (R10G10B10A2,
 	// R11G11B10, R16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads

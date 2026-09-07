@@ -161,9 +161,24 @@ namespace ShaderConstants
 			return GrassPS{};
 		}
 
-		const int32_t PBRFlags = 0;
-		const int32_t PBRParams1 = 1;
-		const int32_t PBRParams2 = 2;
+		const int32_t WorldViewProj = 0;
+		const int32_t WorldView = 1;
+		const int32_t World = 2;
+		const int32_t PreviousWorld = 3;
+		const int32_t FogNearColor = 4;
+		const int32_t WindVector = 5;
+		const int32_t WindTimer = 6;
+		const int32_t DirLightDirection = 7;
+		const int32_t PreviousWindTimer = 8;
+		const int32_t DirLightColor = 9;
+		const int32_t AlphaParam1 = 10;
+		const int32_t AmbientColor = 11;
+		const int32_t AlphaParam2 = 12;
+		const int32_t ScaleMask = 13;
+
+		const int32_t PBRFlags = 14;
+		const int32_t PBRParams1 = 15;
+		const int32_t PBRParams2 = 16;
 	};
 
 	struct EffectPS
@@ -497,6 +512,9 @@ namespace SIE
 
 		/** @brief Returns true if any shader compilation tasks are in progress. */
 		bool IsCompiling();
+		/** @brief True if a_taskGeneration is set and predates the live generation -- mirrors
+		 * Util::GenerationClaim::TryPublish's own staleness rule (see AddCompletedShader). */
+		bool IsGenerationStale(std::optional<uint64_t> a_taskGeneration) const;
 		/** Gets whether the shader cache is enabled. */
 		bool IsEnabled() const;
 		/** Sets whether the shader cache is enabled. */
@@ -511,6 +529,9 @@ namespace SIE
 		void SetDump(bool value);
 		/** @brief Signals all compilation threads to stop and clears pending tasks. */
 		void StopCompilation();
+		/** @brief Drops queued/in-flight compilation work without stopping the management
+		 * thread (unlike StopCompilation(), which is terminal). Returns immediately. */
+		void CancelCompilation();
 
 		/** Gets whether the persistent disk cache is enabled. */
 		bool IsDiskCache() const;
@@ -912,6 +933,7 @@ namespace SIE
 
 		enum class GrassShaderTechniques
 		{
+			RenderDepthStencil = 7,
 			RenderDepth = 8,
 		};
 

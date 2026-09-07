@@ -15,8 +15,8 @@ cbuffer VRStereoOptParams : register(b1)
 	uint _pad0;
 
 	float2 _pad1;
-	float FoveatedRadius;         // reserved for foveated reprojection — see alandtse/open-shaders#143
-	float ForwardOcclusionScale;  // Eye 0 depth multiplier for directional disocclusion (0 = disabled)
+	float FoveatedRadius;             // reserved for foveated reprojection — see alandtse/open-shaders#143
+	float DirectionalOcclusionRatio;  // Eye 0 must be closer than this fraction of Eye 1's depth (0 = disabled)
 
 	float2 FoveatedCenter;  // reserved for foveated reprojection — see alandtse/open-shaders#143
 	float MinEdgeDistance;

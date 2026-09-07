@@ -11,6 +11,7 @@
 #include "Common/VR.hlsli"
 #include "Common/VRReproject.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
+#include "VRStereoOptimizations/modes.hlsli"
 
 // Inverse of ScreenToViewDepth: linear view-space Z back to raw NDC depth.
 float LinearToRawDepth(float d)
@@ -28,14 +29,18 @@ float4 LinearToRawDepth(float4 d)
 #if defined(VR) && defined(FRAMEBUFFER)
 static const float kGIReprojectDepthAgree = 0.05;  // NDC surface-match tolerance
 
-// True when this eye's pixel can take the other eye's marched GI exactly: it
-// reprojects in-frame (frustum) and the other eye shows the same surface (depths
-// agree). Returns the other-eye pixel in otherPx on a hit. A miss is the disoccluded
-// set — the frustum-edge strip plus occluder gaps — which the caller marches natively.
-bool GIReprojectsCleanly(float2 uv, float linearDepth, uint eyeIndex, Texture2D<float> depthTex, float2 texScale, out int2 otherPx)
+// True when this eye's pixel can take the other eye's marched GI exactly: frustum-valid
+// reproject, agreeing depths, and (when useModeTex is set) agreeing VRStereoOptimizations
+// classification -- catches boundary pixels depth alone misses. Returns the other-eye
+// pixel in otherPx on a hit; a miss is the disoccluded set the caller marches natively.
+bool GIReprojectsCleanly(float2 uv, float linearDepth, uint eyeIndex, Texture2D<float> depthTex, float2 texScale, out int2 otherPx,
+	bool useModeTex, Texture2D<uint> modeTex, float2 modeTexDim)
 {
 	otherPx = int2(0, 0);
 	if (linearDepth < FP_Z)  // HMD mask / first-person hands: not view-independent geometry
+		return false;
+
+	if (useModeTex && !IsModeMain(modeTex, uint2(uv * modeTexDim)))
 		return false;
 
 	float rawDepth = LinearToRawDepth(linearDepth);

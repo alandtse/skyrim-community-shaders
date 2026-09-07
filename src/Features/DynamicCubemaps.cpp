@@ -287,7 +287,7 @@ bool DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 
 	auto eyePosition = Util::GetEyePosition(0);
 
-	cameraPreviousPosAdjust[index] = { eyePosition.x, eyePosition.y, eyePosition.z };
+	cameraPreviousPosAdjust[index] = float3{ eyePosition.x, eyePosition.y, eyePosition.z };
 
 	updateCubemapCB->Update(updateData);
 

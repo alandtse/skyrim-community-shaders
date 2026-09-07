@@ -48,6 +48,16 @@ jobs:
             # ci_test branch cannot poison dev / main / PR build caches.
             cache-key-suffix: "-ci-test"
 
+    # Same base-branch-resolution problem as self-test above, for the Linux
+    # cross-compile job specifically (its own reusable workflow file).
+    cross-compile-self-test:
+        if: github.repository == 'alandtse/open-shaders'
+        uses: ./.github/workflows/_shared-cross-compile.yaml
+        with:
+            ref: ${{ github.sha }}
+            repository: ${{ github.repository }}
+            cache-key-suffix: "-ci-test"
+
     # pr-checks.yaml's "Post Prerelease from PR" and release-build.yaml's
     # "Post Release" jobs call this composite directly and are themselves
     # unreachable from their own PRs (same base-branch-resolution problem as

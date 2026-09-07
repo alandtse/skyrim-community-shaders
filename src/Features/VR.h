@@ -93,18 +93,17 @@ public:
 	// Stereo bilateral blend pass - called from Deferred::DeferredPasses after composite
 	void DrawStereoBlend();
 	void CompileStereoBlendShaders();
-	bool IsStereoOptimizationCullingReady() const
+	/// Gates whether DispatchStencil() should even be called this frame.
+	bool IsStereoOptimizationDispatchReady() const
 	{
-		// Eye 1 is repaired by the depth-fill + G-buffer-fill passes (checked in
-		// CanDispatchStencil), not the retired StereoBlend overwrite path — so the
-		// stereoBlend* resources are no longer a prerequisite for engaging culling.
-		return globals::game::isVR && stereoOpt.CanDispatchStencil();
+		return globals::game::isVR && stereoOpt.CanClassify();
 	}
 	static bool AnyScreenSpaceEffectLoaded();
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+	virtual json GetDiagnostics() override;
 
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;

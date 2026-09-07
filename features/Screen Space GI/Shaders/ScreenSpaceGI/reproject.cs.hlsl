@@ -21,6 +21,7 @@ Texture2D<float> srcAo : register(t1);
 Texture2D<float4> srcIlY : register(t2);
 Texture2D<float2> srcIlCoCg : register(t3);
 #	endif
+Texture2D<uint> srcMode : register(t4);  // VRStereoOptimizations' per-pixel classification; unbound unless UseModeTexture
 
 RWTexture2D<float> outAo : register(u0);
 #	ifdef GI
@@ -58,7 +59,7 @@ void Passthrough(uint2 dtid)
 
 	float depth = srcDepth.SampleLevel(samplerPointClamp, uv * frameScale, RES_MIP);
 	int2 otherPx;
-	bool cleanlyReprojected = GIReprojectsCleanly(uv, depth, eyeIndex, srcDepth, frameScale, otherPx);
+	bool cleanlyReprojected = GIReprojectsCleanly(uv, depth, eyeIndex, srcDepth, frameScale, otherPx, UseModeTexture, srcMode, FrameDim);
 	if (cleanlyReprojected) {
 		// Surfaces agree: GI is view-independent, transfer eye 0's value exactly.
 		outAo[dtid] = srcAo[otherPx];

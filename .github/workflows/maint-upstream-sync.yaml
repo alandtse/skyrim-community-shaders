@@ -13,11 +13,14 @@ name: "Maint: Sync upstream/dev"
 # at every path and lets the `merge=ours` driver fire for fork-owned files,
 # eliminating that whole class of bug.
 #
-# Versioning: we deliberately do NOT skip this merge commit in
-# semantic-release's commit analysis. The DAG walk picks up upstream's
-# `feat:`/`fix:` commits transitively, so our version reflects everything
-# we actually ship to users (including upstream fixes that arrived via this
-# merge).
+# A textually-clean merge isn't proof it builds -- the PR gate gives every sync the same
+# build/test/shader-validation checks as any other change, without a standing bypass-capable PAT.
+#
+# Versioning: we deliberately do NOT skip the merge commit in semantic-
+# release's commit analysis. The DAG walk picks up upstream's `feat:`/`fix:`
+# commits transitively once the PR lands as a merge commit, so our version
+# reflects everything we actually ship to users (including upstream fixes
+# that arrived via merge).
 
 on:
     schedule:
@@ -28,17 +31,16 @@ on:
     workflow_dispatch:
         inputs:
             dry_run:
-                description: "Dry run — fetch and merge locally, but don't push"
+                description: "Dry run — fetch and merge locally, but don't push the branch or open a PR"
                 type: boolean
                 default: false
 
 permissions:
-    # `contents: write` is the only scope we need — the merge push to
-    # `dev` is the only mutation. No PR API calls, no issue API calls.
     contents: write
+    pull-requests: write
 
 concurrency:
-    # Serialize — two overlapping syncs would race on the dev push.
+    # Serialize — two overlapping syncs would race on the sync branch name.
     group: maint-upstream-sync
     cancel-in-progress: false
 
@@ -57,8 +59,8 @@ jobs:
               with:
                   fetch-depth: 0
                   ref: dev
-                  # RELEASE_PAT so the merge push can bypass branch protection
-                  # and trigger downstream workflows (auto-rebase of open PRs).
+                  # RELEASE_PAT (not GITHUB_TOKEN, whose PRs don't trigger downstream PR-checks)
+                  # -- no branch-protection bypass, since landing on `dev` still goes through the PR.
                   token: ${{ secrets.RELEASE_PAT }}
 
             - name: Configure git identity + merge driver
@@ -97,9 +99,37 @@ jobs:
                       echo "Upstream tip \`${{ steps.fetch.outputs.upstream_short }}\` is already an ancestor of \`dev\`. Nothing to merge."
                   } >> "$GITHUB_STEP_SUMMARY"
 
+            - name: Skip if a sync PR is already open
+              id: existing_pr
+              if: steps.fetch.outputs.already_synced != 'true'
+              env:
+                  GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+              run: |
+                  EXISTING=$(gh pr list --repo "${{ github.repository }}" --base dev --state open \
+                      --search 'in:title "chore(sync): merge upstream/dev"' --json number,url --jq '.[0]')
+                  if [[ -n "$EXISTING" ]]; then
+                      echo "exists=true" >> "$GITHUB_OUTPUT"
+                      URL=$(echo "$EXISTING" | jq -r '.url')
+                      {
+                          echo "## ⏸️ Sync PR already open"
+                          echo ""
+                          echo "$URL is still open — merge or close it before a newer sync PR is opened."
+                      } >> "$GITHUB_STEP_SUMMARY"
+                  else
+                      echo "exists=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Create sync branch
+              if: steps.fetch.outputs.already_synced != 'true' && steps.existing_pr.outputs.exists != 'true'
+              id: branch
+              run: |
+                  BRANCH="sync/upstream-dev-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+                  git switch -c "$BRANCH"
+                  echo "name=${BRANCH}" >> "$GITHUB_OUTPUT"
+
             - name: Merge upstream/dev
               id: merge
-              if: steps.fetch.outputs.already_synced != 'true'
+              if: steps.fetch.outputs.already_synced != 'true' && steps.existing_pr.outputs.exists != 'true'
               run: |
                   set +e
                   git merge --no-ff --no-edit \
@@ -119,30 +149,20 @@ jobs:
                           echo ""
                           echo "Upstream tip: \`${{ steps.fetch.outputs.upstream_short }}\`"
                           echo ""
-                          echo "Conflicted files (resolve manually, then push):"
+                          echo "Conflicted files (resolve manually, then push and open a PR):"
                           echo ""
                           echo '```'
                           git diff --name-only --diff-filter=U
                           echo '```'
                           echo ""
-                          echo "Resolution: clone, run the same merge locally, resolve, push."
-                          echo ""
-                          echo '```bash'
-                          echo "git fetch upstream dev"
-                          echo "git config merge.ours.driver true"
-                          echo "git merge --no-ff --no-edit \\"
-                          echo "    -m 'chore(sync): merge upstream/dev as of ${{ steps.fetch.outputs.upstream_short }}' \\"
-                          echo "    upstream/dev"
-                          echo "# resolve conflicts, git add, git commit"
-                          echo "git push origin dev"
-                          echo '```'
+                          echo "Resolution: see docs/development/upstream-sync.md#running-a-sync-manually."
                       } >> "$GITHUB_STEP_SUMMARY"
                       git merge --abort
                       exit 1
                   fi
 
             - name: Summarize merge
-              if: steps.fetch.outputs.already_synced != 'true' && success()
+              if: steps.fetch.outputs.already_synced != 'true' && steps.existing_pr.outputs.exists != 'true' && success()
               run: |
                   {
                       echo "## ✅ Merged upstream/dev"
@@ -167,14 +187,24 @@ jobs:
                       echo '```'
                   } >> "$GITHUB_STEP_SUMMARY"
 
-            - name: Push to origin/dev
-              if: steps.fetch.outputs.already_synced != 'true' && inputs.dry_run != true
-              run: git push origin dev
+            - name: Push sync branch and open PR
+              if: steps.fetch.outputs.already_synced != 'true' && steps.existing_pr.outputs.exists != 'true' && inputs.dry_run != true
+              env:
+                  GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+              run: |
+                  git push origin "${{ steps.branch.outputs.name }}"
+                  PR_URL=$(gh pr create --repo "${{ github.repository }}" \
+                      --base dev --head "${{ steps.branch.outputs.name }}" \
+                      --title "chore(sync): merge upstream/dev as of ${{ steps.fetch.outputs.upstream_short }}" \
+                      --body "Automated merge of upstream community-shaders/skyrim-community-shaders dev as of \`${{ steps.fetch.outputs.upstream_short }}\`. See the workflow run summary for files changed and commits brought in. Merge with **\"Create a merge commit\"** -- never squash or rebase-merge, either breaks the ancestry a future sync's 3-way merge depends on.")
+                  echo "## 🔀 Opened PR" >> "$GITHUB_STEP_SUMMARY"
+                  echo "" >> "$GITHUB_STEP_SUMMARY"
+                  echo "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
 
             - name: Dry-run notice
-              if: steps.fetch.outputs.already_synced != 'true' && inputs.dry_run == true
+              if: steps.fetch.outputs.already_synced != 'true' && steps.existing_pr.outputs.exists != 'true' && inputs.dry_run == true
               run: |
                   {
                       echo ""
-                      echo "**Dry run** — merge completed locally but not pushed."
+                      echo "**Dry run** — merge completed locally but the branch was not pushed and no PR was opened."
                   } >> "$GITHUB_STEP_SUMMARY"

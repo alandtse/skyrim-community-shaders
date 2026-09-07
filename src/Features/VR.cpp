@@ -2,6 +2,7 @@
 #include "Menu.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
+#include "ScreenSpaceGI.h"
 #include "Upscaling.h"
 #include "VR/OpenVRDetection.h"
 
@@ -59,6 +60,11 @@ void VR::SaveSettings(json& o_json)
 	}
 }
 
+json VR::GetDiagnostics()
+{
+	return stereoOpt.GetDiagnostics();
+}
+
 void VR::RestoreDefaultSettings()
 {
 	settings = {};
@@ -85,7 +91,11 @@ void VR::SetupResources()
 	stereoBlendCopyTex->CreateSRV(srvDesc);
 	stereoBlendCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<StereoBlendCB>(), "VR::StereoBlendCB");
 
-	if (globals::game::isVR && stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off) {
+	// stereoMode is restart-gated, so a consumer enabled after boot falls back to its own
+	// check until the next restart.
+	bool needsClassification = stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off ||
+	                           (globals::features::screenSpaceGI.settings.Enabled && globals::features::screenSpaceGI.settings.UseStereoReproject);
+	if (globals::game::isVR && needsClassification) {
 		stereoOpt.SetupResources();
 		stereoOpt.loaded = stereoOpt.GetModeTextureSRV() != nullptr;
 	} else {

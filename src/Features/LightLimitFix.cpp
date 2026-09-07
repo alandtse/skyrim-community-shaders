@@ -17,7 +17,7 @@
 
 #include "Deferred.h"
 #include "Menu/ThemeManager.h"
-#include "Shadercache.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/ExternalEmittance.h"
@@ -81,7 +81,7 @@ namespace
 		a_data.NumStrictLights = 0;
 		a_data.ShadowBitMask = 0;
 		a_data.FirstPerson = 0;
-		a_data.WorldEyePosition = {};
+		a_data.WorldEyePosition = float4{};
 		if (a_resetRoomIndex)
 			a_data.RoomIndex = -1;
 	}
@@ -99,13 +99,13 @@ namespace
 		auto hoverKey = ShadowCasterManager::GetHoveredLight();
 		if (hoverKey != 0 && key == hoverKey) {
 			float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
-			a_light.color = { 1.0f, 0.0f, 1.0f };  // magenta
-			a_light.fade = 4.0f + t * 4.0f;        // pulsed intensity
+			a_light.color = float3{ 1.0f, 0.0f, 1.0f };  // magenta
+			a_light.fade = 4.0f + t * 4.0f;              // pulsed intensity
 		} else if (ShadowCasterManager::IsHighlighted(key)) {
 			// Steady magenta on every light in the selected highlight group
 			// (populated by the table's group-button hover), distinct from
 			// the single pulsing hover light.
-			a_light.color = { 1.0f, 0.0f, 1.0f };
+			a_light.color = float3{ 1.0f, 0.0f, 1.0f };
 		}
 	}
 }
@@ -872,7 +872,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			auto& runtimeData = niLight->GetLightRuntimeData();
 
 			LightData light{};
-			light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
+			light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
 			light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
 
 			if (isl.loaded) {
@@ -1190,7 +1190,7 @@ void LightLimitFix::UpdateLights()
 						auto& runtimeData = niLight->GetLightRuntimeData();
 
 						LightData light{};
-						light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
+						light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
 						light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
 
 						if (isl.loaded) {
@@ -1241,7 +1241,7 @@ void LightLimitFix::UpdateLights()
 					auto& runtimeData = niLight->GetLightRuntimeData();
 
 					LightData light{};
-					light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
+					light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
 					light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
 
 					if (isl.loaded) {

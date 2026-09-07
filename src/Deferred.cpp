@@ -331,9 +331,8 @@ void Deferred::StartDeferred()
 
 	OverrideBlendStates();
 
-	// VR: Classify Eye 1 pixels and write hardware stencil marks before geometry rendering.
-	// Only enable stencil culling when overwrite reprojection is available for this frame.
-	if (globals::game::isVR && globals::features::vr.IsStereoOptimizationCullingReady()) {
+	// Classifies Eye 1 for SSGI/Shadows reuse too, not just VR's own stereo optimization.
+	if (globals::game::isVR && globals::features::vr.IsStereoOptimizationDispatchReady()) {
 		globals::features::vr.stereoOpt.DispatchStencil();
 	}
 
@@ -668,8 +667,8 @@ void Deferred::CopyShadowLightData()
 	auto context = globals::d3d::context;
 
 	auto& dirData = sunShadowLight->GetShadowDirectionalLightRuntimeData();
-	dd.EndSplitDistances = { dirData.endSplitDistances[0], dirData.endSplitDistances[1] };
-	dd.StartSplitDistances = { dirData.startSplitDistances[0], dirData.startSplitDistances[1] };
+	dd.EndSplitDistances = float2{ dirData.endSplitDistances[0], dirData.endSplitDistances[1] };
+	dd.StartSplitDistances = float2{ dirData.startSplitDistances[0], dirData.startSplitDistances[1] };
 
 	if (globals::game::isVR)
 		SetShadowCascadeParameters(sunShadowLight->GetVRRuntimeData(), dd);

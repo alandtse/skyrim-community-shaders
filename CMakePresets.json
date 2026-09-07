@@ -69,6 +69,33 @@
             }
         },
         {
+            "name": "vcpkg-linux-clangcl",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/ports/;${sourceDir}/cmake/ports-linux-clangcl/;${sourceDir}/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets/",
+                "VCPKG_TARGET_TRIPLET": "x64-windows-clangcl",
+                "VCPKG_BUILD_TYPE": "release",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake"
+            }
+        },
+        {
+            "name": "linux-clangcl",
+            "hidden": true,
+            "generator": "Ninja",
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL",
+                "CMAKE_EXE_LINKER_FLAGS": "/machine:x64",
+                "CMAKE_CXX_SCAN_FOR_MODULES": "OFF"
+            }
+        },
+        {
             "name": "skyrim",
             "hidden": true,
             "inherits": ["common", "vcpkg", "win64", "msvc"]
@@ -77,6 +104,11 @@
             "name": "skyrim-ninja",
             "hidden": true,
             "inherits": ["common", "vcpkg", "ninja"]
+        },
+        {
+            "name": "skyrim-linux-clangcl",
+            "hidden": true,
+            "inherits": ["common", "vcpkg-linux-clangcl", "linux-clangcl"]
         },
         {
             "name": "ALL",
@@ -140,6 +172,25 @@
                 "ZIP_TO_DIST": "OFF",
                 "AIO_ZIP_TO_DIST": "OFF"
             }
+        },
+        {
+            "name": "Linux-ClangCL",
+            "description": "Linux/macOS-host cross-compile (clang-cl+lld-link+xwin) targeting the same Windows PE/MSVC-ABI output. Build-only: proves the toolchain compiles clean and produces a working CommunityShaders.dll; does not produce a runnable-in-game package. See extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md for one-time host setup (xwin, wine, llvm-mingw, vcpkg). FFX_FI/FFX_OF are off to avoid frame-interpolation/optical-flow shaders unused by this codebase. See docs/development/linux-macos-cross-compile.md for the FidelityFX_SC.exe/Wine fix and overlay-port details.",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "ON",
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF",
+                "BUILD_SHADER_TESTS": "OFF",
+                "VCPKG_APPLOCAL_DEPS": "OFF",
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
+                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
+                "FFX_FI": "OFF",
+                "FFX_OF": "OFF"
+            },
+            "inherits": "skyrim-linux-clangcl"
         }
     ],
     "buildPresets": [
@@ -197,6 +248,13 @@
             "configurePreset": "PR",
             "configuration": "Release",
             "targets": ["CommunityShaders", "Package-AIO-Manual"]
+        },
+        {
+            "name": "Linux-ClangCL",
+            "description": "Build-only cross-compile proving the toolchain compiles clean; produces a Windows PE DLL, not a runnable package",
+            "configurePreset": "Linux-ClangCL",
+            "configuration": "Release",
+            "targets": ["CommunityShaders"]
         }
     ]
 }

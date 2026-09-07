@@ -4,7 +4,7 @@
 #include "Features/LightLimitFix.h"
 
 #include "Globals.h"
-#include "Shadercache.h"
+#include "ShaderCache.h"
 #include "Util.h"
 #include "Utils/StringUtils.h"
 

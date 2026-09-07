@@ -36,7 +36,7 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["UseEyeTracking"] = settings.useEyeTracking;
 	o_json["DebugSkipMerge"] = settings.debugSkipMerge;
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
-	o_json["ForwardOcclusionScale"] = settings.forwardOcclusionScale;
+	o_json["DirectionalOcclusionRatio"] = settings.directionalOcclusionRatio;
 }
 
 void VRStereoOptimizations::LoadSettings(json& o_json)
@@ -60,7 +60,12 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterY", settings.foveatedRegionCenterY, 0.0f, 1.0f);
 	loadClampedFloat("FullBlendDistance", settings.fullBlendDistance, 0.0f, 50000.0f);
-	loadClampedFloat("ForwardOcclusionScale", settings.forwardOcclusionScale, 0.0f, 10.0f);
+	// ForwardOcclusionScale (shipped v2.4.0+) tuned an inverted, effectively-broken formula (see
+	// af5aadb45); its saved values carry no valid meaning under the corrected formula, so we
+	// intentionally reset to the new default instead of migrating a stale number.
+	if (!o_json.contains("DirectionalOcclusionRatio") && o_json.contains("ForwardOcclusionScale"))
+		logger::info("[VR] ForwardOcclusionScale is obsolete; resetting DirectionalOcclusionRatio to default {}", settings.directionalOcclusionRatio);
+	loadClampedFloat("DirectionalOcclusionRatio", settings.directionalOcclusionRatio, 0.0f, 1.0f);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
@@ -277,8 +282,8 @@ void VRStereoOptimizations::DrawSettings()
 
 	ImGui::SliderFloat(T("feature.vr_stereo.disocclusion_depth_threshold", "Disocclusion Depth Threshold"), &settings.disocclusionDepthThreshold, 0.001f, 0.1f, "%.4f");
 
-	ImGui::SliderFloat(T("feature.vr_stereo.forward_occlusion_scale", "Forward Occlusion Scale"), &settings.forwardOcclusionScale, 0.0f, 1.0f, "%.2f");
-	Util::AddTooltip(T("feature.vr_stereo.forward_occlusion_scale_tooltip", "Prevents Eye 0 silhouette edges from bleeding onto Eye 1 backgrounds.\nFires when Eye 0 depth is within this fraction of Eye 1 depth (e.g. 0.5 = Eye 0 less than 2x Eye 1 depth).\nLower = more aggressive. 0 = disabled."));
+	ImGui::SliderFloat(T("feature.vr_stereo.directional_occlusion_ratio", "Directional Occlusion Ratio"), &settings.directionalOcclusionRatio, 0.0f, 1.0f, "%.2f");
+	Util::AddTooltip(T("feature.vr_stereo.directional_occlusion_ratio_tooltip", "Catches silhouette edges a plain depth-match check misses.\nFires when Eye 0 depth is less than this fraction of Eye 1 depth (e.g. 0.9 = Eye 0 more than 10% closer).\nHigher = more aggressive. 0 = disabled."));
 
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
@@ -296,15 +301,27 @@ void VRStereoOptimizations::DrawSettings()
 // CONSTANT BUFFER UPDATE
 //=============================================================================
 
+json VRStereoOptimizations::GetDiagnostics() const
+{
+	return json{
+		{ "classifiedWidth", static_cast<uint32_t>(frameDim.x) },
+		{ "classifiedHeight", static_cast<uint32_t>(frameDim.y) },
+		{ "modeTextureWidth", texPerPixelMode ? texPerPixelMode->desc.Width : 0u },
+		{ "modeTextureHeight", texPerPixelMode ? texPerPixelMode->desc.Height : 0u },
+		{ "stencilActive", stencilActive },
+		{ "classifiedThisFrame", classifiedThisFrame },
+	};
+}
+
 void VRStereoOptimizations::UpdateConstantBuffer()
 {
-	float2 resolution = Util::ConvertToDynamic(globals::state->screenSize);
+	frameDim = Util::ConvertToDynamic(globals::state->screenSize);
 
 	VRStereoOptParams params{};
-	params.FrameDim[0] = resolution.x;
-	params.FrameDim[1] = resolution.y;
-	params.RcpFrameDim[0] = 1.0f / resolution.x;
-	params.RcpFrameDim[1] = 1.0f / resolution.y;
+	params.FrameDim[0] = frameDim.x;
+	params.FrameDim[1] = frameDim.y;
+	params.RcpFrameDim[0] = 1.0f / frameDim.x;
+	params.RcpFrameDim[1] = 1.0f / frameDim.y;
 	params.StereoModeValue = static_cast<uint32_t>(settings.stereoMode);
 	params.DisocclusionThreshold = settings.disocclusionDepthThreshold;
 	params.EdgeDepthThreshold = settings.edgeDepthThreshold;
@@ -313,7 +330,7 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.FoveatedCenter[1] = settings.foveatedRegionCenterY;
 	params.MinEdgeDistance = settings.minEdgeDistance;
 	params.FullBlendDistance = settings.fullBlendDistance;
-	params.ForwardOcclusionScale = settings.forwardOcclusionScale;
+	params.DirectionalOcclusionRatio = settings.directionalOcclusionRatio;
 
 	paramsCB->Update(params);
 }
@@ -324,9 +341,9 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
-	// Same readiness contract as the Deferred call site: never cull Eye 1 unless the full
-	// repair pipeline (depth-fill + G-buffer-fill) is ready, else Eye 1 is left corrupt.
-	if (!globals::game::isVR || !CanDispatchStencil())
+	classifiedThisFrame = false;
+
+	if (!globals::game::isVR || !CanClassify())
 		return;
 
 	ZoneScoped;
@@ -380,26 +397,28 @@ void VRStereoOptimizations::DispatchStencil()
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
-	// Transfer classification to hardware stencil buffer
-	{
+	classifiedThisFrame = true;
+
+	// Only stereoMode being on culls Eye 1; other consumers just read the mode texture above.
+	if (CanDispatchStencil()) {
 		CS_GPU_PASS("StereoOpt::StencilWrite");
 		ExecuteStencilWritePass();
+		stencilActive = true;
+		stencilSwapCount = 0;
+	} else {
+		stencilActive = false;
 	}
-
-	stencilActive = true;
-	stencilSwapCount = 0;
 }
 
 void VRStereoOptimizations::SetEye1Viewport()
 {
-	D3D11_TEXTURE2D_DESC mainDesc;
-	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+	const auto eyeWidth = static_cast<uint32_t>(frameDim.x) / 2;
 
 	D3D11_VIEWPORT vp{};
-	vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
+	vp.TopLeftX = static_cast<float>(eyeWidth);
 	vp.TopLeftY = 0.0f;
-	vp.Width = static_cast<float>(mainDesc.Width / 2);
-	vp.Height = static_cast<float>(mainDesc.Height);
+	vp.Width = static_cast<float>(eyeWidth);
+	vp.Height = static_cast<float>(static_cast<uint32_t>(frameDim.y));
 	vp.MinDepth = 0.0f;
 	vp.MaxDepth = 1.0f;
 	globals::d3d::context->RSSetViewports(1, &vp);

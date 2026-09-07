@@ -226,17 +226,9 @@ void LUT::ReadTexture(std::filesystem::path path)
 void LUT::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&lutCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ lutCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/LUT");

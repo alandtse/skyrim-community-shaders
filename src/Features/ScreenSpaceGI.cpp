@@ -723,12 +723,7 @@ void ScreenSpaceGI::SetupResources()
 
 void ScreenSpaceGI::ClearShaderCache()
 {
-	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &giEye0OnlyCompute, &blurCompute, &stereoSyncCompute, &reprojectCompute, &reprojectDebugCompute, &upsampleCompute
-	};
-
-	for (auto shader : shaderPtrs)
-		*shader = nullptr;
+	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute });
 
 	CompileComputeShaders();
 }
@@ -817,7 +812,7 @@ void ScreenSpaceGI::UpdateSB()
 	                 float2{ (float)texRadiance->desc.Width, (float)texRadiance->desc.Height } :
 	                 float2{ (float)texWorkingDepth->desc.Width, (float)texWorkingDepth->desc.Height };
 	float2 dynres = Util::ConvertToDynamic(res);
-	dynres = { floor(dynres.x), floor(dynres.y) };
+	dynres = float2{ floor(dynres.x), floor(dynres.y) };
 
 	static float4x4 prevInvView[2] = {};
 
@@ -840,8 +835,8 @@ void ScreenSpaceGI::UpdateSB()
 			}
 
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
-			data.NDCToViewMul[eyeIndex] = { 2.0f / proj11, -2.0f / proj22 };
-			data.NDCToViewAdd[eyeIndex] = { -1.0f / proj11, 1.0f / proj22 };
+			data.NDCToViewMul[eyeIndex] = float2{ 2.0f / proj11, -2.0f / proj22 };
+			data.NDCToViewAdd[eyeIndex] = float2{ -1.0f / proj11, 1.0f / proj22 };
 			if (globals::game::isVR)
 				data.NDCToViewMul[eyeIndex].x *= 2;
 
@@ -877,6 +872,8 @@ void ScreenSpaceGI::UpdateSB()
 		data.MaxAccumFrames = settings.MaxAccumFrames;
 		data.BlurRadius = settings.BlurRadius;
 		data.DistanceNormalisation = settings.DistanceNormalisation;
+		useModeTextureThisFrame = settings.UseStereoReproject && globals::features::vr.stereoOpt.CanExternallyConsumeClassification();
+		data.UseModeTexture = useModeTextureThisFrame;
 	}
 
 	ssgiCB->Update(data);
@@ -1086,6 +1083,8 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(7) = texGiSpecular[inputAoTexIdx]->srv.get();
 		}
 		srvs.at(8) = texNormal->srv.get();
+		if (useModeTextureThisFrame)
+			srvs.at(9) = globals::features::vr.stereoOpt.GetModeTextureSRV();
 
 		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
 		if (runILPath) {
@@ -1118,6 +1117,8 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
 			srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
 		}
+		if (useModeTextureThisFrame)
+			srvs.at(4) = globals::features::vr.stereoOpt.GetModeTextureSRV();
 
 		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
 		if (runILPath) {

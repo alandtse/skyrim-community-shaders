@@ -7,8 +7,8 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 
 -   **PR Title & Commits:** Use Conventional Commits (`type(scope): description`), title <= 50 chars, body wrapped to 72 chars/line. Target branch must be `dev` (never PR directly to `main`).
 -   **PR Title Correction:** If a PR title becomes stale before merging, fix it with: `gh pr edit <num> --title "..."` (PR title becomes the release commit message).
--   **Comments:** Max 1-2 lines inline. Explain _why_, not _what_. Describe present code only (never absent/removed code, except for regression-risk warnings). No mid-function tutorials.
--   **Comment Invariants:** Do not add "see commit/PR" pointers or name one-off incidents/tools (e.g. "the RenderDoc CTD"). State the invariant and stop.
+-   **Comments:** 0 is the expected line count for most changes — well-named code states what it does, so leave it out if it doesn't add anything. Only write one when the WHY is genuinely non-obvious, and cap it at 2 lines (3-4 only as a rare absolute ceiling for a second clause, never a budget to spend). Describe present code only (never absent/removed code, except for regression-risk warnings). No mid-function tutorials.
+-   **Comment Invariants:** The exception is narrow: a fact that, if a future editor doesn't know it, they will silently reintroduce a bug or corrupt state — not why a design was chosen, what alternative was rejected, or how a calculation works (those go in the commit/PR body). Before writing one, name the concrete bug a future edit would cause without it; if you can't, cut it. Never add a "see commit/PR" pointer or name a one-off incident/tool (e.g. "the RenderDoc CTD"). State the invariant and stop.
 -   **Minimal Churn:** Do not reformat unrelated code or rename adjacent variables outside the PR scope.
 -   **DRY Review:** Check new code against existing shared utilities codebase-wide (e.g. `SetResourceName`, `GetGameSettingValue`, cached `globals::game::*` pointers over raw `GetSingleton()`, serialize/format/filesystem helpers).
 -   **DirectX Naming:** Name every D3D11 resource using `Util::SetResourceName`. Canonical implementation is in `Utils/D3D.cpp`; never duplicate the GUID or re-implement inline.
@@ -40,6 +40,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 
 -   **Doxygen:** Use Doxygen-style comments for all public declarations and API methods (especially graphics-related functions).
 -   **Present Code Only:** Comments must describe the present file's code, never absent or deleted code — except a regression-risk warning naming removed code so a future maintainer doesn't restore it (see Fork Identity & Logo Policy's `cs-logo.png` note for the canonical example of this exception).
+-   **Length & default:** See the Quick Checklist's Comments/Comment Invariants entries — 0 lines by default, 2 as the cap when one is genuinely warranted, and the narrow invariant test before reaching for the exception.
 
 ---
 
@@ -126,6 +127,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
     -   Land sync PRs as merge commits, never squash.
     -   Resolve conflicts in favor of keeping VR. Revert upstream VR removals.
     -   Verify ancestry after landing: `git merge-base --is-ancestor <upstream-sha> HEAD` must pass.
+    -   **Upstream never tests VR, so a clean (non-conflicting) sync can still silently break it.** After landing, scan the sync's own diff for new runtime-version gating (`REL::Module::IsAE()`/`IsAtLeast(...)`, new "legacy compatibility" layers) and ask explicitly for each one: does VR need this too? A 2-arg `RelocationID(se, ae)` is the correct, preferred pattern for a function VR can share — once its address is registered in `skyrim_vr_address_library`'s `database.csv`, VR resolves it automatically with no C++ change needed, so the constructor itself is not a red flag. The actual risk is a runtime/version gate (e.g. a flat-runtime-only helper) silently keeping VR from ever reaching an otherwise-correct call, or an id that's genuinely missing its VR row in `database.csv` (a hard fatal plugin-load abort on VR, not a graceful skip). Check both — is VR excluded by a gate that shouldn't exclude it, and does the id actually have a VR address registered (see PR #586 for a case where it did, twice, in the same sync).
 -   _For conventional commit mappings, staging/RC workflows, release stages (Alpha/Beta ini flags), and manual packaging targets, see [Release Process](docs/development/release-process.md) and [Upstream Sync Guide](docs/development/upstream-sync.md)._
 
 ---
@@ -140,8 +142,10 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 
 -   **WSL/Linux Note:** For Windows SDK compilation, run via PowerShell:
     `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`
+-   **Linux/macOS-host cross-compile (build-only, no VS/Windows tooling):** `cmake --preset Linux-ClangCL && cmake --build --preset Linux-ClangCL`. Proves the toolchain compiles clean and produces a working `CommunityShaders.dll`; does not produce a runnable-in-game package. See [Linux/macOS Cross-Compile](docs/development/linux-macos-cross-compile.md) for setup, overlay ports, and validation boundary.
 -   **Primary Build Command:** `./BuildRelease.bat [PRESET_NAME]`
-    -   _Presets:_ `ALL` (default), `SE`, `AE`, `VR`, `PRE-AE`, `FLATRIM`.
+    -   _Tracked presets (`CMakePresets.json`):_ `ALL` (default, universal SE/AE/VR binary), `Dev`, `Dev-Fast`, `ALL-VS2022`, `ALL-DEBUG`, `Debug`, `PR`, `Linux-ClangCL`.
+    -   _Local presets:_ many devs keep a gitignored `CMakeUserPresets.json` (start from `CMakeUserPresets.json.template`) defining deploy-enabled variants such as `ALL-WITH-AUTO-DEPLOYMENT` — sets `AUTO_PLUGIN_DEPLOYMENT=ON` and deploys straight to the local SE/VR `Data` dirs via `CommunityShadersOutputDir`; the preferred preset for a local test-deploy. Check for this file (`Test-Path CMakeUserPresets.json`) before assuming a preset name doesn't exist — it's per-clone and not committed, so its presets won't show up in `CMakePresets.json` or a `git grep`.
 -   **clangd setup:** Generate compilation database after configuring `ALL`:
     `pwsh tools/gen-clangd-db.ps1`
 -   **Shader Refactor Verification:**

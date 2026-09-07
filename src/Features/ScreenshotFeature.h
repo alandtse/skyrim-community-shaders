@@ -33,9 +33,9 @@ struct ScreenshotFeature : public Feature
 	/** @brief Called after all features are loaded (no-op for this feature). */
 	virtual void PostPostLoad() override;
 
-	/** @brief Captures a screenshot from the current back buffer and enqueues it for async encoding and save. */
+	/** @brief Captures the runtime-appropriate final target and enqueues it for async encoding and save. */
 	void Capture();
-	/** @brief Checks for a pending capture request and executes Capture() if one is pending. Called after HDR Present processing. */
+	/** @brief Checks for a pending capture request and executes Capture() if one is pending. */
 	void ProcessCaptureRequest();
 	bool applyCropToScreenshot = true;
 

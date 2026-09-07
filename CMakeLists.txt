@@ -25,7 +25,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.10.1
+    VERSION 2.11.0
     LANGUAGES CXX
 )
 
@@ -206,7 +206,8 @@ set_source_files_properties(
     "${STB_IMAGE_WRITE_IMPL}"
     PROPERTIES
         SKIP_PRECOMPILE_HEADERS ON
-        COMPILE_OPTIONS "$<$<C_COMPILER_ID:MSVC>:/W0>"
+        COMPILE_OPTIONS
+            "$<$<OR:$<C_COMPILER_ID:MSVC>,$<C_COMPILER_ID:Clang>>:/W0>"
 )
 
 target_link_libraries(
@@ -628,7 +629,24 @@ list(TRANSFORM FEATURE_PATHS_SLASH APPEND /)
 
 # Install logic for AIO package
 # To copy AIO package at a folder do `${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}`
-install(CODE "file(REMOVE_RECURSE \${CMAKE_INSTALL_PREFIX})")
+# REMOVE_RECURSE below wipes the ENTIRE --prefix dir first, so it must only
+# ever target the isolated AIO_DIR staging folder, never a live game install
+# (e.g. --prefix pointed at Data/) -- the guard below enforces this.
+install(
+    CODE
+        "
+    if(NOT \"\${CMAKE_INSTALL_PREFIX}\" STREQUAL \"${AIO_DIR}\")
+        message(FATAL_ERROR
+            \"Refusing to install: --prefix must be \\\"${AIO_DIR}\\\" \"
+            \"(got \\\"\${CMAKE_INSTALL_PREFIX}\\\"). This target recursively \"
+            \"deletes its entire --prefix directory before staging the AIO \"
+            \"package, so it must never be pointed at a live game install. \"
+            \"Use BuildRelease.bat <PRESET>-WITH-AUTO-DEPLOYMENT or the \"
+            \"DEPLOY_ALL/COPY_SHADERS targets to deploy to a game folder.\")
+    endif()
+    file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}\")
+"
+)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION SKSE/Plugins COMPONENT SKSE)
 install(
     FILES $<TARGET_PDB_FILE:${PROJECT_NAME}>

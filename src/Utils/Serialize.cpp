@@ -33,7 +33,7 @@ namespace nlohmann
 	{
 		std::array<float, 2> temp;
 		if (ReadFloatArray(j, temp))
-			v = { temp[0], temp[1] };
+			v = float2{ temp[0], temp[1] };
 	}
 
 	void to_json(json& j, const float3& v)
@@ -45,7 +45,7 @@ namespace nlohmann
 	{
 		std::array<float, 3> temp;
 		if (ReadFloatArray(j, temp))
-			v = { temp[0], temp[1], temp[2] };
+			v = float3{ temp[0], temp[1], temp[2] };
 	}
 
 	void to_json(json& j, const float4& v)
@@ -57,7 +57,7 @@ namespace nlohmann
 	{
 		std::array<float, 4> temp;
 		if (ReadFloatArray(j, temp))
-			v = { temp[0], temp[1], temp[2], temp[3] };
+			v = float4{ temp[0], temp[1], temp[2], temp[3] };
 	}
 
 	void to_json(json& j, const ImVec2& v)

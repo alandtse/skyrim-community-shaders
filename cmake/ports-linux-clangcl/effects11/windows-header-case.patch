@@ -1,0 +1,20 @@
+--- a/pchfx.h	2023-06-14 14:29:37.000000000 -0700
++++ b/pchfx.h	2026-08-30 01:36:02.128436151 -0700
+@@ -26,7 +26,7 @@
+ #define NO_D3D11_DEBUG_NAME
+ #else
+ #include <d3d11_1.h>
+-#include <D3DCompiler.h>
++#include <d3dcompiler.h>
+ #endif
+
+ #ifndef _WIN32_WINNT_WIN8
+@@ -34,7 +34,7 @@
+ #endif
+
+ #undef DEFINE_GUID
+-#include "INITGUID.h"
++#include "initguid.h"
+
+ #include "d3dx11effect.h"
+

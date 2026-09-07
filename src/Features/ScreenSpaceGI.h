@@ -198,10 +198,15 @@ public:
 		float BlurRadius;
 		float DistanceNormalisation;
 
-		float2 pad;
+		uint UseModeTexture;  // VRStereoOptimizations' classification available this boot
+		float pad;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SSGICB);
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
+
+	/// Set once per frame by UpdateSB(); DrawSSGI() reuses it instead of re-checking
+	/// VRStereoOptimizations' boot-latched classification readiness per dispatch.
+	bool useModeTextureThisFrame = false;
 
 	eastl::unique_ptr<Texture2D> texNoise = nullptr;
 	eastl::unique_ptr<Texture2D> texWorkingDepth = nullptr;

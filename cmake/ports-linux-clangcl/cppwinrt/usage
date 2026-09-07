@@ -1,0 +1,12 @@
+The C++/WinRT package provides CMake targets:
+
+    find_package(cppwinrt CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE Microsoft::CppWinRT)
+
+This overlay port (Linux/macOS-host cross-compile only) generates the
+`-base` subset only: winrt/base.h and the winrt/impl/* support
+headers, sufficient for winrt::com_ptr and other base COM interop. It
+does not generate OS-namespace projection headers (winrt/Windows.*.h),
+since that needs real Windows SDK .winmd metadata that an xwin sysroot
+does not provide. See examples/linux-cross-compile/README.md (in the
+CommonLibSSE-NG submodule) for the underlying toolchain.

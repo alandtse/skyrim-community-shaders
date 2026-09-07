@@ -465,17 +465,9 @@ void PhysicalGlare::SetupResources()
 void PhysicalGlare::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	auto const shaderPtrs = std::array{
-		&thresholdCS, &apertureCS, &tearFilmCS, &psfCS, &multiplyCS, &packCS, &compositeCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ thresholdCS, apertureCS, tearFilmCS, psfCS, multiplyCS, packCS, compositeCS });
 
 		for (auto shaders : { &fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS }) {
 			for (auto& shader : *shaders) {

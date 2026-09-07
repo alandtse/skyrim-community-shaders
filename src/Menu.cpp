@@ -711,7 +711,7 @@ void Menu::Init()
 	handler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* h, void*, const char* line) {
 		float w, ht;
 		if (sscanf(line, "DisplaySize=%f,%f", &w, &ht) == 2)
-			*static_cast<float2*>(h->UserData) = { w, ht };
+			*static_cast<float2*>(h->UserData) = float2{ w, ht };
 	};
 	handler.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
 		auto& ds = ImGui::GetIO().DisplaySize;
@@ -1360,8 +1360,6 @@ void Menu::ProcessInputEventQueue()
 	const float wheelY = static_cast<float>(directInputWheelRaw) / static_cast<float>(WHEEL_DELTA);
 	if (wheelY != 0.0f)
 		io.AddMouseWheelEvent(0.0f, wheelY);
-
-	_keyEventQueue.clear();
 }
 
 void Menu::RecordDirectInputWheelDelta(std::int32_t delta)

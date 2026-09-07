@@ -58,7 +58,7 @@ void InverseSquareLighting::ProcessLight(LightLimitFix::LightData& light, RE::BS
 	editorRef.ApplyOverrides(niLight, runtimeData);
 
 	light.lightFlags = runtimeData->flags;
-	light.color = { runtimeData->diffuse.red, runtimeData->diffuse.green, runtimeData->diffuse.blue };
+	light.color = float3{ runtimeData->diffuse.red, runtimeData->diffuse.green, runtimeData->diffuse.blue };
 
 	const bool isInvSq = light.lightFlags.any(LightLimitFix::LightFlags::InverseSquare);
 	if (bsLight->pointLight && ((isInvSq && editorRef.disableInvSqLights) || (!isInvSq && editorRef.disableRegularLights)))

@@ -22,7 +22,7 @@ configure_file(
 )
 
 configure_file(
-	${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.rc.in
+	${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.rc.in
 	${CMAKE_CURRENT_BINARY_DIR}/cmake/version.rc
 	@ONLY
 )
@@ -132,6 +132,24 @@ if(MSVC)
 		/Zc:wchar_t
 		/wd4200 # nonstandard extension used : zero-sized array in struct/union
 	)
+
+	if(CMAKE_HOST_UNIX)
+		# This LLVM's clang-cl rejects some /Zc: flags above; /WX would
+		# otherwise hard-error on them. Native Windows presets are unaffected.
+		target_compile_options("${PROJECT_NAME}" PRIVATE -Wno-unused-command-line-argument)
+
+		# cxx_std_23 doesn't reach _MSVC_LANG under this clang-cl, so MSVC
+		# STL's C++23 gates (e.g. std::to_underlying) stay closed without it.
+		target_compile_definitions("${PROJECT_NAME}" PRIVATE _MSVC_LANG=202302L)
+
+		# This LLVM's __cpuid rejects stb_image.h's SSE2 call form.
+		# STBI_NO_SIMD (stb_image.h's own escape hatch) falls back to scalar.
+		target_compile_definitions("${PROJECT_NAME}" PRIVATE STBI_NO_SIMD)
+
+		# /WX off: this preset proves the toolchain compiles, not that every
+		# warning matches native CI's compiler. /W4 keeps warnings visible.
+		target_compile_options("${PROJECT_NAME}" PRIVATE /WX-)
+	endif()
 
 	# /MP (multi-process compilation) only for MSBuild; Ninja handles parallelism itself
 	if(CMAKE_GENERATOR MATCHES "Visual Studio")

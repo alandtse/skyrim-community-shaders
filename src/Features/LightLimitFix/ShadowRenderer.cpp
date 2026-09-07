@@ -159,7 +159,7 @@ void LightLimitFix::CopyShadowLightData()
 			if (ShadowCasterManager::AtlasActive()) {
 				ShadowCasterManager::AtlasRectUV rect{};
 				if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
-					sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
+					sd[depthSlot].AtlasRect = float4{ rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
 					// Must come from the SAME tile as the rect -- per-light renderedScale
 					// can go stale across reallocs, and a mismatched class bias on a small tile causes acne.
 					sd[depthSlot].ShadowParam.w = rect.classScale;

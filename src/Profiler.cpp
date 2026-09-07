@@ -59,6 +59,7 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 		frame.batch.Preallocate(a_device);
 		frame.timers.resize(kMaxTimers);
 		frame.activeStack.clear();
+		frame.acquiredTimerCount = 0;
 		frame.inFlight = false;
 	}
 
@@ -135,6 +136,7 @@ void Profiler::BeginFrame()
 	auto& frame = frames[writeFrame];
 	frame.batch.Reset();
 	frame.activeStack.clear();
+	frame.acquiredTimerCount = 0;
 	frame.inFlight = true;
 	frameActive = true;
 	acquiredSlotsThisFrame = 0;
@@ -162,8 +164,10 @@ bool Profiler::BeginPass(std::string_view name, bool fireCallbacks)
 	auto& timer = frame.timers[slot];
 	timer.name = name;
 	timer.depth = static_cast<uint32_t>(frame.activeStack.size());
+	timer.parentSlot = frame.activeStack.empty() ? -1 : frame.activeStack.back();
 	QueryPerformanceCounter(&timer.cpuBegin);
 	frame.activeStack.push_back(slot);
+	frame.acquiredTimerCount = std::max(frame.acquiredTimerCount, static_cast<uint32_t>(slot + 1));
 
 	if (fireCallbacks && beginPerfEvent)
 		beginPerfEvent(name);
@@ -323,9 +327,9 @@ bool Profiler::CollectResults()
 
 	struct ActiveTimerData
 	{
+		/// Sum of interval self times after direct nested passes are removed.
 		float gpuMs = 0.0f;
-		/// Portion of gpuMs from depth-0 intervals only, for the exact
-		/// totalMs == sum(topLevelMs) nesting-correctness check.
+		/// Inclusive depth-0 duration for the exact frame-total check.
 		float topLevelMs = 0.0f;
 		float cpuMs = 0.0f;
 		bool hasGpu = false;
@@ -341,8 +345,16 @@ bool Profiler::CollectResults()
 	bool gpuFrameResolved = false;
 
 	if (frame.inFlight) {
+		struct IntervalTiming
+		{
+			float gpuMs = 0.0f;
+			bool valid = false;
+		};
+		std::vector<IntervalTiming> intervals(frame.acquiredTimerCount);
 		const auto status = frame.batch.TryResolve(context,
 			[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
+				if (i >= intervals.size())
+					return;
 				auto& timer = frame.timers[i];
 				float ms = static_cast<float>(static_cast<double>(deltaTicks) * 1000.0 / static_cast<double>(frequency));
 				// Checked independently: an unrelated CPU-side stall (e.g. a
@@ -353,22 +365,10 @@ bool Profiler::CollectResults()
 				if (!gpuValid && !cpuValid)
 					return;
 
-				// Accumulate into activeTimers only -- a pass invoked from
-				// two call sites in one frame (e.g. HDRDisplay::HDROutput)
-				// must land as one rolling-history sample, pushed once
-				// below from the summed entry, not once per interval.
 				auto& entry = activeTimers[timer.name];
 				GetOrCreateTimer(timer.name);
-				// Only top-level spans count toward the frame total -- nested
-				// passes already fall within their parent's measured time.
-				if (gpuValid) {
-					entry.gpuMs += ms;
-					entry.hasGpu = true;
-					if (timer.depth == 0) {
-						activeTotalMs += ms;
-						entry.topLevelMs += ms;
-					}
-				}
+				if (gpuValid)
+					intervals[i] = { ms, true };
 				if (cpuValid) {
 					entry.cpuMs += timer.cpuMs;
 					entry.hasCpu = true;
@@ -378,6 +378,32 @@ bool Profiler::CollectResults()
 			});
 		if (status == Util::TimestampQueryBatch::Status::NotReady)
 			return false;
+
+		std::vector<float> nestedGpuMs(intervals.size(), 0.0f);
+		for (uint32_t i = 0; i < intervals.size(); ++i) {
+			if (!intervals[i].valid)
+				continue;
+			int32_t parentSlot = frame.timers[i].parentSlot;
+			while (parentSlot >= 0 && static_cast<uint32_t>(parentSlot) < intervals.size() && !intervals[parentSlot].valid)
+				parentSlot = frame.timers[parentSlot].parentSlot;
+			if (parentSlot >= 0 && static_cast<uint32_t>(parentSlot) < intervals.size())
+				nestedGpuMs[parentSlot] += intervals[i].gpuMs;
+		}
+
+		for (uint32_t i = 0; i < intervals.size(); ++i) {
+			auto& timer = frame.timers[i];
+			if (!intervals[i].valid)
+				continue;
+
+			// Aggregate same-name call sites only after interval self time is known.
+			auto& entry = activeTimers[timer.name];
+			entry.gpuMs += std::max(intervals[i].gpuMs - nestedGpuMs[i], 0.0f);
+			entry.hasGpu = true;
+			if (timer.depth == 0) {
+				activeTotalMs += intervals[i].gpuMs;
+				entry.topLevelMs += intervals[i].gpuMs;
+			}
+		}
 
 		frame.inFlight = false;
 		gpuFrameResolved = (status == Util::TimestampQueryBatch::Status::Ok);

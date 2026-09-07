@@ -474,7 +474,7 @@ void SkySync::ProcessSun(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensit
 void SkySync::ProcessMoon(const RE::Sky* sky, const Caster type, RE::NiPoint3 dirs[], float intensities[])
 {
 	const int idx = static_cast<int>(type);
-	colors[idx] = {};
+	colors[idx] = float4{};
 
 	const auto moon = type == Caster::Masser ? sky->masser : sky->secunda;
 	if (!moon || moon->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))

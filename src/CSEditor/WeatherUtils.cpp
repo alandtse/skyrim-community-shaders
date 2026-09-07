@@ -943,7 +943,7 @@ namespace TOD
 				float col4[4] = { colors[i].x, colors[i].y, colors[i].z, 1.0f };
 				float refCol[4] = { colorCache[scopedId].x, colorCache[scopedId].y, colorCache[scopedId].z, 1.0f };
 				if (ImGui::ColorPicker4((id + "_picker").c_str(), col4, ImGuiColorEditFlags_NoAlpha, refCol)) {
-					colors[i] = { col4[0], col4[1], col4[2] };
+					colors[i] = float3{ col4[0], col4[1], col4[2] };
 					changed = true;
 				}
 				ImGui::EndPopup();
@@ -1212,7 +1212,7 @@ namespace TOD
 				float col4[4] = { cachedColor.x, cachedColor.y, cachedColor.z, 1.0f };
 				float refCol[4] = { originalColorCache[scopedId].x, originalColorCache[scopedId].y, originalColorCache[scopedId].z, 1.0f };
 				if (ImGui::ColorPicker4("##picker", col4, ImGuiColorEditFlags_NoAlpha, refCol)) {
-					cachedColor = { col4[0], col4[1], col4[2] };
+					cachedColor = float3{ col4[0], col4[1], col4[2] };
 					colors[i] = cachedColor;
 					changed = true;
 				}

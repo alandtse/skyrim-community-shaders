@@ -91,9 +91,10 @@ public:
 		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
-		float sharpnessFSR = 0.0f;
+		// Both default to 0.8, matching AMD's own FSR3 sample default.
+		float sharpnessFSR = 0.8f;
 		bool sharpnessEnabledDLSS = false;
-		float sharpnessDLSS = 0.0f;
+		float sharpnessDLSS = 0.8f;
 		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;

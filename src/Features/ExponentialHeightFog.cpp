@@ -426,7 +426,7 @@ void ExponentialHeightFog::Prepass()
 			(depthSrv && temporalHistoryValid && hasConservativeDepthHistory ? 16u : 0u) |
 			(hasLocalLightData ? 32u : 0u)
 	};
-	cb.invGridSizeAndNearFade = {
+	cb.invGridSizeAndNearFade = float4{
 		1.0f / static_cast<float>(currentGridSize.x),
 		1.0f / static_cast<float>(currentGridSize.y),
 		1.0f / static_cast<float>(currentGridSize.z),
@@ -443,7 +443,7 @@ void ExponentialHeightFog::Prepass()
 	const double farExp = std::exp2(std::min(static_cast<double>(currentGridSize.z) / depthDistributionScale, 120.0));
 	const double gridZOffset = (farPlane - nearWithOffset * farExp) / (farPlane - nearWithOffset);
 	const double gridZScale = (1.0 - gridZOffset) / nearWithOffset;
-	cb.gridZParams = {
+	cb.gridZParams = float4{
 		static_cast<float>(gridZScale),
 		static_cast<float>(gridZOffset),
 		static_cast<float>(depthDistributionScale),
@@ -460,20 +460,20 @@ void ExponentialHeightFog::Prepass()
 
 	for (uint32_t i = 0; i < std::size(cb.frameJitterOffsets); i++) {
 		const uint32_t temporalFrame = (globals::state->frameCount - i) & 1023u;
-		cb.frameJitterOffsets[i] = {
+		cb.frameJitterOffsets[i] = float4{
 			temporalReprojection ? Halton(temporalFrame, 2) : 0.5f,
 			temporalReprojection ? Halton(temporalFrame, 3) : 0.5f,
 			temporalReprojection ? Halton(temporalFrame, 5) : 0.5f,
 			0.0f
 		};
 	}
-	cb.historyParameters = {
+	cb.historyParameters = float4{
 		temporalHistoryValid ? std::clamp(settings.volumetricHistoryWeight, 0.0f, 0.99f) : 0.0f,
 		static_cast<float>(std::clamp(settings.volumetricHistoryMissSampleCount, 1u, 16u)),
 		0.0f,
 		0.0f
 	};
-	cb.jitterParameters = {
+	cb.jitterParameters = float4{
 		temporalReprojection ? std::max(settings.volumetricSampleJitterMultiplier, 0.0f) : 0.0f,
 		static_cast<float>(globals::state->frameCount % 8u),
 		0.0f,

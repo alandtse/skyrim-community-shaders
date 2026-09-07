@@ -61,7 +61,9 @@ cbuffer SSGICB : register(b1)
 
 	float BlurRadius;
 	float DistanceNormalisation;
-	float2 pad;
+
+	uint UseModeTexture;  // VRStereoOptimizations' classification available this boot
+	float pad;
 };
 
 SamplerState samplerPointClamp : register(s0);

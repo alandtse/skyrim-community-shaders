@@ -7,4 +7,10 @@
 #define MODE_EDGE_NEIGHBOUR 3
 #define MODE_FULL_BLEND 4
 
+// True when the classified pixel is eligible for cross-eye reuse.
+bool IsModeMain(Texture2D<uint> modeTex, uint2 px)
+{
+	return modeTex.Load(int3(px, 0)) == MODE_MAIN;
+}
+
 #endif

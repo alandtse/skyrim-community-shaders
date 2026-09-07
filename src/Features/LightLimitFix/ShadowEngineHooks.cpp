@@ -1309,9 +1309,22 @@ namespace ShadowCasterManager
 			// standalone thunks into their caller and consolidates them to a single live
 			// copy, so this patches that one instruction directly instead of a function entry.
 			const uint8_t xorRax[6] = { 0x48, 0x31, 0xC0, 0x90, 0x90, 0x90 };
-			if (REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0))) {
+			if (REL::Module::get().version() == REL::Version(1, 7, 104, 0)) {
+				// Raw offset (unstable across 1.7.x point releases) -- verify the bytes
+				// before writing so a version that moved this instruction fails safe.
+				const uint8_t expected[6] = { 0x8B, 0x05, 0xAE, 0xE5, 0xBE, 0x00 };
 				const uint8_t xorEax[6] = { 0x31, 0xC0, 0x90, 0x90, 0x90, 0x90 };
-				REL::safe_write(REL::Offset(0x14ea854).address(), xorEax, 6);
+				const auto target = REL::Offset(0x14eaab4).address();
+				if (!REL::safe_write(target, xorEax, sizeof(xorEax), expected))
+					logger::warn("[SCM] focus-shadow suppression: unexpected bytes at 0x14eaab4 (game version moved this instruction), skipping patch");
+			} else if (REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0))) {
+				// Raw offset (unstable across 1.7.x point releases) -- verify the bytes
+				// before writing so a version that moved this instruction fails safe.
+				const uint8_t expected[6] = { 0x8B, 0x05, 0x0E, 0xE8, 0xBE, 0x00 };
+				const uint8_t xorEax[6] = { 0x31, 0xC0, 0x90, 0x90, 0x90, 0x90 };
+				const auto target = REL::Offset(0x14ea854).address();
+				if (!REL::safe_write(target, xorEax, sizeof(xorEax), expected))
+					logger::warn("[SCM] focus-shadow suppression: unexpected bytes at 0x14ea854 (game version moved this instruction), skipping patch");
 			} else {
 				static REL::RelocationID uid1(10209, 10247);
 				REL::safe_write(uid1.address(), xorRax, 6);

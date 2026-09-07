@@ -1053,18 +1053,9 @@ void ColorGrading::SetupResources()
 void ColorGrading::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&colorgradingCS,
-		&lutgenCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ colorgradingCS, lutgenCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/ColorGrading");

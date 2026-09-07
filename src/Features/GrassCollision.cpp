@@ -171,7 +171,7 @@ void GrassCollision::Update()
 		float cellSize = worldSize / textureArrayDims;
 
 		auto cellID = eyePos / cellSize;
-		cellID = { round(cellID.x), round(cellID.y) };
+		cellID = float2{ round(cellID.x), round(cellID.y) };
 		auto cellOrigin = cellID * cellSize;
 
 		float2 cellIDDiff = prevCellID - cellID;

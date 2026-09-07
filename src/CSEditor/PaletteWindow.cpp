@@ -501,7 +501,7 @@ void PaletteWindow::Load()
 	colorEntries.clear();
 	for (const auto& e : editorWindow->settings.paletteColors) {
 		ColorEntry entry;
-		entry.color = { e.r, e.g, e.b };
+		entry.color = float3{ e.r, e.g, e.b };
 		entry.useCount = e.useCount;
 		entry.lastUsedTime = e.lastUsedTime;
 		entry.isFavorite = e.isFavorite;

@@ -77,9 +77,9 @@ namespace stl
 	}
 
 	template <class T>
-	long detour_thunk(REL::RelocationID a_relId)
+	long detour_thunk(std::uintptr_t a_address)
 	{
-		T::func = a_relId.address();
+		T::func = a_address;
 		if (const long rc = DetourTransactionBegin(); rc != NO_ERROR)
 			return rc;
 		if (const long rc = DetourUpdateThread(GetCurrentThread()); rc != NO_ERROR) {
@@ -91,6 +91,12 @@ namespace stl
 			return rc;
 		}
 		return DetourTransactionCommit();  // NO_ERROR (0) on success; callers may ignore
+	}
+
+	template <class T>
+	long detour_thunk(REL::RelocationID a_relId)
+	{
+		return detour_thunk<T>(a_relId.address());
 	}
 
 	template <class T>

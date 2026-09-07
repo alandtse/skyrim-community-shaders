@@ -1,0 +1,10 @@
+detours provides:
+
+    find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
+    find_library(DETOURS_LIBRARY detours REQUIRED)
+
+This overlay port (Linux/macOS-host cross-compile only) builds detours
+from source via a small CMakeLists.txt instead of the upstream NMake
+makefile (src/Makefile), since `vcpkg_build_nmake` needs a real
+nmake.exe that an xwin sysroot does not provide. It compiles the same
+source-file set the upstream makefile does.

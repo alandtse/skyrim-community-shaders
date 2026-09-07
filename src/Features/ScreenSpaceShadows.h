@@ -62,10 +62,6 @@ public:
 	STATIC_ASSERT_ALIGNAS_16(RaymarchCB);
 
 	bool enableStereoSync = true;
-	// Route the VR stereo step through the view-independent reproject path (transfer eye 0's
-	// shadow to eye 1) instead of the bilateral sync. Default on for the perf win (eye-1
-	// raymarch skipped).
-	bool useStereoReproject = true;
 
 	struct alignas(16) StereoSyncCB
 	{
@@ -90,11 +86,6 @@ public:
 	Texture2D* stereoSyncCopyTex = nullptr;
 	ConstantBuffer* stereoSyncCB = nullptr;
 	Util::LazyShader<ID3D11ComputeShader> stereoSyncCS;
-	Util::LazyShader<ID3D11ComputeShader> stereoReprojectCS;
-	Util::LazyShader<ID3D11ComputeShader> stereoReprojectDebugCS;
-
-	/** @brief Lazily compiles and returns the active reproject variant; null (latched) on compile failure. */
-	ID3D11ComputeShader* GetStereoReprojectCS();
 
 	/** @brief Creates the raymarch constant buffer, point border sampler, and shadow output texture. */
 	virtual void SetupResources() override;
@@ -102,7 +93,7 @@ public:
 	/** @brief Draws the ImGui settings UI for screen-space shadow configuration. */
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
-	/// @brief DrawPerformanceSettings() only draws the stereo sync/reprojection toggles.
+	/// @brief DrawPerformanceSettings() only draws the stereo sync toggle.
 	bool PerformanceSectionRequiresVR() const override { return true; }
 	std::string GetPerformanceSectionLabel() override { return GetDisplayName(); }
 	int GetPerformanceOrder() const override { return 30; }
@@ -111,7 +102,7 @@ public:
 	/// @brief Surfaces the FOV Screen Space Shadows toggle in the Performance hub, mirroring
 	/// the SSS panel's own control.
 	void DrawPerformancePresets() override;
-	/// @brief Renders the VR stereo sync/reprojection toggles. Shared by the SSS panel and
+	/// @brief Renders the VR stereo sync toggle. Shared by the SSS panel and
 	/// the Performance hub. VR-only; caller guards on isVR.
 	void DrawStereoToggles();
 	/// @brief Renders the FOV Screen Space Shadows checkbox + tooltip + unavailable-reason

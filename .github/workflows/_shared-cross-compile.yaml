@@ -1,0 +1,169 @@
+name: "(Shared) Linux Cross-Compile"
+
+# Extracted from pr-checks.yaml so ci-test.yaml can also exercise it -- see
+# ci-test.yaml's header for why (pull_request_target resolves workflow files from base).
+
+on:
+    workflow_call:
+        inputs:
+            ref:
+                description: "Git ref to check out"
+                type: string
+                required: true
+            repository:
+                description: "Repository to check out (owner/repo)"
+                type: string
+                required: true
+            cache-key-suffix:
+                description: "Optional suffix to isolate this run's build caches from production keys"
+                type: string
+                default: ""
+            allow-unsafe-checkout:
+                description: "Pass through actions/checkout's allow-unsafe-pr-checkout (only meaningful under pull_request_target)"
+                type: boolean
+                default: false
+
+jobs:
+    build:
+        name: Build (Linux cross-compile, build-only)
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        env:
+            # Do not drop FORCE_SYSTEM_BINARIES: the ABI hash this cache keys off
+            # depends on it staying stable.
+            VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/vcpkg_binary_cache,readwrite"
+            VCPKG_FORCE_SYSTEM_BINARIES: "1"
+            XWIN_SYSROOT: ${{ github.workspace }}/xwin-out
+            # Unpinned, xwin takes the newest manifest/SDK/CRT, and the cached
+            # sysroot silently stops matching the cache key built from these.
+            XWIN_VERSION: "0.10.0"
+            XWIN_MANIFEST_VERSION: "17"
+            XWIN_SDK_VERSION: "10.0.26100"
+            XWIN_CRT_VERSION: "14.44.17.14"
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v6
+              with:
+                  path: main
+                  ref: ${{ inputs.ref }}
+                  repository: ${{ inputs.repository }}
+                  submodules: recursive
+                  persist-credentials: false
+                  allow-unsafe-pr-checkout: ${{ inputs.allow-unsafe-checkout }}
+
+            - name: Extract vcpkg baseline from vcpkg.json
+              id: get_vcpkg_baseline
+              run: |
+                  baseline=$(python3 -c "import json; print(json.load(open('main/vcpkg.json'))['builtin-baseline'])")
+                  echo "baseline=$baseline" >> "$GITHUB_OUTPUT"
+
+            - name: Install cross-compile toolchain
+              run: |
+                  sudo dpkg --add-architecture i386
+                  sudo apt-get update
+                  # wine64 named explicitly: with i386 multiarch on, apt can satisfy `wine` from
+                  # wine32:i386 alone, leaving no 64-bit loader (x86-64 PEs fail "Bad EXE format").
+                  sudo apt-get install -y ninja-build wine wine64 wine32:i386 g++ lsb-release wget gnupg software-properties-common
+                  curl -fsSL --retry 3 --retry-all-errors -o /tmp/llvm.sh https://raw.githubusercontent.com/opencollab/llvm-jenkins.debian.net/cf853fefa308484749df8a87004c580a6c0fe830/llvm.sh
+                  echo "03878e08f47b66cc95bc4b544b0db3c6d9ce8d60e6cf2492ae357984330a9eae  /tmp/llvm.sh" | sha256sum -c -
+                  chmod +x /tmp/llvm.sh
+                  # Clang 19+ required for MSVC STL; mixed clang-cl/lld-link/llvm-rc/llvm-mt versions crash lld.
+                  sudo /tmp/llvm.sh 19
+
+            # Create the prefix here: left implicit, its first-run setup races the
+            # shader/header-generation steps that trigger it and fails half-initialized.
+            - name: Initialize Wine prefix
+              run: wineboot --init
+
+            - name: Cache xwin sysroot
+              id: cache-xwin
+              uses: actions/cache@v4
+              with:
+                  path: ${{ env.XWIN_SYSROOT }}
+                  key: xwin-sysroot-${{ env.XWIN_VERSION }}-manifest${{ env.XWIN_MANIFEST_VERSION }}-sdk${{ env.XWIN_SDK_VERSION }}-crt${{ env.XWIN_CRT_VERSION }}${{ inputs.cache-key-suffix }}
+
+            # Both archives are checksummed before extraction; llvm-mingw ships no official
+            # hash (unlike xwin), so its checksum is pinned from a real download.
+            - name: Generate xwin sysroot
+              if: steps.cache-xwin.outputs.cache-hit != 'true'
+              env:
+                  RUNNER_TEMP_DIR: ${{ runner.temp }}
+                  XWIN_SYSROOT_DIR: ${{ env.XWIN_SYSROOT }}
+              run: |
+                  curl -fsSL --retry 3 --retry-all-errors -o xwin.tar.gz https://github.com/Jake-Shadle/xwin/releases/download/0.10.0/xwin-0.10.0-x86_64-unknown-linux-musl.tar.gz
+                  echo "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88  xwin.tar.gz" | sha256sum -c -
+                  tar xzf xwin.tar.gz
+                  install -Dm755 xwin-0.10.0-x86_64-unknown-linux-musl/xwin "$RUNNER_TEMP_DIR/bin/xwin"
+                  "$RUNNER_TEMP_DIR/bin/xwin" --accept-license --cache-dir "$RUNNER_TEMP_DIR/xwin-cache" \
+                      --manifest-version "$XWIN_MANIFEST_VERSION" \
+                      --sdk-version "$XWIN_SDK_VERSION" --crt-version "$XWIN_CRT_VERSION" splat \
+                      --output "$XWIN_SYSROOT_DIR" --include-debug-libs \
+                      --use-winsysroot-style --preserve-ms-arch-notation
+
+            # Do not put this on PATH: its bundled clang-cl/lld-link shadow the real toolchain's
+            # and break linking. directxtk's portfile reads LLVM_MINGW_BIN directly instead.
+            - name: Install llvm-mingw (for the fxc2 shader-compiler stand-in, see extern/CommonLibSSE-NG/examples/linux-cross-compile)
+              run: |
+                  curl -fsSL --retry 3 --retry-all-errors -o llvm-mingw.tar.xz https://github.com/mstorsjo/llvm-mingw/releases/download/20250910/llvm-mingw-20250910-ucrt-ubuntu-22.04-x86_64.tar.xz
+                  echo "f83556c9ffa4d4291fadea1a0776c1383332dacdf4d7fbdf974c2928cb32c6f7  llvm-mingw.tar.xz" | sha256sum -c -
+                  tar xJf llvm-mingw.tar.xz
+                  echo "LLVM_MINGW_BIN=$PWD/llvm-mingw-20250910-ucrt-ubuntu-22.04-x86_64/bin" >> "$GITHUB_ENV"
+
+            # apt's cmake predates cmake_minimum_required(VERSION 4.2)'s major-version field; pin
+            # ninja here too -- vcpkg's manifest-mode sub-builds use whichever ninja get-cmake wires up.
+            - name: Install CMake
+              uses: lukka/get-cmake@v4.3.3
+              with:
+                  cmakeVersion: "~4.2.0"
+                  ninjaVersion: "latest"
+
+            - name: Setup vcpkg
+              uses: lukka/run-vcpkg@v11
+              with:
+                  vcpkgGitCommitId: ${{ steps.get_vcpkg_baseline.outputs.baseline }}
+                  runVcpkgInstall: false
+
+            - name: Cache vcpkg binary packages (trusted, restore + save)
+              if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
+              uses: actions/cache@v4
+              with:
+                  path: ${{ github.workspace }}/vcpkg_binary_cache
+                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}${{ inputs.cache-key-suffix }}
+                  restore-keys: |
+                      ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-
+
+            - name: Restore vcpkg binary packages (fork PR, restore-only)
+              if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+              uses: actions/cache/restore@v4
+              with:
+                  path: ${{ github.workspace }}/vcpkg_binary_cache
+                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}${{ inputs.cache-key-suffix }}
+                  restore-keys: |
+                      ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-
+
+            - name: Configure
+              run: cmake -S main -B main/build/Linux-ClangCL --preset Linux-ClangCL -DBUILD_TESTS=OFF
+              working-directory: ${{ github.workspace }}
+
+            - name: Build
+              run: cmake --build main/build/Linux-ClangCL
+              working-directory: ${{ github.workspace }}
+
+            - name: Verify output exists
+              run: |
+                  test -f main/build/Linux-ClangCL/CommunityShaders.dll
+                  test -f main/build/Linux-ClangCL/CommunityShaders.lib
+                  test -f main/build/Linux-ClangCL/CommunityShaders.pdb
+                  file_type="$(file --brief main/build/Linux-ClangCL/CommunityShaders.dll)"
+                  printf '%s\n' "$file_type"
+                  grep -Eq '^PE32\+ executable \(DLL\).*x86-64, for MS Windows' <<<"$file_type"
+
+            # These logs don't match run-vcpkg's collection patterns, so they are
+            # invisible on failure unless surfaced here.
+            - name: Show diagnostics on failure
+              if: failure()
+              env:
+                  WORKSPACE_DIR: ${{ github.workspace }}
+              run: |
+                  find "$WORKSPACE_DIR" \( -iname "compileshaders.log" -o -iname "cppwinrt-generate-*.log" \) -exec echo "=== {} ===" \; -exec cat {} \;

@@ -4,7 +4,7 @@ How Open Shaders stays current with upstream `community-shaders/skyrim-community
 
 ## Mechanism
 
-Upstream syncs land as **merge commits** on `dev`, never as rebases. The scheduled `Maint: Sync upstream/dev` workflow runs a three-way merge of `upstream/dev` into our `dev` and pushes the result. Two pieces make this safe:
+Upstream syncs land as **merge commits** on `dev`, never as rebases, and **always through a reviewed PR — never a direct push to `dev`**, even for a maintainer with bypass permissions on the `dev` ruleset. The scheduled `Maint: Sync upstream/dev` workflow runs a three-way merge of `upstream/dev` into a `sync/upstream-dev-<date>` branch and opens a PR against `dev`; it does not push to `dev` itself. Two pieces make the merge itself safe:
 
 1. **`.gitattributes` with `merge=ours` entries** for every file the fork owns end-to-end (CI workflows, `.releaserc`, README). During the merge, git's `ours` driver keeps the fork's version of those paths verbatim — upstream's changes to them are discarded without surfacing as conflicts.
 2. **The `ours` merge driver itself** must be defined locally. `merge=ours` in `.gitattributes` _references_ a driver but doesn't define one. The sync workflow defines it as a no-op (`git config merge.ours.driver true`). **Local contributors who run the merge by hand must run the same command once per clone** — see [Setup](#setup-once-per-clone) below.
@@ -31,20 +31,27 @@ If you've already run an upstream merge without this config, git would have rais
 
 ```bash
 # Make sure local dev matches origin/dev before merging upstream.
-# A stale local dev would either reject the push as non-fast-forward
+# A stale local dev would produce a PR based on an out-of-date branch
 # or have you re-resolving conflicts already resolved by a prior run.
 git fetch origin dev upstream/dev
-git switch dev
-git reset --hard origin/dev
+BRANCH="sync/upstream-dev-$(date +%Y%m%d)"
+git switch -c "$BRANCH" origin/dev
 
 git merge --no-ff --no-edit \
     -m "chore(sync): merge upstream/dev as of $(git rev-parse --short upstream/dev)" \
     upstream/dev
 # resolve conflicts (only in non-fork-owned paths), then:
-git push origin dev
+git add <resolved-files>
+git commit --no-edit
+git push origin "$BRANCH"
+gh pr create --base dev \
+    --title "chore(sync): merge upstream/dev as of $(git rev-parse --short upstream/dev)" \
+    --body "Merges upstream community-shaders/skyrim-community-shaders dev as of $(git rev-parse --short upstream/dev)."
 ```
 
-The scheduled workflow does exactly this on Monday 08:00 UTC. Manual dispatch via `gh workflow run "Maint: Sync upstream/dev"` is available for urgent syncs and accepts a `dry_run` flag.
+**Never push the merge straight to `dev`**, and never use an admin/PAT bypass of the `dev` ruleset to skip the PR — this applies even to a trivial, conflict-free sync. Merge the PR with **"Create a merge commit"** (never squash, never rebase-merge — either would break the ancestry a future sync's 3-way merge depends on; see [Commit structure](#commit-structure-for-a-conflicted-sync)).
+
+The scheduled workflow opens this PR automatically every Monday 08:00 UTC. Manual dispatch via `gh workflow run "Maint: Sync upstream/dev"` is available for urgent syncs and accepts a `dry_run` flag (fetches and merges locally in the runner, but skips pushing the branch/opening the PR).
 
 ## Versioning and changelog interaction
 
@@ -62,7 +69,7 @@ A real conflict (in a file _not_ on the fork-owned list) means upstream and the 
 -   We add a method to a class upstream also modified.
 -   We rename a function upstream also renamed.
 
-The workflow `git merge --abort`s, posts the conflicted file list to the workflow summary, and exits non-zero. Resolution is manual: clone, run the same merge locally, resolve, push.
+The workflow `git merge --abort`s, posts the conflicted file list to the workflow summary, and exits non-zero. Resolution is manual: clone, run the same merge locally, resolve, push the branch, and open the PR (see [Running a sync manually](#running-a-sync-manually)).
 
 ### Conflict Resolution Guidelines
 
@@ -74,6 +81,8 @@ The workflow `git merge --abort`s, posts the conflicted file list to the workflo
 4. **`CSEditor` vs `SceneSelector`:** this fork split weather-editor UI/logic out of `CSEditor` into its own `Features/SceneSelector` class; upstream never made that split and still lands weather-lock/weather-editor changes directly in `CSEditor.cpp`/`.h`. Taking upstream's side of a `CSEditor` conflict wholesale (e.g. re-adding `WeatherDetailsWindowSettings`, `DrawSettings()`, `PostPostLoad()`) reintroduces state this fork already owns on `SceneSelector`, producing undefined-symbol compile errors. Redirect any new feature-owning override to `SceneSelector` instead; generic engine-level hooks (e.g. `EditorWindow::InstallWeatherLockHooks()`/`MaintainWeatherLock()`) can stay called from either side. Verify with `grep -rn "WeatherDetailsWindowSettings\|SceneSelector" src/Features/CSEditor.*` (expect no matches) plus a clean `BuildRelease.bat Dev-Fast` link.
 
 5. **Incompatible-DLL blocklist:** upstream keeps this list inline in `src/XSEPlugin.cpp`; this fork moved it to `src/Compatibility.h` so each entry can carry a user-facing reason. An upstream `chore: block <mod>` commit conflicts on the removed array — translate the new entry into `Compatibility.h` rather than restoring the array, or the block silently stops applying. Verify with `grep -c "Data/SKSE/Plugins" src/Compatibility.h` against the upstream array length.
+6. **A shader-touching sync needs a live render check, not just a diff audit.** A fork-loss/upstream-loss pass only verifies that each side's own content is textually still present after the merge -- it cannot catch a case where our preserved fork code and upstream's newly-merged code are each individually correct in their own original context but semantically disagree once combined (e.g. upstream's new C++ constant-buffer binding logic assuming a shader register layout our fork's `.hlsl` doesn't use). That class of bug is invisible to any line-level diff; it only shows up as a wrong pixel on screen. If a sync touches anything under `package/Shaders/`, boot the deployed build and look at the affected feature in-game (devbench screenshot of an exterior cell is enough for grass/lighting) before calling the sync verified -- compiling clean and passing both structural-preservation passes is not sufficient on its own.
+7. **A fork-loss/upstream-loss pass must cover every changed file, not a self-reported sample.** Give each verification agent the full `git diff <fork-pre-sync>..<HEAD> --stat` file list as an explicit checklist, and cross-check its report against that list before trusting a PASS verdict -- a summary that never names a changed file is not evidence that file was reviewed, no matter how confident it sounds. The files most likely to get silently skipped are exactly the ones item 6 warns about: shader sources paired with new upstream C++ that assumes a specific contract.
 
 ### Commit structure for a conflicted sync
 
@@ -101,7 +110,9 @@ Each sync workflow run leaves a summary on the run page with:
 -   `git diff --stat` of files changed
 -   `git log --oneline` of commits brought in
 
-For deeper inspection after a push:
+The PR itself is the primary review surface — read its diff and description before approving/merging, same as any other PR.
+
+For deeper inspection after the PR is merged:
 
 ```bash
 # all changes since the last sync merge

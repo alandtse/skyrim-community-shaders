@@ -192,7 +192,11 @@ private:
 		int32_t screenY;
 		int32_t screenXMin1;
 		int32_t screenYMin1;
+		int32_t eyeWidth;
+		int32_t horizontalGroupsPerEye;
+		uint32_t pad[2];
 	};
+	STATIC_ASSERT_ALIGNAS_16(VLData);
 	VLData vlData = VLData();
 	ConstantBuffer* vlDataCB = nullptr;
 

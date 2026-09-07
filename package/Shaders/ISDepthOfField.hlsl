@@ -67,23 +67,24 @@ PS_OUTPUT main(PS_INPUT input)
 	PS_OUTPUT psout;
 
 	float2 adjustedTexCoord = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(input.TexCoord);
+	float2 imageTexCoord = invScreenRes.z > 0.5 ? adjustedTexCoord : input.TexCoord;
 
-	float3 imageColor = ImageTex.Sample(ImageSampler, adjustedTexCoord).xyz;
+	float3 imageColor = ImageTex.Sample(ImageSampler, imageTexCoord).xyz;
 	float3 blurColor;
 	[branch] if (params5.w > 0.5f)
 	{
-		blurColor = SampleBlurredWithSoftening(adjustedTexCoord, input.Position.xy, invScreenRes.xy * DOF_DOWNSAMPLE_FACTOR);
+		blurColor = SampleBlurredWithSoftening(imageTexCoord, input.Position.xy, invScreenRes.xy * DOF_DOWNSAMPLE_FACTOR);
 	}
 	else
 	{
-		blurColor = BlurredTex.Sample(BlurredSampler, adjustedTexCoord).xyz;
+		blurColor = BlurredTex.Sample(BlurredSampler, imageTexCoord).xyz;
 	}
 
 	float mask = 1;
 	float4 dofParams = params;
 	float4 dofParams2 = params2;
 #	if defined(MASKED)
-	mask = MaskTex.Sample(ImageSampler, adjustedTexCoord).x;
+	mask = MaskTex.Sample(MaskSampler, adjustedTexCoord).x;
 	dofParams = lerp(params, params6, mask);
 	dofParams2 = lerp(params2, params7, mask);
 #	endif

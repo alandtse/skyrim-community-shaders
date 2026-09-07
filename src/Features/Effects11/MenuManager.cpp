@@ -10,6 +10,7 @@
 #include "SettingManager.h"
 #include "State.h"
 #include "TextureManager.h"
+#include "Utils/UI.h"
 
 static const char* const timeOfDayNames[] = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
 
@@ -134,8 +135,11 @@ void MenuManager::RenderSettingsPanel()
 				if (ImGui::Selectable(loc.label.c_str(), isSelected)) {
 					presetManager.SetActiveLocation(loc.root);
 					effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
+					// After Load()/Apply(), not before: Save() piggybacks an ENB save for
+					// whatever preset is currently loaded, which would still be the old one.
 					settingManager.Load();
 					effectManager.Apply();
+					globals::state->Save();
 				}
 				RenderPresetTooltip(loc, active);
 			}
@@ -147,29 +151,34 @@ void MenuManager::RenderSettingsPanel()
 		presetManager.Rescan();
 	}
 
+	// Without a resolved location, GetENBSeriesPath() returns empty and Save/Load
+	// silently read/write a bare relative filename instead of the preset's ini.
+	const bool hasActiveLocation = presetManager.GetActiveLocation() != nullptr;
 	// Without a preset there is no ini to write back to, so saving would only create stubs
 	const bool presetLoaded = effectManager.IsPresetLoaded();
+	const bool canSave = presetLoaded && hasActiveLocation;
 
-	ImGui::BeginDisabled(!presetLoaded);
+	ImGui::BeginDisabled(!canSave);
 	if (ImGui::Button("Save & Apply")) {
 		settingManager.Save();
 		effectManager.Save();
 		settingManager.Load();
 		effectManager.Apply();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Save all settings, then reload and recompile shaders");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(hasActiveLocation ? "Save all settings, then reload and recompile shaders" : "Select a preset location first");
 	}
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();
 
+	ImGui::BeginDisabled(!hasActiveLocation);
 	if (ImGui::Button("Load & Apply")) {
 		settingManager.Load();
 		effectManager.Apply();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Load all settings from enbseries.ini, weather files, and effect configurations, reload shaders");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(hasActiveLocation ? "Load all settings from enbseries.ini, weather files, and effect configurations, reload shaders" : "Select a preset location first");
 	}
 
 	ImGui::SameLine();
@@ -178,19 +187,20 @@ void MenuManager::RenderSettingsPanel()
 		settingManager.Load();
 		effectManager.Load();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Load all settings from enbseries.ini, weather files, and effect configurations");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(hasActiveLocation ? "Load all settings from enbseries.ini, weather files, and effect configurations" : "Select a preset location first");
 	}
+	ImGui::EndDisabled();
 
 	ImGui::SameLine();
 
-	ImGui::BeginDisabled(!presetLoaded);
+	ImGui::BeginDisabled(!canSave);
 	if (ImGui::Button("Save")) {
 		settingManager.Save();
 		effectManager.Save();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Save all settings to enbseries.ini, weather files, and effect configurations");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(hasActiveLocation ? "Save all settings to enbseries.ini, weather files, and effect configurations" : "Select a preset location first");
 	}
 	ImGui::EndDisabled();
 

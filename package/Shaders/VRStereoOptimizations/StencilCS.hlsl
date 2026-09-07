@@ -86,17 +86,13 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 			float rawRelDiff = abs(centerDepth - otherDepth) / maxRaw;
 			isDisoccluded = (rawRelDiff > DisocclusionThreshold);
 
-			// Directional disocclusion: catches silhouette edge pixels where both eyes sample
-			// similar linearized depth but Eye 0's color is wrong for Eye 1.  These slip through
-			// the symmetric rawRelDiff check above.  The condition fires when Eye 0 is at similar
-			// or slightly closer depth than Eye 1 (scale < 1.0), marking them disoccluded so Eye 1
-			// renders natively.  ForwardOcclusionScale=0.5 triggers when Eye 0 is less than 2x Eye 1's
-			// linearized depth; lower values are more aggressive, 0 = disabled.
-			if (!isDisoccluded && eyeIndex == 1 && ForwardOcclusionScale > 0.0) {
+			// Directional disocclusion: catches silhouette edges the symmetric rawRelDiff check
+			// above misses -- Eye 0 sees a real occluder meaningfully closer than Eye 1's.
+			if (!isDisoccluded && eyeIndex == 1 && DirectionalOcclusionRatio > 0.0) {
 				bool otherIsSky = (otherDepth < EPSILON_DEPTH_SKY) || (otherDepth >= 1.0);
 				if (!otherIsSky) {
 					float linOther = SharedData::GetScreenDepth(otherDepth);
-					isDisoccluded = (linOther * ForwardOcclusionScale < linCenter);
+					isDisoccluded = (linOther < linCenter * DirectionalOcclusionRatio);
 				}
 			}
 		}

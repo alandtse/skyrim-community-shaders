@@ -188,6 +188,17 @@ If you run into `Access violation` build errors during step 3, you can try addin
 docker run -it --rm --isolation=process -v .:C:/open-shaders open-shaders:latest
 ```
 
+### Build on Linux/macOS (cross-compile, build-only)
+
+For contributors who want to verify their C++ changes compile clean without a Windows machine, install Visual Studio, or use WSL: a Linux/macOS host can cross-compile to the same Windows PE/MSVC-ABI output using `clang-cl`+`lld-link` against an `xwin`-generated Windows SDK/CRT sysroot.
+
+```sh
+cmake --preset Linux-ClangCL
+cmake --build --preset Linux-ClangCL
+```
+
+This proves the toolchain compiles clean; it does not produce a package runnable in-game (struct-layout or vtable mismatches between clang-cl and real MSVC compile fine and only surface as an in-game crash). One-time host setup (xwin, wine, llvm-mingw, vcpkg) is documented in `extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md`.
+
 ## Debugging
 
 ### Launching MO2-SKSE-Skyrim from commandline

@@ -44,6 +44,7 @@ Texture2D<float4> srcPrevY : register(t5);             // maybe half-res
 Texture2D<float2> srcPrevCoCg : register(t6);          // maybe half-res
 Texture2D<float4> srcPrevGISpecular : register(t7);    // maybe half-res
 Texture2D<float2> srcNormal : register(t8);
+Texture2D<uint> srcMode : register(t9);  // VRStereoOptimizations' per-pixel classification; unbound unless UseModeTexture
 
 RWTexture2D<unorm float> outAo : register(u0);
 RWTexture2D<float4> outY : register(u1);
@@ -409,7 +410,7 @@ void CalculateGI(
 	// reproject fallback reads a real value, not a hole.
 	if (eyeIndex != 0) {
 		int2 otherPx;
-		if (GIReprojectsCleanly(uv, viewspaceZ, eyeIndex, srcWorkingDepth, frameScale, otherPx)) {
+		if (GIReprojectsCleanly(uv, viewspaceZ, eyeIndex, srcWorkingDepth, frameScale, otherPx, UseModeTexture, srcMode, FrameDim)) {
 			outAo[pxCoord] = 0;
 			outY[pxCoord] = 0;
 			outCoCg[pxCoord] = 0;

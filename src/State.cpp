@@ -229,7 +229,7 @@ State::TonemapOwner State::GetTonemapOwner()
 
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11 = globals::features::effects11;
-	if (effects11.loaded && !IsMainOrLoadingMenuOpen() && effects11.WantsTonemapOwnership())
+	if (effects11.loaded && !IsFullScreenMenuOpen() && effects11.WantsTonemapOwnership())
 		cachedOwner = TonemapOwner::kEffects11;
 	else
 #endif
@@ -244,6 +244,11 @@ State::TonemapOwner State::GetTonemapOwner()
 bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 #if defined(ENABLE_EFFECTS11)
+	// VR-only: world-space menus need vanilla's kMENUBG compositor handoff, which
+	// Effects11's tonemap doesn't replicate; flatrim's blur should keep grading.
+	if (globals::game::isVR && a_output == RE::RENDER_TARGETS::kMENUBG)
+		return false;
+
 	if (GetTonemapOwner() != TonemapOwner::kEffects11 ||
 		!globals::features::effects11.RenderTonemap(a_input, a_output))
 		return false;
@@ -1044,7 +1049,7 @@ void State::SetupResources()
 	D3D11_TEXTURE2D_DESC texDesc{};
 	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&texDesc);
 
-	screenSize = { (float)texDesc.Width, (float)texDesc.Height };
+	screenSize = float2{ (float)texDesc.Width, (float)texDesc.Height };
 	globals::d3d::context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
 
 	featureLevel = globals::d3d::device->GetFeatureLevel();
@@ -1265,7 +1270,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
 
 		auto& lightRuntimeData = dirLight->GetLightRuntimeData();
-		data.DirLightColor = { lightRuntimeData.diffuse.red, lightRuntimeData.diffuse.green, lightRuntimeData.diffuse.blue, 1.0f };
+		data.DirLightColor = float4{ lightRuntimeData.diffuse.red, lightRuntimeData.diffuse.green, lightRuntimeData.diffuse.blue, 1.0f };
 		data.DirLightColor *= lightRuntimeData.fade;
 
 		if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
@@ -1273,11 +1278,11 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		}
 
 		const auto& direction = dirLight->GetWorldDirection();
-		data.DirLightDirection = { -direction.x, -direction.y, -direction.z, 0.0f };
+		data.DirLightDirection = float4{ -direction.x, -direction.y, -direction.z, 0.0f };
 		data.DirLightDirection.Normalize();
 
 		data.CameraData = Util::GetCameraData();
-		data.BufferDim = { screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
+		data.BufferDim = float4{ screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
 
 		auto temporal = Util::GetTemporal();
@@ -1354,24 +1359,24 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 				const auto& skyPos = sky->root->world.translate;
 				float3 sunDirection = { sunPos.x - skyPos.x, sunPos.y - skyPos.y, sunPos.z - skyPos.z };
 				sunDirection.Normalize();
-				data.SunDirection = { sunDirection.x, sunDirection.y, sunDirection.z, 0.0f };
+				data.SunDirection = float4{ sunDirection.x, sunDirection.y, sunDirection.z, 0.0f };
 
 				if (sun->sunBase) {
 					if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunBase->GetGeometryRuntimeData().shaderProperty.get()))
-						data.SunColor = { prop->kBlendColor.red * prop->kBlendColor.alpha, prop->kBlendColor.green * prop->kBlendColor.alpha, prop->kBlendColor.blue * prop->kBlendColor.alpha, prop->kBlendColor.alpha };
+						data.SunColor = float4{ prop->kBlendColor.red * prop->kBlendColor.alpha, prop->kBlendColor.green * prop->kBlendColor.alpha, prop->kBlendColor.blue * prop->kBlendColor.alpha, prop->kBlendColor.alpha };
 				}
 			}
 
 			if (auto masser = sky->masser) {
 				auto dir = Util::Moon::GetDirection(masser, moonAndStarsLoaded);
-				data.MasserDirection = { dir.x, dir.y, dir.z, 0.0f };
+				data.MasserDirection = float4{ dir.x, dir.y, dir.z, 0.0f };
 				if (masser->root && !masser->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
 					data.MasserColor = Util::Moon::GetBlendColor(masser, Util::Moon::MasserBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
 			}
 
 			if (auto secunda = sky->secunda) {
 				auto dir = Util::Moon::GetDirection(secunda, moonAndStarsLoaded);
-				data.SecundaDirection = { dir.x, dir.y, dir.z, 0.0f };
+				data.SecundaDirection = float4{ dir.x, dir.y, dir.z, 0.0f };
 				if (secunda->root && !secunda->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
 					data.SecundaColor = Util::Moon::GetBlendColor(secunda, Util::Moon::SecundaBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
 			}
@@ -1389,18 +1394,18 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		dalcColors[5] = float3{ -m.entry[0][2] + t.x, -m.entry[1][2] + t.y, -m.entry[2][2] + t.z };  // -Z
 
 		SphericalHarmonics::SH2Color dalcSH = SphericalHarmonics::DALCToSH(dalcColors);
-		data.AmbientSHR = { dalcSH.r.c0, dalcSH.r.c1[0], dalcSH.r.c1[1], dalcSH.r.c1[2] };
-		data.AmbientSHG = { dalcSH.g.c0, dalcSH.g.c1[0], dalcSH.g.c1[1], dalcSH.g.c1[2] };
-		data.AmbientSHB = { dalcSH.b.c0, dalcSH.b.c1[0], dalcSH.b.c1[1], dalcSH.b.c1[2] };
+		data.AmbientSHR = float4{ dalcSH.r.c0, dalcSH.r.c1[0], dalcSH.r.c1[1], dalcSH.r.c1[2] };
+		data.AmbientSHG = float4{ dalcSH.g.c0, dalcSH.g.c1[0], dalcSH.g.c1[1], dalcSH.g.c1[2] };
+		data.AmbientSHB = float4{ dalcSH.b.c0, dalcSH.b.c1[0], dalcSH.b.c1[1], dalcSH.b.c1[2] };
 
 		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
 		data.RefractionScale = refractionScale;
 
 		// VR foveated shader detail (consumed by foveated SSR). Default to off; populate from the
 		// active foveation region only when SSR foveation is enabled and SSR is actually running.
-		data.VRFoveationData0 = { FoveatedCommon::kCenterScaleMax, FoveatedCommon::kCenterFeather, 1.0f,
+		data.VRFoveationData0 = float4{ FoveatedCommon::kCenterScaleMax, FoveatedCommon::kCenterFeather, 1.0f,
 			FoveatedCommon::GetShaderMode(FoveatedCommon::DetailMode::Off) };
-		data.VRFoveationCenterOffsets = { 0.0f, 0.0f, 0.0f, 0.0f };
+		data.VRFoveationCenterOffsets = float4{ 0.0f, 0.0f, 0.0f, 0.0f };
 		if (globals::game::isVR) {
 			const auto& vr = globals::features::vr;
 			const auto& dynamicCubemaps = globals::features::dynamicCubemaps;
@@ -1411,9 +1416,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 				if (profile.available) {  // available already implies an active (non-full) coverage scale
 					const float ssrMode = FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(
 						true, vr.settings.EnableSSRFoveationHardCutoff));
-					data.VRFoveationData0 = { profile.coverageScale, FoveatedCommon::kCenterFeather,
+					data.VRFoveationData0 = float4{ profile.coverageScale, FoveatedCommon::kCenterFeather,
 						profile.centerHorizontalScale, ssrMode };
-					data.VRFoveationCenterOffsets = {
+					data.VRFoveationCenterOffsets = float4{
 						profile.centerOffsets[0].x, profile.centerOffsets[0].y,
 						profile.centerOffsets[1].x, profile.centerOffsets[1].y
 					};

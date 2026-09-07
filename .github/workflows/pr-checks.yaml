@@ -99,6 +99,21 @@ jobs:
             # Non-fork PRs now save their own PR-preset cache generation.
             cmake-preset: PR
 
+    # Inline (no secrets in scope, read-only permissions) and build-only/unmatrixed: proves the
+    # cross-compile toolchain works, but a Linux runner can't run the resulting Windows PE DLL.
+    build-linux-cross-compile:
+        name: Build (Linux cross-compile, build-only)
+        needs: [check-changes]
+        if: >
+            always() && !cancelled() &&
+            !github.event.pull_request.draft &&
+            needs.check-changes.outputs.should-build != 'false'
+        uses: ./.github/workflows/_shared-cross-compile.yaml
+        with:
+            ref: ${{ github.event.pull_request.head.sha }}
+            repository: ${{ github.event.pull_request.head.repo.full_name }}
+            allow-unsafe-checkout: ${{ github.event_name == 'pull_request_target' }}
+
     # Security: this job has GITHUB_TOKEN write permissions but executes no fork
     # code. It sparse-checks-out the BASE branch (trusted) for the
     # publish-release composite and downloads the build job's pre-built artifacts.

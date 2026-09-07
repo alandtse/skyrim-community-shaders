@@ -296,25 +296,25 @@ void CellLightingWidget::LoadSettings()
 			if (js.contains("ambient")) {
 				auto arr = js["ambient"];
 				if (arr.is_array() && arr.size() == 3) {
-					settings.ambient = { arr[0], arr[1], arr[2] };
+					settings.ambient = float3{ arr[0], arr[1], arr[2] };
 				}
 			}
 			if (js.contains("directional")) {
 				auto arr = js["directional"];
 				if (arr.is_array() && arr.size() == 3) {
-					settings.directional = { arr[0], arr[1], arr[2] };
+					settings.directional = float3{ arr[0], arr[1], arr[2] };
 				}
 			}
 			if (js.contains("fogColorNear")) {
 				auto arr = js["fogColorNear"];
 				if (arr.is_array() && arr.size() == 3) {
-					settings.fogColorNear = { arr[0], arr[1], arr[2] };
+					settings.fogColorNear = float3{ arr[0], arr[1], arr[2] };
 				}
 			}
 			if (js.contains("fogColorFar")) {
 				auto arr = js["fogColorFar"];
 				if (arr.is_array() && arr.size() == 3) {
-					settings.fogColorFar = { arr[0], arr[1], arr[2] };
+					settings.fogColorFar = float3{ arr[0], arr[1], arr[2] };
 				}
 			}
 			if (js.contains("fogNear"))
@@ -341,25 +341,25 @@ void CellLightingWidget::LoadSettings()
 			if (js.contains("dalc")) {
 				auto& dalc = js["dalc"];
 				if (dalc.contains("xPlus") && dalc["xPlus"].is_array() && dalc["xPlus"].size() == 3) {
-					settings.directionalXPlus = { dalc["xPlus"][0], dalc["xPlus"][1], dalc["xPlus"][2] };
+					settings.directionalXPlus = float3{ dalc["xPlus"][0], dalc["xPlus"][1], dalc["xPlus"][2] };
 				}
 				if (dalc.contains("xMinus") && dalc["xMinus"].is_array() && dalc["xMinus"].size() == 3) {
-					settings.directionalXMinus = { dalc["xMinus"][0], dalc["xMinus"][1], dalc["xMinus"][2] };
+					settings.directionalXMinus = float3{ dalc["xMinus"][0], dalc["xMinus"][1], dalc["xMinus"][2] };
 				}
 				if (dalc.contains("yPlus") && dalc["yPlus"].is_array() && dalc["yPlus"].size() == 3) {
-					settings.directionalYPlus = { dalc["yPlus"][0], dalc["yPlus"][1], dalc["yPlus"][2] };
+					settings.directionalYPlus = float3{ dalc["yPlus"][0], dalc["yPlus"][1], dalc["yPlus"][2] };
 				}
 				if (dalc.contains("yMinus") && dalc["yMinus"].is_array() && dalc["yMinus"].size() == 3) {
-					settings.directionalYMinus = { dalc["yMinus"][0], dalc["yMinus"][1], dalc["yMinus"][2] };
+					settings.directionalYMinus = float3{ dalc["yMinus"][0], dalc["yMinus"][1], dalc["yMinus"][2] };
 				}
 				if (dalc.contains("zPlus") && dalc["zPlus"].is_array() && dalc["zPlus"].size() == 3) {
-					settings.directionalZPlus = { dalc["zPlus"][0], dalc["zPlus"][1], dalc["zPlus"][2] };
+					settings.directionalZPlus = float3{ dalc["zPlus"][0], dalc["zPlus"][1], dalc["zPlus"][2] };
 				}
 				if (dalc.contains("zMinus") && dalc["zMinus"].is_array() && dalc["zMinus"].size() == 3) {
-					settings.directionalZMinus = { dalc["zMinus"][0], dalc["zMinus"][1], dalc["zMinus"][2] };
+					settings.directionalZMinus = float3{ dalc["zMinus"][0], dalc["zMinus"][1], dalc["zMinus"][2] };
 				}
 				if (dalc.contains("specular") && dalc["specular"].is_array() && dalc["specular"].size() == 3) {
-					settings.directionalSpecular = { dalc["specular"][0], dalc["specular"][1], dalc["specular"][2] };
+					settings.directionalSpecular = float3{ dalc["specular"][0], dalc["specular"][1], dalc["specular"][2] };
 				}
 				if (dalc.contains("fresnelPower"))
 					settings.fresnelPower = dalc["fresnelPower"];

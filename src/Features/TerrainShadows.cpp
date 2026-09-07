@@ -571,7 +571,7 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 		}
 		dirLightPxDir *= stepMult;
 
-		shadowUpdateCBData.LightPxDir = { dirLightPxDir.x, dirLightPxDir.y };
+		shadowUpdateCBData.LightPxDir = float2{ dirLightPxDir.x, dirLightPxDir.y };
 
 		// soft shadow angles
 		float lenUV = float2{ dirLightDir.x, dirLightDir.y }.Length();
@@ -583,8 +583,8 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 		shadowUpdateCBData.LightDeltaZ = -(lenUV / invScale.z * stepMult) * float2{ std::tan(upperAngle), std::tan(lowerAngle) };
 	}
 
-	shadowUpdateCBData.PxSize = { 1.f / texHeightMap->desc.Width, 1.f / texHeightMap->desc.Height };
-	shadowUpdateCBData.PosRange = { cachedHeightmap->pos0.z, cachedHeightmap->pos1.z };
+	shadowUpdateCBData.PxSize = float2{ 1.f / texHeightMap->desc.Width, 1.f / texHeightMap->desc.Height };
+	shadowUpdateCBData.PosRange = float2{ cachedHeightmap->pos0.z, cachedHeightmap->pos1.z };
 	shadowUpdateCBData.ZRange = cachedHeightmap->zRange;
 	shadowUpdateCBData.BlendWeight = a_refreshImmediately ? 1.0f : 0.5f;
 

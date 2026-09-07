@@ -82,7 +82,7 @@ void InteriorSun::EarlyPrepass()
 	isInteriorWithSun = IsInteriorWithSun(RE::TES::GetSingleton()->interiorCell);
 }
 
-inline bool InteriorSun::IsInteriorWithSun(const RE::TESObjectCELL* cell)
+bool InteriorSun::IsInteriorWithSun(const RE::TESObjectCELL* cell)
 {
 	return cell && cell->cellFlags.all(RE::TESObjectCELL::Flag::kIsInteriorCell, RE::TESObjectCELL::Flag::kShowSky, RE::TESObjectCELL::Flag::kUseSkyLighting, static_cast<RE::TESObjectCELL::Flag>(CellFlagExt::kSunlightShadows));
 }

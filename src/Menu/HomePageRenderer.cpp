@@ -320,26 +320,58 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	}
 
 	if (!cacheHeld && !featureChangeHeld) {
-		const bool restoreDisabled = shaderCache->IsCompiling() || !previousCacheAvailable || (featureSetChanged && !featureSetCacheBackedUp);
+		const bool isCompiling = shaderCache->IsCompiling();
+		const bool restoreDisabled = !previousCacheAvailable || (featureSetChanged && !featureSetCacheBackedUp);
 		if (restoreDisabled)
 			ImGui::BeginDisabled();
 
-		const bool restoreClicked = ImGui::Button(T("menu.home.cache_mismatch_restore", "Restore Previous Cache & Restart"));
+		const bool restoreClicked = ImGui::Button(isCompiling ?
+													  T("menu.home.cache_mismatch_cancel_restore", "Cancel Compile & Restore Previous Cache") :
+													  T("menu.home.cache_mismatch_restore", "Restore Previous Cache & Restart"));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.home.cache_mismatch_restore_tooltip", "Swaps the previous shader cache back into use and resets boot toggles to match it. Keeps a backup copy of compiled shaders; uses extra disk space. Restart required."));
+			ImGui::Text("%s", isCompiling ?
+								  T("menu.home.cache_mismatch_cancel_restore_tooltip", "Stops the in-progress compile (discarding its progress) and swaps the previous shader cache back into use. Restart required.") :
+								  T("menu.home.cache_mismatch_restore_tooltip", "Swaps the previous shader cache back into use and resets boot toggles to match it. Keeps a backup copy of compiled shaders; uses extra disk space. Restart required."));
 		}
+		static bool s_showCancelConfirm = false;
 		if (restoreClicked) {
-			s_restoreFailed = !shaderCache->RestorePreviousDiskCache();
+			if (isCompiling)
+				s_showCancelConfirm = true;
+			else
+				s_restoreFailed = !shaderCache->RestorePreviousDiskCache();
 		}
 
 		if (restoreDisabled)
 			ImGui::EndDisabled();
 
-		if (shaderCache->IsCompiling()) {
-			ImGui::TextDisabled("%s", T("menu.home.cache_mismatch_compiling_disabled", "Available after shader compilation finishes."));
+		if (isCompiling) {
+			ImGui::TextDisabled("%s", shaderCache->GetShaderStatsString().c_str());
 		} else if (s_restoreFailed) {
 			ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.Error : ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
 				"%s", T("menu.home.cache_mismatch_restore_failed", "Restore failed. Check CommunityShaders.log for details."));
+		}
+
+		if (s_showCancelConfirm) {
+			constexpr const char* popupId = "###CancelCompileRestoreConfirm";
+			const std::string popupTitle = fmt::format("{}{}", T("menu.home.cache_mismatch_cancel_restore_title", "Cancel Compile?"), popupId);
+			ImGui::OpenPopup(popupId);
+			ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+			ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+			if (Util::BeginPopupModalWithRoundedClose(popupTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+				ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_cancel_restore_body", "The in-progress shader compile will be stopped and its progress discarded. You'll need to recompile later if you want the new feature set."));
+				ImGui::Spacing();
+				if (ImGui::Button(T("menu.home.cache_mismatch_cancel_restore_confirm", "Cancel Compile & Restore"))) {
+					s_restoreFailed = !shaderCache->RestorePreviousDiskCache();
+					s_showCancelConfirm = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(T("menu.home.cache_mismatch_cancel_restore_keep_compiling", "Keep Compiling"))) {
+					s_showCancelConfirm = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+			}
 		}
 	}
 

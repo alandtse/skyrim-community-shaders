@@ -183,8 +183,8 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	profile.coverageScale = coverageScale;
 	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
 		coverageH > 1e-4f ? coverageW / coverageH : 1.0f);
-	profile.centerOffsets[0] = { (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
-	profile.centerOffsets[1] = { (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
+	profile.centerOffsets[0] = float2{ (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
+	profile.centerOffsets[1] = float2{ (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
 	return profile;
 }
 

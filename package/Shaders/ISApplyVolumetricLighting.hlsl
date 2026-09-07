@@ -1,6 +1,7 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/VRStereoEffects.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -37,7 +38,13 @@ PS_OUTPUT main(PS_INPUT input)
 	static const float kVLThresholdBias = 1.0 / 128.0;
 
 	float2 screenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(input.TexCoord);
-	float depth = DepthTex.Sample(DepthSampler, screenPosition).x;
+	float2 depthScreenPosition = screenPosition;
+#	ifdef VR
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
+	depthScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+		screenPosition, eyeIndex, DepthTex, FrameBuffer::DynamicResolutionParams1.xy);
+#	endif
+	float depth = DepthTex.Sample(DepthSampler, depthScreenPosition).x;
 
 #	ifdef VR
 	if (depth < 0.0001) {  // not a valid location
@@ -46,16 +53,24 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #	endif
 	float repartition = clamp(RepartitionTex.SampleLevel(RepartitionSampler, depth, 0).x, 0, 0.9999);
-	float vl = g_IntensityX_TemporalY.x * VLTex.SampleLevel(VLSampler, float3(input.TexCoord, repartition), 0).x;
+	float2 volumeUV = input.TexCoord;
+#	ifdef VR
+	volumeUV = VRStereoEffects::ClampStereoUVToEyeTexel(volumeUV, eyeIndex, VLTex);
+#	endif
+	float vl = g_IntensityX_TemporalY.x * VLTex.SampleLevel(VLSampler, float3(volumeUV, repartition), 0).x;
 
 	float noiseGrad = 0.03125 * NoiseGradSamplerTex.Sample(NoiseGradSamplerSampler, 0.125 * input.Position.xy).x;
 
 	float adjustedVl = max(0.0, noiseGrad + vl - kVLThresholdBias);
 
 	if (0.001 < g_IntensityX_TemporalY.y) {
-		float2 motionVector = MotionVectorsTex.Sample(MotionVectorsSampler, screenPosition).xy;
+		float2 motionVectorScreenPosition = screenPosition;
 #	ifdef VR
-		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
+		motionVectorScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			screenPosition, eyeIndex, MotionVectorsTex, FrameBuffer::DynamicResolutionParams1.xy);
+#	endif
+		float2 motionVector = MotionVectorsTex.Sample(MotionVectorsSampler, motionVectorScreenPosition).xy;
+#	ifdef VR
 		float2 previousTexCoord = Stereo::ConvertFromStereoUV(input.TexCoord, eyeIndex);
 		previousTexCoord += motionVector;
 		bool isValid = previousTexCoord.x >= 0 && previousTexCoord.x < 1 && previousTexCoord.y >= 0 && previousTexCoord.y < 1;
@@ -65,6 +80,12 @@ PS_OUTPUT main(PS_INPUT input)
 		bool isValid = previousTexCoord.x >= 0 && previousTexCoord.x < 1 && previousTexCoord.y >= 0 && previousTexCoord.y < 1;
 #	endif
 		float2 previousScreenPosition = FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(previousTexCoord);
+#	ifdef VR
+		float2 previousDepthPosition = previousTexCoord;
+		previousScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			previousScreenPosition, eyeIndex, PreviousFrameTex, FrameBuffer::DynamicResolutionParams1.zw);
+		previousDepthPosition = VRStereoEffects::ClampStereoUVToEyeTexel(previousDepthPosition, eyeIndex, PreviousDepthTex);
+#	endif
 		float previousVl = PreviousFrameTex.Sample(PreviousFrameSampler, previousScreenPosition).x;
 		float previousDepth = PreviousDepthTex.Sample(PreviousDepthSampler,
 #	ifndef VR
@@ -73,7 +94,7 @@ PS_OUTPUT main(PS_INPUT input)
 												  // In VR with dynamic resolution enabled, there's a bug with the depth stencil.
 												  // The depth stencil from ISDepthBufferCopy is actually full size and not scaled.
 												  // Thus there's never a need to scale it down.
-												  previousTexCoord
+												  previousDepthPosition
 #	endif
 												  )
 		                          .x;

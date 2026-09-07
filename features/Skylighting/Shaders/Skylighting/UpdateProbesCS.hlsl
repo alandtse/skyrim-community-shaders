@@ -3,6 +3,7 @@
 #include "Skylighting/Skylighting.hlsli"
 
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
+#if !defined(OCCLUSION_ONLY)
 Texture2DArray<float4> ESRAMShadow : register(t3);
 
 // Must stay byte-identical to the canonical mirror in ShadowSampling.hlsli --
@@ -18,14 +19,18 @@ struct DirectionalShadowLightData
 	uint3 _pad0;
 };
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t2);
+#endif
 
 RWTexture3D<sh2> outProbeArray : register(u0);
 RWTexture3D<uint> outAccumFramesArray : register(u1);
+#if !defined(OCCLUSION_ONLY)
 RWTexture3D<uint> outShadowBitmask : register(u2);
 RWTexture3D<float> outShadowVisibility : register(u3);
+#endif
 
 SamplerComparisonState comparisonSampler : register(s0);
 
+#if !defined(OCCLUSION_ONLY)
 static const float3 noise3D[32] = {
 	float3(0.247, -0.583, 0.891),
 	float3(-0.672, 0.315, -0.428),
@@ -60,6 +65,7 @@ static const float3 noise3D[32] = {
 	float3(0.578, -0.762, -0.614),
 	float3(-0.469, 0.381, 0.947)
 };
+#endif
 
 [numthreads(8, 8, 1)] void main(uint3 dtid : SV_DispatchThreadID) {
 	const float fadeInThreshold = 15;
@@ -98,6 +104,7 @@ static const float3 noise3D[32] = {
 	}
 
 	// Shadow cascade sampling with bitmask accumulation
+#if !defined(OCCLUSION_ONLY)
 	// Mono dispatch shared by both eyes (see Skylighting::Prepass); eye index is
 	// arbitrary but harmless for this coarse world-space visibility test.
 	float4 cellCentreCS = mul(FrameBuffer::CameraViewProj[0], float4(cellCentreMS, 1));
@@ -143,4 +150,5 @@ static const float3 noise3D[32] = {
 		outShadowBitmask[dtid] = 0;
 		outShadowVisibility[dtid] = 1.0;
 	}
+#endif
 }

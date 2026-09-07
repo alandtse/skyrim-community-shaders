@@ -59,11 +59,6 @@ struct UnifiedWater : OverlayFeature
 	{
 		static void thunk(const RE::BGSTerrainNode* node, RE::BSMultiBoundNode* waterParent);
 		static inline REL::Relocation<decltype(thunk)> func;
-
-		/** @brief 1.7.99 mid-function patch: the function above is fully inlined into its
-		 * caller on that build, so there's no standalone entry left to detour_thunk. See
-		 * the .cpp definition for the RE this is based on. */
-		static void Hook1799(CONTEXT& ctx);
 	};
 
 	/** @brief Hook that handles worldspace transitions to update water cache and flowmap state. */

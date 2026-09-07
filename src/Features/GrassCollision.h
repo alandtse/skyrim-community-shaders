@@ -123,7 +123,8 @@ public:
 		static void Install()
 		{
 			stl::write_vfunc<0x6, BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
-			stl::write_thunk_call<MainUpdate_QueueCollisions>(REL::RelocationID(35565, 36564).address() + REL::Relocate(0x748, 0xC26, 0x7EE));
+			const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xC38 : 0xC26;
+			stl::write_thunk_call<MainUpdate_QueueCollisions>(REL::RelocationID(35565, 36564).address() + REL::Relocate<std::uintptr_t>(0x748, aeOffset, 0x7EE));
 			logger::info("[GRASS COLLISION] Installed hooks");
 		}
 	};

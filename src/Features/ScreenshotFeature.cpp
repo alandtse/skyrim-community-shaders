@@ -353,15 +353,24 @@ namespace
 	}
 
 	// Picks the capture source:
+	//   VR                 -> kTOTAL (final SBS composite submitted to the HMD).
 	//   HDR + CS menu open -> clean HDR composite (no UI, no menu blur).
 	//   HDR enabled        -> swap-chain back buffer after ApplyHDR (PQ HDR10 / PQ float).
-	//   otherwise          -> kFRAMEBUFFER (tonemapped UNORM).
+	//   Flat SDR           -> kFRAMEBUFFER (tonemapped UNORM).
 	// forCapture: post-blur screenshot uses the snapshot; pre-blur preview uses hdrTexture.
 	CaptureSource SelectCaptureSource(winrt::com_ptr<ID3D11Texture2D>& holder, bool forCapture)
 	{
 		CaptureSource src;
 		auto* renderer = globals::game::renderer;
 		if (!renderer) {
+			return src;
+		}
+
+		if (globals::game::isVR) {
+			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
+			src.texture = ResolveSlotTexture(slot, holder);
+			src.srv = slot.SRV;
+			src.description = "kTOTAL (VR final composite)";
 			return src;
 		}
 

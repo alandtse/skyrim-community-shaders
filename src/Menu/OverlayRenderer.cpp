@@ -32,17 +32,6 @@
 
 namespace
 {
-	std::unordered_map<ImGuiID, float> s_windowOverlapAlpha;
-
-	constexpr ImGuiWindowFlags SKIP_WINDOW_FLAGS = ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove;
-	// Prefix-match against the display title set by Menu.cpp ("Open Shaders <ver>").
-	// Must track that title — if the display name changes the prefix here must
-	// change too, or IsMainWindow() will silently start returning false and
-	// overlay-alpha logic loses its anchor.
-	constexpr const char* MAIN_WINDOW_PREFIX = "Open Shaders";
-
-	bool IsMainWindow(ImGuiWindow* win) { return win->Name && strncmp(win->Name, MAIN_WINDOW_PREFIX, strlen(MAIN_WINDOW_PREFIX)) == 0; }
-
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
 	{
 		if (failed) {
@@ -74,83 +63,6 @@ namespace
 	}
 #endif
 
-	bool IsVisibleRootWindow(ImGuiWindow* win)
-	{
-		if (!win || !win->WasActive || win->Hidden)
-			return false;
-		return !(win->ParentWindow && !win->DockIsActive) && !(win->Flags & SKIP_WINDOW_FLAGS);
-	}
-
-	// Patches DrawList background vertices for windows involved in overlap.
-	void PatchOverlappingWindowBackgrounds()
-	{
-		auto* ctx = ImGui::GetCurrentContext();
-		if (!ctx)
-			return;
-
-		using C = ThemeManager::Constants;
-		const float dt = ImGui::GetIO().DeltaTime;
-
-		struct WinInfo
-		{
-			ImGuiWindow* win;
-			ImRect rect;
-		};
-		std::vector<WinInfo> windows;
-		for (int i = 0; i < ctx->Windows.Size; i++) {
-			auto* win = ctx->Windows[i];
-			if (IsVisibleRootWindow(win))
-				windows.push_back({ win, win->Rect() });
-		}
-
-		std::unordered_set<ImGuiID> overlapping;
-		for (size_t i = 0; i < windows.size(); i++)
-			for (size_t j = i + 1; j < windows.size(); j++)
-				if (windows[i].rect.Overlaps(windows[j].rect)) {
-					auto* a = windows[i].win;
-					auto* b = windows[j].win;
-					// Main CS window never dims; other windows yield to it
-					if (IsMainWindow(a))
-						overlapping.insert(b->ID);
-					else if (IsMainWindow(b))
-						overlapping.insert(a->ID);
-					else
-						overlapping.insert(a->FocusOrder > b->FocusOrder ? a->ID : b->ID);
-				}
-
-		const ImU32 bgRGB = ImGui::GetColorU32(ImGuiCol_WindowBg) & ~IM_COL32_A_MASK;
-
-		for (auto& [win, rect] : windows) {
-			const float target = overlapping.count(win->ID) ? C::OVERLAP_MIN_ALPHA : 0.0f;
-			float& alpha = s_windowOverlapAlpha[win->ID];
-			const float speed = (target > alpha) ? C::OVERLAP_FADEIN_SPEED : C::OVERLAP_FADEOUT_SPEED;
-			alpha += (target - alpha) * (std::min)(1.0f, dt * speed);
-
-			if (alpha < C::OVERLAP_ALPHA_EPSILON) {
-				alpha = 0.0f;
-				continue;
-			}
-
-			auto* dl = win->DrawList;
-			if (!dl || dl->VtxBuffer.Size == 0)
-				continue;
-
-			// Clamp background rect vertex alpha (contiguous bgRGB block at start of DrawList)
-			const ImU32 minA = static_cast<ImU32>(alpha * 255.0f);
-			for (int v = 0; v < dl->VtxBuffer.Size; v++) {
-				auto& vtx = dl->VtxBuffer[v];
-				if ((vtx.col & ~IM_COL32_A_MASK) != bgRGB)
-					break;
-				ImU32 a = (vtx.col >> IM_COL32_A_SHIFT) & 0xFF;
-				if (a > 0 && a < minA)
-					vtx.col = bgRGB | (minA << IM_COL32_A_SHIFT);
-			}
-		}
-
-		// Prune stale entries
-		for (auto it = s_windowOverlapAlpha.begin(); it != s_windowOverlapAlpha.end();)
-			it->second < C::OVERLAP_ALPHA_EPSILON ? it = s_windowOverlapAlpha.erase(it) : ++it;
-	}
 }  // namespace
 
 void OverlayRenderer::RenderOverlay(
@@ -161,6 +73,8 @@ void OverlayRenderer::RenderOverlay(
 	float& cachedFontSize,
 	float currentFontSize)
 {
+	BackgroundBlur::RestoreRetainedBuffers();
+
 	// Apply the VR panel size before pumping input: PumpInput reads
 	// io.DisplaySize to map wand UV to pixels for this frame.
 	ApplyVRPanelDisplaySize();
@@ -170,7 +84,6 @@ void OverlayRenderer::RenderOverlay(
 		auto& io = ImGui::GetIO();
 		io.ClearInputKeys();
 		io.ClearEventsQueue();
-		s_windowOverlapAlpha.clear();
 		return;
 	}
 
@@ -211,7 +124,6 @@ void OverlayRenderer::RenderOverlay(
 	RenderFeatureOverlays();
 	RenderFirstTimeSetupOverlay();
 	HandleABTesting();
-	PatchOverlappingWindowBackgrounds();
 	FinalizeImGuiFrame();
 }
 
@@ -503,10 +415,8 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui::Render();
 
-	// Apply background blur behind ImGui windows before rendering them
-	BackgroundBlur::RenderBackgroundBlur();
-
-	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+	if (!BackgroundBlur::RenderDrawData(ImGui::GetDrawData()))
+		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns

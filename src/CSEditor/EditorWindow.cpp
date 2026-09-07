@@ -922,13 +922,17 @@ void EditorWindow::ShowViewportWindow()
 {
 	const ImU32 borderHoveredColor = ImGui::GetColorU32(ImGuiCol_SeparatorHovered);
 	const ImU32 borderActiveColor = ImGui::GetColorU32(ImGuiCol_SeparatorActive);
+	const ImU32 gripHoveredColor = ImGui::GetColorU32(ImGuiCol_ResizeGripHovered);
+	const ImU32 gripActiveColor = ImGui::GetColorU32(ImGuiCol_ResizeGripActive);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 	ImGui::PushStyleVar(ImGuiStyleVar_ImageBorderSize, 0.0f);
 	ImGui::PushStyleColor(ImGuiCol_ResizeGrip, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_ResizeGripHovered, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_ResizeGripActive, IM_COL32(0, 0, 0, 0));
 	ImGui::PushStyleColor(ImGuiCol_SeparatorHovered, IM_COL32(0, 0, 0, 0));
 	ImGui::PushStyleColor(ImGuiCol_SeparatorActive, IM_COL32(0, 0, 0, 0));
 	const SKSE::stl::scope_exit restoreStyle([]() noexcept {
-		ImGui::PopStyleColor(3);
+		ImGui::PopStyleColor(5);
 		ImGui::PopStyleVar(2);
 	});
 
@@ -1042,7 +1046,7 @@ void EditorWindow::ShowViewportWindow()
 			const bool held = ImGui::GetActiveID() == cornerID;
 			if (!held && ImGui::GetHoveredID() != cornerID)
 				continue;
-			const ImU32 color = ImGui::GetColorU32(held ? ImGuiCol_ResizeGripActive : ImGuiCol_ResizeGripHovered);
+			const ImU32 color = held ? gripActiveColor : gripHoveredColor;
 			const float gripSize = ImGui::GetFontSize();
 			const ImVec2 corner(cornerIndex == 0 ? window->Rect().Max.x : window->Pos.x, window->Rect().Max.y);
 			const float direction = cornerIndex == 0 ? -1.0f : 1.0f;

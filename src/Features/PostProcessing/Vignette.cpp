@@ -87,17 +87,9 @@ void Vignette::SetupResources()
 void Vignette::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&vignetteCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ vignetteCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/Vignette");

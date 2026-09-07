@@ -145,17 +145,9 @@ void CODBloom::SetupResources()
 void CODBloom::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	auto const shaderPtrs = std::array{
-		&thresholdCS, &downsampleCS, &downsampleFirstMipCS, &upsampleCS, &compositeCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ thresholdCS, downsampleCS, downsampleFirstMipCS, upsampleCS, compositeCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/CODBloom");

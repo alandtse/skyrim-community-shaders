@@ -161,12 +161,7 @@ void Skylighting::SetupResources()
 
 void Skylighting::ClearShaderCache()
 {
-	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&probeUpdateCompute
-	};
-
-	for (auto shader : shaderPtrs)
-		shader = nullptr;
+	Util::ClearShaders<ID3D11ComputeShader>({ probeUpdateCompute, occlusionOnlyProbeUpdateCompute });
 
 	CompileComputeShaders();
 }
@@ -178,17 +173,21 @@ void Skylighting::CompileComputeShaders()
 		winrt::com_ptr<ID3D11ComputeShader>* programPtr;
 		std::string_view filename;
 		std::vector<std::pair<const char*, const char*>> defines;
+		const char* resourceName;
 	};
 
 	std::vector<ShaderCompileInfo>
 		shaderInfos = {
-			{ &probeUpdateCompute, "UpdateProbesCS.hlsl", {} },
+			{ &probeUpdateCompute, "UpdateProbesCS.hlsl", {}, "Skylighting::ProbeUpdateCS" },
+			{ &occlusionOnlyProbeUpdateCompute, "UpdateProbesCS.hlsl", { { "OCCLUSION_ONLY", "" } }, "Skylighting::OcclusionOnlyProbeUpdateCS" },
 		};
 
 	for (auto& info : shaderInfos) {
 		auto path = std::filesystem::path("Data\\Shaders\\Skylighting") / info.filename;
-		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), info.defines, "cs_5_0")))
+		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), info.defines, "cs_5_0"))) {
 			info.programPtr->attach(rawPtr);
+			Util::SetResourceName(rawPtr, info.resourceName);
+		}
 	}
 }
 
@@ -235,18 +234,24 @@ void Skylighting::Prepass()
 	if (globals::state->isMapMenuOpen)
 		return;
 
-	bool interior = true;
+	auto context = globals::d3d::context;
+	const bool interior = Util::IsInterior();
 
-	if (auto sky = globals::game::sky)
-		interior = sky->mode.get() != RE::Sky::Mode::kFull;
+	if (!previousInteriorState || *previousInteriorState != interior) {
+		ID3D11ShaderResourceView* nullProbe = nullptr;
+		context->PSSetShaderResources(50, 1, &nullProbe);
+		context->PSSetShaderResources(53, 1, &nullProbe);
+		ResetSkylighting();
+		previousInteriorState = interior;
+		lastOcclusionRenderFrame = static_cast<uint>(-1);
+	}
 
 	if (interior)
-		return;
+		RenderOcclusion();
 
-	auto context = globals::d3d::context;
-
-	if (probeUpdateCompute) {
-		CS_GPU_PASS("Skylighting::ProbeUpdate");
+	auto* updateShader = interior ? occlusionOnlyProbeUpdateCompute.get() : probeUpdateCompute.get();
+	if (updateShader && (!interior || lastOcclusionRenderFrame == globals::state->frameCount)) {
+		CS_GPU_PASS_SELECT(interior, "Skylighting::InteriorProbeUpdate", "Skylighting::ProbeUpdate");
 
 		auto renderer = globals::game::renderer;
 		auto& cascadeDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM];
@@ -254,14 +259,14 @@ void Skylighting::Prepass()
 		std::array<ID3D11ShaderResourceView*, 4> srvs = {
 			texOcclusion->srv.get(),
 			nullptr,
-			globals::deferred->directionalShadowLights->srv.get(),
-			cascadeDepthStencil.depthSRV
+			interior ? nullptr : globals::deferred->directionalShadowLights->srv.get(),
+			interior ? nullptr : cascadeDepthStencil.depthSRV
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
 			texAccumFramesArray->uav.get(),
-			texShadowBitmask->uav.get(),
-			texShadowVisibility->uav.get()
+			interior ? nullptr : texShadowBitmask->uav.get(),
+			interior ? nullptr : texShadowVisibility->uav.get()
 		};
 		std::array<ID3D11SamplerState*, 1> samplers = {
 			comparisonSampler.get()
@@ -272,7 +277,7 @@ void Skylighting::Prepass()
 			context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-			context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
+			context->CSSetShader(updateShader, nullptr, 0);
 			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
 		}
 
@@ -294,7 +299,7 @@ void Skylighting::Prepass()
 		ID3D11ShaderResourceView* srv = texProbeArray->srv.get();
 		context->PSSetShaderResources(50, 1, &srv);
 
-		srv = texShadowVisibility->srv.get();
+		srv = interior ? nullptr : texShadowVisibility->srv.get();
 		context->PSSetShaderResources(53, 1, &srv);
 	}
 }
@@ -303,6 +308,8 @@ void Skylighting::PostPostLoad()
 {
 	logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 	stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
+	stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
+	stl::write_vfunc<0x7, BSUtilityShader_RestoreGeometry>(RE::VTABLE_BSUtilityShader[0]);
 	stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x3A1, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x3BF : 0x3A1, 0x2FA));
 
 	if (globals::game::isVR)
@@ -529,135 +536,176 @@ void Skylighting::RenderOcclusion()
 	auto shaderCache = globals::shaderCache;
 	auto renderer = globals::game::renderer;
 	auto sky = globals::game::sky;
+	const bool interior = Util::IsInterior();
 
 	if (!shaderCache->IsEnabled()) {
-		{
+		if (!interior) {
 			CS_GPU_PASS("Skylighting::PrecipitationMask");
 			Main_Precipitation_RenderOcclusion::func();
 		}
 		return;
 	}
 
-	if (sky) {
-		if (!Util::IsInterior()) {
-			static bool doPrecip = false;
+	if (!renderer || !sky || !sky->precip)
+		return;
 
-			auto precip = sky->precip;
-
-			{
-				CS_GPU_PASS("Skylighting::PrecipitationMask");
-
-				doPrecip = false;
-
-				auto precipObject = precip->currentPrecip;
-				if (!precipObject) {
-					precipObject = precip->lastPrecip;
-				}
-				if (precipObject) {
-					precip->SetupMask();
-					auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
-					auto shaderProp = effect.get();
-					auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-					auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
-
-					precip->RenderMask(rain);
-				}
-			}
-
-			{
-				CS_GPU_PASS("Skylighting::SkylightingMask");
-
-				if (queuedResetSkylighting)
-					ResetSkylighting();
-
-				frameCount++;
-
-				auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-				RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
-
-				precipitation.depthSRV = texOcclusion->srv.get();
-				precipitation.texture = texOcclusion->resource.get();
-				precipitation.views[0] = texOcclusion->dsv.get();
-
-				static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 401590).address());
-				float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
-
-				static RE::NiPoint3& PrecipitationShaderDirection = (*(RE::NiPoint3*)REL::RelocationID(515509, 401648).address());
-				RE::NiPoint3 originalParticleShaderDirection = PrecipitationShaderDirection;
-
-				inOcclusion = true;
-				PrecipitationShaderCubeSize = occlusionDistance;
-
-				float originaLastCubeSize = precip->lastCubeSize;
-				precip->lastCubeSize = PrecipitationShaderCubeSize;
-
-				float2 vPoint;
-				{
-					constexpr float rcpRandMax = 1.f / RAND_MAX;
-					static int randSeed = std::rand();
-					static uint randFrameCount = 0;
-
-					// r2 sequence
-					vPoint = float2(randSeed * rcpRandMax) + (float)randFrameCount * float2(0.245122333753f, 0.430159709002f);
-					vPoint.x -= static_cast<unsigned long long>(vPoint.x);
-					vPoint.y -= static_cast<unsigned long long>(vPoint.y);
-
-					randFrameCount++;
-					if (randFrameCount == 1000) {
-						randFrameCount = 0;
-						randSeed = std::rand();
-					}
-
-					// disc transformation
-					vPoint.x = sqrt(vPoint.x * sin(settings.MaxZenith));
-					vPoint.y *= 6.28318530718f;
-
-					vPoint = float2{ vPoint.x * cos(vPoint.y), vPoint.x * sin(vPoint.y) };
-				}
-
-				float3 PrecipitationShaderDirectionF = -float3{ vPoint.x, vPoint.y, sqrt(1 - vPoint.LengthSquared()) };
-				PrecipitationShaderDirectionF.Normalize();
-
-				PrecipitationShaderDirection = { PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z };
-
-				static REL::Relocation<void(RE::Precipitation*, RE::NiPointer<RE::NiCamera>)> _computeProjection{ REL::RelocationID(25643, 26185) };
-				{
-					ZoneScopedN("Skylighting - Setup Projection");
-					_computeProjection(precip, precip->occlusionData.camera);
-					precip->SetupMask();
-				}
-
-				BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
-				{
-					CS_GPU_PASS("Skylighting::OcclusionMask");
-					precip->RenderMask((RE::BSParticleShaderRainEmitter*)rain);
-				}
-				inOcclusion = false;
-
-				OcclusionDir = -float4{ PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z, 0 };
-				OcclusionTransform = ((RE::BSParticleShaderRainEmitter*)rain)->occlusionProjection;
-
-				delete rain;
-
-				PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
-				precip->lastCubeSize = originaLastCubeSize;
-
-				PrecipitationShaderDirection = originalParticleShaderDirection;
-
-				precipitation = precipitationCopy;
-
-				{
-					ZoneScopedN("Skylighting - Restore Projection");
-					_computeProjection(precip, precip->occlusionData.camera);
-				}
+	auto* precipitation = sky->precip;
+	if (!interior) {
+		CS_GPU_PASS("Skylighting::PrecipitationMask");
+		auto precipitationObject = precipitation->currentPrecip ? precipitation->currentPrecip : precipitation->lastPrecip;
+		if (precipitationObject) {
+			auto* particleProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(
+				precipitationObject->GetGeometryRuntimeData().shaderProperty.get());
+			if (particleProperty && particleProperty->particleEmitter) {
+				precipitation->SetupMask();
+				precipitation->RenderMask(static_cast<RE::BSParticleShaderRainEmitter*>(particleProperty->particleEmitter));
 			}
 		}
 	}
+
+	if (lastOcclusionRenderFrame == globals::state->frameCount)
+		return;
+
+	CS_GPU_PASS("Skylighting::SkylightingMask");
+	if (queuedResetSkylighting)
+		ResetSkylighting();
+	++frameCount;
+
+	auto& precipitationTarget = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+	const RE::BSGraphics::DepthStencilData originalTarget = precipitationTarget;
+	static float& precipitationCubeSize = *reinterpret_cast<float*>(REL::RelocationID(515451, 401590).address());
+	static RE::NiPoint3& precipitationDirection = *reinterpret_cast<RE::NiPoint3*>(REL::RelocationID(515509, 401648).address());
+	static REL::Relocation<void(RE::Precipitation*, RE::NiPointer<RE::NiCamera>)> computeProjection{ REL::RelocationID(25643, 26185) };
+	const float originalCubeSize = precipitationCubeSize;
+	const float originalLastCubeSize = precipitation->lastCubeSize;
+	const RE::NiPoint3 originalDirection = precipitationDirection;
+	const bool originalOcclusionState = inOcclusion;
+	bool projectionChanged = false;
+
+	const SKSE::stl::scope_exit restoreEngineState([&]() noexcept {
+		while (rasterCullOverrideDepth > 0)
+			EndInteriorOcclusionGeometry();
+		forceInteriorOcclusionTwoSided = false;
+		inOcclusion = originalOcclusionState;
+		precipitationCubeSize = originalCubeSize;
+		precipitation->lastCubeSize = originalLastCubeSize;
+		precipitationDirection = originalDirection;
+		precipitationTarget = originalTarget;
+		if (projectionChanged) {
+			ZoneScopedN("Skylighting - Restore Projection");
+			computeProjection(precipitation, precipitation->occlusionData.camera);
+		}
+	});
+
+	precipitationTarget.depthSRV = texOcclusion->srv.get();
+	precipitationTarget.texture = texOcclusion->resource.get();
+	precipitationTarget.views[0] = texOcclusion->dsv.get();
+	inOcclusion = true;
+	forceInteriorOcclusionTwoSided = interior;
+	precipitationCubeSize = occlusionDistance;
+	precipitation->lastCubeSize = precipitationCubeSize;
+
+	constexpr float reciprocalRandMax = 1.0f / RAND_MAX;
+	static int randomSeed = std::rand();
+	static uint randomFrame = 0;
+	float2 diskPoint = float2(randomSeed * reciprocalRandMax) +
+	                   static_cast<float>(randomFrame) * float2(0.245122333753f, 0.430159709002f);
+	diskPoint.x -= std::floor(diskPoint.x);
+	diskPoint.y -= std::floor(diskPoint.y);
+	if (++randomFrame == 1000) {
+		randomFrame = 0;
+		randomSeed = std::rand();
+	}
+	diskPoint.x = std::sqrt(diskPoint.x * std::sin(settings.MaxZenith));
+	diskPoint.y *= 2.0f * std::numbers::pi_v<float>;
+	diskPoint = float2{ diskPoint.x * std::cos(diskPoint.y), diskPoint.x * std::sin(diskPoint.y) };
+
+	float3 direction = -float3{ diskPoint.x, diskPoint.y, std::sqrt(std::max(0.0f, 1.0f - diskPoint.LengthSquared())) };
+	direction.Normalize();
+	precipitationDirection = { direction.x, direction.y, direction.z };
+
+	{
+		ZoneScopedN("Skylighting - Setup Projection");
+		computeProjection(precipitation, precipitation->occlusionData.camera);
+		projectionChanged = true;
+		precipitation->SetupMask();
+	}
+
+	BSParticleShaderRainEmitter syntheticRain{};
+	{
+		CS_GPU_PASS("Skylighting::OcclusionMask");
+		precipitation->RenderMask(reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain));
+	}
+
+	OcclusionDir = -float4{ direction.x, direction.y, direction.z, 0.0f };
+	OcclusionTransform = reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain)->occlusionProjection;
+	lastOcclusionRenderFrame = globals::state->frameCount;
 }
 
 void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
 {
 	globals::features::skylighting.RenderOcclusion();
+}
+
+void Skylighting::BSUtilityShader_SetupGeometry::thunk(
+	RE::BSShader* a_shader,
+	RE::BSRenderPass* a_pass,
+	uint32_t a_renderFlags)
+{
+	func(a_shader, a_pass, a_renderFlags);
+	globals::features::skylighting.BeginInteriorOcclusionGeometry();
+}
+
+void Skylighting::BSUtilityShader_RestoreGeometry::thunk(
+	RE::BSShader* a_shader,
+	RE::BSRenderPass* a_pass,
+	uint32_t a_renderFlags)
+{
+	func(a_shader, a_pass, a_renderFlags);
+	globals::features::skylighting.EndInteriorOcclusionGeometry();
+}
+
+uint32_t* Skylighting::GetRasterCullMode() const
+{
+	auto* shadowState = globals::game::shadowState;
+	if (!shadowState)
+		return nullptr;
+
+	return globals::game::isVR ?
+	           &shadowState->GetVRRuntimeData().rasterStateCullMode :
+	           &shadowState->GetRuntimeData().rasterStateCullMode;
+}
+
+void Skylighting::BeginInteriorOcclusionGeometry()
+{
+	if (!forceInteriorOcclusionTwoSided)
+		return;
+
+	auto* rasterCullMode = GetRasterCullMode();
+	if (!rasterCullMode)
+		return;
+
+	if (rasterCullOverrideDepth++ == 0)
+		savedRasterCullMode = *rasterCullMode;
+
+	constexpr uint32_t cullModeNone = 0;
+	if (*rasterCullMode != cullModeNone) {
+		*rasterCullMode = cullModeNone;
+		globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_RASTER_CULL_MODE);
+	}
+}
+
+void Skylighting::EndInteriorOcclusionGeometry()
+{
+	if (rasterCullOverrideDepth == 0)
+		return;
+	if (--rasterCullOverrideDepth != 0)
+		return;
+
+	if (auto* rasterCullMode = GetRasterCullMode(); rasterCullMode && *rasterCullMode != savedRasterCullMode) {
+		*rasterCullMode = savedRasterCullMode;
+		globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_RASTER_CULL_MODE);
+	}
 }
 
 RE::BSEventNotifyControl Skylighting::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)

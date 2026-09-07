@@ -397,19 +397,11 @@ void LensFlare::CreateFFTTextures(uint resolution)
 void LensFlare::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&thresholdCS, &ghostHaloCS, &blurDownCS, &blurUpCS, &mixCS,
-		&fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &fftMultiplyCS,
-		&bokehPrepareCS, &fftThresholdCS, &fftGhostComposeCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ thresholdCS, ghostHaloCS, blurDownCS, blurUpCS, mixCS,
+			fftRowCS, fftColCS, fftRowInvCS, fftColInvCS, fftMultiplyCS,
+			bokehPrepareCS, fftThresholdCS, fftGhostComposeCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/LensFlare");

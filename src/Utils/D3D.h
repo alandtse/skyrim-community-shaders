@@ -4,6 +4,7 @@
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <winrt/base.h>
 
 namespace Util
@@ -130,6 +131,22 @@ namespace Util
 	 * @return S_OK on success, or an error HRESULT.
 	 */
 	HRESULT CreateOverlayTextureAndRTV(ID3D11Device* device, int width, int height, ID3D11Texture2D** outTex, ID3D11RenderTargetView** outRTV);
+
+	/**
+	 * @brief Release and null each listed shader com_ptr in one call.
+	 *
+	 * Prefer this over hand-rolling `for (auto ptr : ptrs) ...`: a loop over raw
+	 * pointers-to-com_ptr silently no-ops if a call site forgets to dereference
+	 * (it nulls the loop variable, not the shader). Passing references here
+	 * makes that mistake a compile error instead.
+	 * @param shaders Shader com_ptr members to clear, e.g. `Util::ClearShaders<ID3D11ComputeShader>({ myCS, otherCS })`.
+	 */
+	template <typename T>
+	void ClearShaders(std::initializer_list<std::reference_wrapper<winrt::com_ptr<T>>> shaders)
+	{
+		for (auto& shader : shaders)
+			shader.get() = nullptr;
+	}
 
 	// VR-aware counts for render targets
 	inline int GetRenderTargetCount()

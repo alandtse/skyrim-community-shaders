@@ -502,20 +502,16 @@ namespace LegacyGraphicsCompatibility
 		{
 			const auto setupAddress = REL::RelocationID(101564, 108562).address();
 			const auto shutdownAddress = REL::RelocationID(101562, 108560).address();
-			// SE/VR fold the destructor's stage-loop body into shutdown()'s; only AE
-			// keeps a distinct body, hence reusing shutdown's id (101562) here for SE/VR.
-			const auto destructorAddress = REL::RelocationID(101562, 108568).address();
+			const auto destructorAddress = REL::RelocationID(101570, 108568).address();
 			constexpr auto setupContext = REL::make_pattern<
 				"48 8B EA 48 8B D9 BA 0A 00 00 00 E8 ?? ?? ?? ??">();
 			constexpr auto shutdownContext = REL::make_pattern<
 				"48 89 2C 06 FF C7 83 FF 0A 7C AF">();
 			constexpr auto destructorContext = REL::make_pattern<
 				"4C 89 34 06 FF C7 83 FF 0A 7C AF">();
-			const bool destructorSharesShutdownBody = destructorAddress == shutdownAddress;
 			if (!REL::verify_code(setupAddress + 0x24, setupContext) ||
 				!REL::verify_code(shutdownAddress + 0x86, shutdownContext) ||
-				(!destructorSharesShutdownBody &&
-					!REL::verify_code(destructorAddress + 0x86, destructorContext))) {
+				!REL::verify_code(destructorAddress + 0x86, destructorContext)) {
 				logger::error("Legacy FullScreenBlur stage-count opcode contexts do not match the verified 1.5.97/1.6.1170 sequences; no blur adapters installed");
 				return false;
 			}

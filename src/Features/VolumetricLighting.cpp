@@ -232,6 +232,10 @@ void VolumetricLighting::EarlyPrepass()
 	vlData.screenY = height;
 	vlData.screenXMin1 = width - 1;
 	vlData.screenYMin1 = height - 1;
+	vlData.eyeWidth = globals::game::isVR ? width / 2 : width;
+	const int32_t maximumEyeWidth = globals::game::isVR ? width - vlData.eyeWidth : width;
+	vlData.horizontalGroupsPerEye =
+		(maximumEyeWidth + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
 	vlDataCB->Update(vlData);
 
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
@@ -341,7 +345,8 @@ void VolumetricLighting::SetDimensionsCB() const
 
 void VolumetricLighting::SetGroupCountsHCS(uint32_t& threadGroupCountX) const
 {
-	threadGroupCountX = (vlData.screenX + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
+	threadGroupCountX = globals::game::isVR ? 2u * vlData.horizontalGroupsPerEye :
+	                                          (vlData.screenX + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
 }
 
 void VolumetricLighting::SetGroupCountsVCS(uint32_t& threadGroupCountY) const

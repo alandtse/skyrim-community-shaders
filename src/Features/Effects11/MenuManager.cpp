@@ -135,8 +135,11 @@ void MenuManager::RenderSettingsPanel()
 				if (ImGui::Selectable(loc.label.c_str(), isSelected)) {
 					presetManager.SetActiveLocation(loc.root);
 					effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
+					// After Load()/Apply(), not before: Save() piggybacks an ENB save for
+					// whatever preset is currently loaded, which would still be the old one.
 					settingManager.Load();
 					effectManager.Apply();
+					globals::state->Save();
 				}
 				RenderPresetTooltip(loc, active);
 			}

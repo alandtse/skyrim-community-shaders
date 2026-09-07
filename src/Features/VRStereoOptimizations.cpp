@@ -301,15 +301,27 @@ void VRStereoOptimizations::DrawSettings()
 // CONSTANT BUFFER UPDATE
 //=============================================================================
 
+json VRStereoOptimizations::GetDiagnostics() const
+{
+	return json{
+		{ "classifiedWidth", static_cast<uint32_t>(frameDim.x) },
+		{ "classifiedHeight", static_cast<uint32_t>(frameDim.y) },
+		{ "modeTextureWidth", texPerPixelMode ? texPerPixelMode->desc.Width : 0u },
+		{ "modeTextureHeight", texPerPixelMode ? texPerPixelMode->desc.Height : 0u },
+		{ "stencilActive", stencilActive },
+		{ "classifiedThisFrame", classifiedThisFrame },
+	};
+}
+
 void VRStereoOptimizations::UpdateConstantBuffer()
 {
-	float2 resolution = Util::ConvertToDynamic(globals::state->screenSize);
+	frameDim = Util::ConvertToDynamic(globals::state->screenSize);
 
 	VRStereoOptParams params{};
-	params.FrameDim[0] = resolution.x;
-	params.FrameDim[1] = resolution.y;
-	params.RcpFrameDim[0] = 1.0f / resolution.x;
-	params.RcpFrameDim[1] = 1.0f / resolution.y;
+	params.FrameDim[0] = frameDim.x;
+	params.FrameDim[1] = frameDim.y;
+	params.RcpFrameDim[0] = 1.0f / frameDim.x;
+	params.RcpFrameDim[1] = 1.0f / frameDim.y;
 	params.StereoModeValue = static_cast<uint32_t>(settings.stereoMode);
 	params.DisocclusionThreshold = settings.disocclusionDepthThreshold;
 	params.EdgeDepthThreshold = settings.edgeDepthThreshold;
@@ -400,14 +412,13 @@ void VRStereoOptimizations::DispatchStencil()
 
 void VRStereoOptimizations::SetEye1Viewport()
 {
-	D3D11_TEXTURE2D_DESC mainDesc;
-	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+	const auto eyeWidth = static_cast<uint32_t>(frameDim.x) / 2;
 
 	D3D11_VIEWPORT vp{};
-	vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
+	vp.TopLeftX = static_cast<float>(eyeWidth);
 	vp.TopLeftY = 0.0f;
-	vp.Width = static_cast<float>(mainDesc.Width / 2);
-	vp.Height = static_cast<float>(mainDesc.Height);
+	vp.Width = static_cast<float>(eyeWidth);
+	vp.Height = static_cast<float>(static_cast<uint32_t>(frameDim.y));
 	vp.MinDepth = 0.0f;
 	vp.MaxDepth = 1.0f;
 	globals::d3d::context->RSSetViewports(1, &vp);

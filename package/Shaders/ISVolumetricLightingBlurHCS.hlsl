@@ -22,6 +22,11 @@ cbuffer VLData : register(b1)
 {
 	int2 screenSize;
 	int2 screenSizeMin1;
+#if defined(VR)
+	int eyeWidth;
+	int horizontalGroupsPerEye;
+	uint2 pad;
+#endif
 }
 
 groupshared float vl[TG_DIM];
@@ -33,7 +38,16 @@ groupshared float depth[TG_DIM];
 	int x = groupId.x * (TG_DIM - WINDOW * 2) + base;
 	int y = groupId.y;
 
+#if defined(VR)
+	int eyeIndex = min(int(groupId.x) / horizontalGroupsPerEye, 1);
+	int eyeGroup = int(groupId.x) - eyeIndex * horizontalGroupsPerEye;
+	int eyeStart = eyeIndex * eyeWidth;
+	int eyeEnd = eyeIndex == 0 ? eyeWidth : screenSize.x;
+	x = eyeStart + eyeGroup * (TG_DIM - WINDOW * 2) + base;
+	int2 pix = int2(clamp(x, eyeStart, eyeEnd - 1), clamp(y, 0, screenSizeMin1.y));
+#else
 	int2 pix = min(int2(x, y), screenSizeMin1.xy);
+#endif
 	float vlValue = InVLTexture[pix];
 	vl[idx] = vlValue;
 	float depthValue = DepthTexture[pix];
@@ -41,7 +55,11 @@ groupshared float depth[TG_DIM];
 
 	GroupMemoryBarrierWithGroupSync();
 
+#if defined(VR)
+	if (base >= 0 && base < TG_DIM - WINDOW * 2 && x < eyeEnd) {
+#else
 	if (base >= 0 && base < TG_DIM - WINDOW * 2) {
+#endif
 		int min12 = idx - 12;
 		int min6 = idx - 6;
 		int plus6 = idx + 6;

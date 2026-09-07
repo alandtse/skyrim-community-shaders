@@ -90,6 +90,7 @@ public:
 	Texture3D* texShadowVisibility = nullptr;
 
 	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> occlusionOnlyProbeUpdateCompute = nullptr;
 
 	// misc parameters
 	uint probeArrayDims[3] = { 256, 256, 128 };
@@ -122,6 +123,20 @@ public:
 	struct Main_Precipitation_RenderOcclusion
 	{
 		static void thunk();
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	/** @brief Forces two-sided utility rendering while the interior occlusion mask is built. */
+	struct BSUtilityShader_SetupGeometry
+	{
+		static void thunk(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	/** @brief Restores utility raster state after interior occlusion geometry. */
+	struct BSUtilityShader_RestoreGeometry
+	{
+		static void thunk(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
@@ -160,4 +175,15 @@ public:
 			return true;
 		}
 	};
+
+private:
+	uint32_t* GetRasterCullMode() const;
+	void BeginInteriorOcclusionGeometry();
+	void EndInteriorOcclusionGeometry();
+
+	uint lastOcclusionRenderFrame = static_cast<uint>(-1);
+	std::optional<bool> previousInteriorState;
+	bool forceInteriorOcclusionTwoSided = false;
+	uint32_t savedRasterCullMode = 0;
+	uint32_t rasterCullOverrideDepth = 0;
 };

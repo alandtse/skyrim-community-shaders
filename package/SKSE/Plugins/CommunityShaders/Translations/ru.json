@@ -3265,6 +3265,7 @@
     "menu.advanced.work_tooltip_1": "Суммарная работа компиляции: сумма реального времени компиляции всех шейдеров.",
     "menu.advanced.work_tooltip_2": "Это не процессорное время; это накопленное реальное время задач.",
     "menu.advanced.work_tooltip_3": "Эквивалентное последовательное время на одном рабочем потоке при тех же накладных расходах.",
+    "menu.clear_active_shaders": "Очистить активные шейдеры",
     "menu.clear_shader_cache": "Очистить кэш шейдеров",
     "menu.clear_shader_cache_awaiting_close": "",
     "menu.clear_shader_cache_capturing": "",

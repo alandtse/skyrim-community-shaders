@@ -264,7 +264,9 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 	}
 	if (uiIcons.clearCache.texture) {
 		actionIcons.push_back({ uiIcons.clearCache.texture,
-			Util::GetClearShaderCacheTooltip(),
+			Util::ResolveShaderCacheClearScope() == Util::ShaderCacheClearScope::ActiveOnly ?
+				T("menu.clear_active_shaders", "Clear Active Shaders") :
+				T("menu.clear_shader_cache", "Clear Shader Cache"),
 			[]() {
 				Util::RequestClearShaderCacheConfirmation(Util::ResolveShaderCacheClearScope());
 			} });

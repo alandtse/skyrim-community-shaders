@@ -3271,6 +3271,7 @@
     "menu.advanced.work_tooltip_1": "Total compile work: sum of all per-shader wall-clock compile times.",
     "menu.advanced.work_tooltip_2": "This is not CPU time; it is accumulated task elapsed time.",
     "menu.advanced.work_tooltip_3": "Equivalent serial time on one worker if overhead stayed the same.",
+    "menu.clear_active_shaders": "Clear Active Shaders",
     "menu.clear_shader_cache": "Clear Shader Cache",
     "menu.clear_shader_cache_awaiting_close": "Close the menu to finish",
     "menu.clear_shader_cache_capturing": "Capturing...",

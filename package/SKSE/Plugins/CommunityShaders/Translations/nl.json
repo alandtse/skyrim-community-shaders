@@ -3267,6 +3267,7 @@
     "menu.advanced.work_tooltip_1": "",
     "menu.advanced.work_tooltip_2": "",
     "menu.advanced.work_tooltip_3": "",
+    "menu.clear_active_shaders": "Actieve shaders wissen",
     "menu.clear_shader_cache": "",
     "menu.clear_shader_cache_awaiting_close": "",
     "menu.clear_shader_cache_capturing": "",

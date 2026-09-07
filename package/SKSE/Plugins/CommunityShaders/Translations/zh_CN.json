@@ -3267,6 +3267,7 @@
     "menu.advanced.work_tooltip_1": "",
     "menu.advanced.work_tooltip_2": "",
     "menu.advanced.work_tooltip_3": "",
+    "menu.clear_active_shaders": "清除当前着色器",
     "menu.clear_shader_cache": "清除着色器缓存",
     "menu.clear_shader_cache_awaiting_close": "",
     "menu.clear_shader_cache_capturing": "",

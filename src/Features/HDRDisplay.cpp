@@ -810,6 +810,7 @@ void HDRDisplay::RestoreFramebuffer()
 	if (!framebufferRedirected)
 		return;
 
+	++sceneGeneration;
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
 	fb.texture = savedFramebufferTexture;
@@ -884,6 +885,7 @@ void HDRDisplay::SetUIBuffer()
 		if (uiBufferMode.useUIBuffer) {
 			float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			globals::d3d::context->ClearRenderTargetView(targetRTV, clearColor);
+			++uiGeneration;
 		}
 
 		fb.RTV = targetRTV;
@@ -908,6 +910,7 @@ void HDRDisplay::SetUIBuffer()
 
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	globals::d3d::context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
+	++uiGeneration;
 
 	fb.RTV = uiTexture->rtv.get();
 	globals::d3d::context->OMSetRenderTargets(1, &fb.RTV, nullptr);

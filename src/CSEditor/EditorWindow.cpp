@@ -962,8 +962,7 @@ void EditorWindow::ShowViewportWindow()
 		const float minHeight = std::max(minSize.y, ImGui::GetFrameHeight() + std::max(0.0f, ImGui::GetStyle().WindowRounding - 1.0f));
 		const float minWidth = std::ceil(std::max(minSize.x, (minHeight - constraint.frameSize.y) * aspectRatio + constraint.frameSize.x));
 		data->DesiredSize.x = std::max(std::round(imageWidth + constraint.frameSize.x), minWidth);
-		data->DesiredSize.y = std::round((data->DesiredSize.x - constraint.frameSize.x) / aspectRatio + constraint.frameSize.y);
-	}, &constraint);
+		data->DesiredSize.y = std::round((data->DesiredSize.x - constraint.frameSize.x) / aspectRatio + constraint.frameSize.y); }, &constraint);
 
 	const bool visible = Util::BeginWithRoundedClose(windowName, nullptr,
 		ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);

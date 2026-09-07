@@ -90,7 +90,7 @@ struct VRStereoOptimizations
 		/// depth the classification used (geometry the z-prepass omits, e.g. alpha-tested statics).
 		bool repairFromEye0Depth = true;
 		/// Re-run the classification on the final depth after the repair so later mode-texture
-		/// consumers (SSGI reprojection, stereo blend) see the restored geometry.
+		/// consumers (SSGI reprojection) see the restored geometry.
 		bool reclassifyAfterRepair = true;
 		// reserved for foveated reprojection — see alandtse/open-shaders#143
 		float foveatedRegionRadius = 0.3f;

@@ -290,6 +290,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout;
 
+#	if defined(ENVCUBE) && defined(RAIN) && defined(RAIN_RENDERING)
+	if (SharedData::rainRenderingSettings.DisableVanillaRain != 0)
+		discard;
+#	endif
+
 #	if !defined(VR)
 	uint eyeIndex = 0;
 #	else

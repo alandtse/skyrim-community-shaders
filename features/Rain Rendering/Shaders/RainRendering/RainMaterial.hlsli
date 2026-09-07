@@ -62,7 +62,7 @@ namespace RainMaterial
 		water.Opacity = proceduralCoverage;
 		float detailWeight = input.DetailFade * resolvedWidth;
 		float mip = 0.0f;
-		[branch] if (TexturedRain.x > 0.5f)
+		[branch] if (TexturedRain.x > 0.5f && detailWeight > 0.0f)
 		{
 			float2 textureUV = float2(0.5f + input.StreakCoordinate.y * RainTextureShape.z * 0.5f, input.StreakCoordinate.x);
 			float2 projectedSize = max(float2(input.ScreenSideAndWidth.z, input.ScreenAlongAndLength.z) * 2.0f, 0.25f);
@@ -71,7 +71,7 @@ namespace RainMaterial
 			float4 normalOpacity = RainNormalOpacity.SampleLevel(RefractionSampler, textureUV, mip);
 			float3 textureNormal = normalize(float3((normalOpacity.xy * 2.0f - 1.0f) * TexturedRain.y, max(normalOpacity.z * 2.0f - 1.0f, 0.05f)));
 			normalTS = normalize(lerp(normalTS, textureNormal, detailWeight));
-			water.Opacity = saturate(normalOpacity.a) * proceduralCoverage;
+			water.Opacity = lerp(proceduralCoverage, saturate(normalOpacity.a), detailWeight);
 		}
 		float3 planeNormal = cross(input.StreakSideWorld, input.StreakAxisWorld);
 		planeNormal *= dot(planeNormal, input.HeadViewDirection) < 0.0f ? -1.0f : 1.0f;

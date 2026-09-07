@@ -1,6 +1,5 @@
 #include "Precipitation.h"
 
-#include "Features/RainRendering.h"
 #include "Features/Skylighting.h"
 #include "Globals.h"
 
@@ -20,25 +19,9 @@ namespace
 			const auto dynamicResolutionLock = runtimeData.dynamicResolutionLock;
 			runtimeData.dynamicResolutionLock = 1;
 
-			auto* const sky = globals::game::sky;
-			auto* const precipitation = sky ? sky->precip : nullptr;
-			const auto currentPrecipitation = precipitation ? precipitation->currentPrecip : nullptr;
-			const auto previousPrecipitation = precipitation ? precipitation->lastPrecip : nullptr;
 			const SKSE::stl::scope_exit restoreState([&]() noexcept {
-				if (precipitation) {
-					precipitation->currentPrecip = currentPrecipitation;
-					precipitation->lastPrecip = previousPrecipitation;
-				}
 				runtimeData.dynamicResolutionLock = dynamicResolutionLock;
 			});
-
-			if (precipitation) {
-				const auto& airborneRain = globals::features::rainRendering;
-				if (airborneRain.ReplacesVanillaRain(sky->currentWeather))
-					precipitation->currentPrecip = nullptr;
-				if (airborneRain.ReplacesVanillaRain(sky->lastWeather))
-					precipitation->lastPrecip = nullptr;
-			}
 
 			auto& skylighting = globals::features::skylighting;
 			if (skylighting.loaded)

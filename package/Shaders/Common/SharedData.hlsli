@@ -2,6 +2,7 @@
 #define __SHARED_DATA_DEPENDENCY_HLSL__
 
 #include "Common/FrameBuffer.hlsli"
+#include "Common/RainRendering.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/VR.hlsli"
 
@@ -466,6 +467,7 @@ namespace SharedData
 		VanillaFresnelSettings vanillaFresnelSettings;
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
+		RainRenderingSettings rainRenderingSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

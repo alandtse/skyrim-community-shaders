@@ -4,7 +4,6 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Precipitation.h"
-#include "RainRendering.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -421,8 +420,6 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 
 	precipitationOcclusionMapRenderPassList->Clear();
 	if (skylighting.inOcclusion) {
-		if (skylighting.rainSolidCoverPass && property->flags.any(kTreeAnim))
-			return precipitationOcclusionMapRenderPassList;
 		if (property->flags.any(kSkinned) && property->flags.none(kTreeAnim))
 			return precipitationOcclusionMapRenderPassList;
 	} else {
@@ -592,7 +589,6 @@ void Skylighting::RenderOcclusion()
 		while (rasterCullOverrideDepth > 0)
 			EndInteriorOcclusionGeometry();
 		forceInteriorOcclusionTwoSided = false;
-		rainSolidCoverPass = false;
 		inOcclusion = originalOcclusionState;
 		precipitationCubeSize = originalCubeSize;
 		precipitation->lastCubeSize = originalLastCubeSize;
@@ -643,19 +639,6 @@ void Skylighting::RenderOcclusion()
 		CS_GPU_PASS("Skylighting::OcclusionMask");
 		precipitation->RenderMask(reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain));
 	}
-	if (auto* solidCoverTarget = globals::features::rainRendering.GetSolidCoverOcclusionTarget()) {
-		precipitationTarget.depthSRV = solidCoverTarget->srv.get();
-		precipitationTarget.texture = solidCoverTarget->resource.get();
-		precipitationTarget.views[0] = solidCoverTarget->dsv.get();
-		rainSolidCoverPass = true;
-		precipitation->SetupMask();
-		{
-			CS_GPU_PASS("RainRendering::SolidCoverMask");
-			precipitation->RenderMask(reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain));
-		}
-		rainSolidCoverPass = false;
-	}
-
 	OcclusionDir = -float4{ direction.x, direction.y, direction.z, 0.0f };
 	OcclusionTransform = reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain)->occlusionProjection;
 	lastOcclusionRenderFrame = globals::state->frameCount;

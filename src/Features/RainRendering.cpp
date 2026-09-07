@@ -6,12 +6,11 @@
 #include "I18n/I18n.h"
 #include "InverseSquareLighting.h"
 #include "LightLimitFix.h"
-#include "Menu.h"
 #include "Skylighting.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/FileSystem.h"
 #include "Utils/Game.h"
-#include "Utils/UI.h"
 
 #include <algorithm>
 #include <array>
@@ -25,11 +24,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableRainRendering,
 	ForceRainRendering,
 	EnableRainRoofOcclusion,
-	EnableRainCanopyResponse,
+	EnableRainWind,
 	RainDropCount,
 	RainOverheadDropCount,
 	RainDensity,
 	RainFallSpeed,
+	RainWindInfluence,
 	RainStreakLength,
 	RainVelocityStretch,
 	RainStreakWidth,
@@ -44,12 +44,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainNearBudgetWeight,
 	RainMidBudgetWeight,
 	RainFarBudgetWeight,
-	EnableDistantRain,
-	RainDistantDropCount,
-	RainDistantDensity,
-	RainDistantOpacity,
-	RainDistantStreakLength,
-	RainDistantStreakWidth,
 	RainDensityNoiseScale,
 	RainDensityNoiseStrength,
 	RainCurtainScale,
@@ -68,6 +62,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainStreakVariation,
 	RainLocalLightResponse,
 	EnableTexturedRain,
+	RainTexturePath,
 	RainTextureNormalStrength,
 	RainTextureReflectionStrength,
 	RainTextureUVWidth,
@@ -76,27 +71,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainHighlightRoughness,
 	RainLightScattering,
 	RainRoofOcclusionFadeStart,
-	RainRoofOcclusionFadeEnd,
-	RainCanopyDensityScale,
-	RainCanopySpeedScale)
+	RainRoofOcclusionFadeEnd)
 
 namespace
 {
-	constexpr uint32_t kMaximumDropCount = 32768;
-	constexpr uint32_t kRainComputeGroupSize = 64;
-	constexpr uint32_t kMaximumCompactionGroupCount = kMaximumDropCount / kRainComputeGroupSize;
-	constexpr uint32_t kMaximumDistantDropCount = 16384;
-	constexpr uint32_t kCanopyProbeWidth = 256;
-	constexpr uint32_t kCanopyProbeHeight = 256;
-	constexpr uint32_t kCanopyProbeDepth = 128;
 	constexpr uint32_t kGridWidth = 96;
 	constexpr uint32_t kGridDepth = 96;
 	constexpr uint32_t kGridHeight = 4;
 	constexpr float kMaximumRainParticleDensity = 3.0f;
 	constexpr float kReferenceRainGravity = 675.0f;
-	constexpr float kMaximumRefractionPixels = 12.0f;
-	constexpr float kMaximumVRRefractionPixels = 4.0f;
-	constexpr const char* kRainTexturePath = "Data\\Textures\\CommunityShaders\\RainRendering\\RainDrop.png";
 
 	struct RainPerformancePreset
 	{
@@ -127,20 +110,6 @@ namespace
 		if (a_minimum >= a_maximum)
 			return a_value >= a_maximum ? 1.0f : 0.0f;
 		return std::clamp((a_value - a_minimum) / (a_maximum - a_minimum), 0.0f, 1.0f);
-	}
-
-	bool UsesWaterMaterial(const RainRendering::Settings& a_settings)
-	{
-		return a_settings.EnableGlassyRain && (a_settings.RainDebugMode == 0 || a_settings.RainDebugMode >= 6);
-	}
-
-	bool DrawFlagCheckbox(const char* a_label, uint& a_value)
-	{
-		bool enabled = a_value != 0;
-		if (!ImGui::Checkbox(a_label, &enabled))
-			return false;
-		a_value = enabled ? 1u : 0u;
-		return true;
 	}
 
 	template <class T>
@@ -281,7 +250,6 @@ namespace
 			context->CSGetShaderResources(1, 1, &dropResource);
 			context->CSGetShaderResources(39, static_cast<UINT>(compactionResources.size()), compactionResources.data());
 			context->CSGetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
-			context->CSGetShaderResources(41, static_cast<UINT>(canopyResources.size()), canopyResources.data());
 			context->CSGetSamplers(0, 1, &computeSampler);
 			context->CSGetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data());
 		}
@@ -297,8 +265,6 @@ namespace
 			context->CSSetShaderResources(1, 1, &nullDropResource);
 			std::array<ID3D11ShaderResourceView*, 2> nullResources{};
 			context->CSSetShaderResources(39, static_cast<UINT>(nullResources.size()), nullResources.data());
-			std::array<ID3D11ShaderResourceView*, 2> nullCanopyResources{};
-			context->CSSetShaderResources(41, static_cast<UINT>(nullCanopyResources.size()), nullCanopyResources.data());
 			std::array<ID3D11UnorderedAccessView*, 5> nullUAVs{};
 			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(nullUAVs.size()), nullUAVs.data(), nullptr);
 			context->CSSetShader(shader, nullptr, 0);
@@ -309,7 +275,6 @@ namespace
 			context->CSSetShaderResources(1, 1, &dropResource);
 			context->CSSetShaderResources(39, static_cast<UINT>(compactionResources.size()), compactionResources.data());
 			context->CSSetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
-			context->CSSetShaderResources(41, static_cast<UINT>(canopyResources.size()), canopyResources.data());
 			context->CSSetSamplers(0, 1, &computeSampler);
 			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
 
@@ -323,8 +288,6 @@ namespace
 			for (auto*& resource : compactionResources)
 				ReleasePointer(resource);
 			for (auto*& resource : computeResources)
-				ReleasePointer(resource);
-			for (auto*& resource : canopyResources)
 				ReleasePointer(resource);
 			ReleasePointer(computeSampler);
 			for (auto*& uav : computeUAVs)
@@ -341,7 +304,6 @@ namespace
 		ID3D11ShaderResourceView* dropResource = nullptr;
 		std::array<ID3D11ShaderResourceView*, 2> compactionResources{};
 		std::array<ID3D11ShaderResourceView*, 4> computeResources{};
-		std::array<ID3D11ShaderResourceView*, 2> canopyResources{};
 		ID3D11SamplerState* computeSampler = nullptr;
 		std::array<ID3D11UnorderedAccessView*, 5> computeUAVs{};
 	};
@@ -446,148 +408,15 @@ void RainRendering::SetupResources()
 		Util::SetResourceName(depthStencilState.get(), "RainRendering::DepthDisabled");
 	}
 
-	if (settings.EnableRainCanopyResponse && EnsureCanopyOcclusionResources())
-		EnsureCanopyOcclusionShader();
-
 	renderPathReady = perFrameCB && dropBuffer && dropLocalOffsetBuffer && dropGroupOffsetBuffer &&
 	                  visibleDropIndexBuffer && indirectDrawArgsBuffer && EnsureShaders();
 }
 
-bool RainRendering::EnsureCanopyOcclusionResources()
+bool RainRendering::CanUseRoofOcclusion() const
 {
-	if (solidCoverOcclusion && canopyClassification && canopyAccumulation)
-		return true;
-	if (!globals::features::skylighting.loaded)
-		return false;
-
-	auto* renderer = globals::game::renderer;
-	if (!renderer)
-		return false;
-
-	auto& precipitationOcclusion = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-	if (!precipitationOcclusion.texture || !precipitationOcclusion.depthSRV || !precipitationOcclusion.views[0])
-		return false;
-
-	D3D11_TEXTURE2D_DESC depthDescription{};
-	D3D11_SHADER_RESOURCE_VIEW_DESC depthResourceDescription{};
-	D3D11_DEPTH_STENCIL_VIEW_DESC depthViewDescription{};
-	precipitationOcclusion.texture->GetDesc(&depthDescription);
-	precipitationOcclusion.depthSRV->GetDesc(&depthResourceDescription);
-	precipitationOcclusion.views[0]->GetDesc(&depthViewDescription);
-
-	solidCoverOcclusion = std::make_unique<Texture2D>(depthDescription, "RainRendering::SolidCoverOcclusion");
-	solidCoverOcclusion->CreateSRV(depthResourceDescription);
-	solidCoverOcclusion->CreateDSV(depthViewDescription);
-	globals::d3d::context->ClearDepthStencilView(
-		solidCoverOcclusion->dsv.get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
-
-	D3D11_TEXTURE3D_DESC fieldDescription{
-		.Width = kCanopyProbeWidth,
-		.Height = kCanopyProbeHeight,
-		.Depth = kCanopyProbeDepth,
-		.MipLevels = 1,
-		.Format = DXGI_FORMAT_R8_UNORM,
-		.Usage = D3D11_USAGE_DEFAULT,
-		.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
-		.CPUAccessFlags = 0,
-		.MiscFlags = 0
-	};
-	D3D11_SHADER_RESOURCE_VIEW_DESC fieldResourceDescription{
-		.Format = fieldDescription.Format,
-		.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D,
-		.Texture3D = { .MostDetailedMip = 0, .MipLevels = 1 }
-	};
-	D3D11_UNORDERED_ACCESS_VIEW_DESC fieldViewDescription{
-		.Format = fieldDescription.Format,
-		.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE3D,
-		.Texture3D = { .MipSlice = 0, .FirstWSlice = 0, .WSize = fieldDescription.Depth }
-	};
-
-	canopyClassification = std::make_unique<Texture3D>(fieldDescription, "RainRendering::CanopyClassification");
-	canopyClassification->CreateSRV(fieldResourceDescription);
-	canopyClassification->CreateUAV(fieldViewDescription);
-
-	fieldDescription.Format = fieldResourceDescription.Format = fieldViewDescription.Format = DXGI_FORMAT_R8_UINT;
-	canopyAccumulation = std::make_unique<Texture3D>(fieldDescription, "RainRendering::CanopyAccumulation");
-	canopyAccumulation->CreateSRV(fieldResourceDescription);
-	canopyAccumulation->CreateUAV(fieldViewDescription);
-
-	ResetCanopyOcclusion();
-	return true;
-}
-
-bool RainRendering::EnsureCanopyOcclusionShader()
-{
-	if (canopyOcclusionCS)
-		return true;
-	if (canopyOcclusionShaderCompileAttempted)
-		return false;
-	canopyOcclusionShaderCompileAttempted = true;
-
-	auto* shader = static_cast<ID3D11ComputeShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainCanopyOcclusion.hlsl", {}, "cs_5_0", "RainCanopyUpdateCS"));
-	if (!shader) {
-		logger::warn("[RainRendering] Canopy classification shader unavailable; using conservative roof occlusion");
-		return false;
-	}
-
-	canopyOcclusionCS.attach(shader);
-	Util::SetResourceName(canopyOcclusionCS.get(), "RainRendering::CanopyOcclusionCS");
-	return true;
-}
-
-void RainRendering::ResetCanopyOcclusion()
-{
-	if (!canopyClassification || !canopyAccumulation)
-		return;
-
-	auto* context = globals::d3d::context;
-	const float noCanopy[4]{};
-	context->ClearUnorderedAccessViewFloat(canopyClassification->uav.get(), noCanopy);
-	const UINT noSamples[4] = { 0, 0, 0, 0 };
-	context->ClearUnorderedAccessViewUint(canopyAccumulation->uav.get(), noSamples);
-}
-
-void RainRendering::UpdateCanopyOcclusion(
-	ID3D11DeviceContext* a_context,
-	ID3D11Buffer* a_sharedBuffer,
-	ID3D11Buffer* a_frameBuffer)
-{
-	if (!settings.EnableRainRoofOcclusion || !settings.EnableRainCanopyResponse || !canopyOcclusionCS ||
-		!solidCoverOcclusion || !canopyClassification || !canopyAccumulation ||
-		!globals::features::skylighting.texOcclusion || !globals::features::skylighting.texOcclusion->srv.get())
-		return;
-
-	const bool interior = Util::IsInterior();
-	if (!previousCanopyInteriorState || *previousCanopyInteriorState != interior) {
-		ResetCanopyOcclusion();
-		previousCanopyInteriorState = interior;
-	}
-
-	CS_GPU_PASS("RainRendering::CanopyOcclusion");
-	a_context->CSSetShader(canopyOcclusionCS.get(), nullptr, 0);
-	a_context->CSSetConstantBuffers(5, 1, &a_sharedBuffer);
-	a_context->CSSetConstantBuffers(12, 1, &a_frameBuffer);
-	ID3D11ShaderResourceView* depthResources[] = {
-		globals::features::skylighting.texOcclusion->srv.get(),
-		solidCoverOcclusion->srv.get()
-	};
-	a_context->CSSetShaderResources(0, static_cast<UINT>(std::size(depthResources)), depthResources);
-	ID3D11SamplerState* sampler = globals::features::skylighting.comparisonSampler.get();
-	a_context->CSSetSamplers(0, 1, &sampler);
-	ID3D11UnorderedAccessView* fieldViews[] = {
-		canopyClassification->uav.get(),
-		canopyAccumulation->uav.get()
-	};
-	a_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(std::size(fieldViews)), fieldViews, nullptr);
-	a_context->Dispatch(
-		(kCanopyProbeWidth + 7u) >> 3,
-		(kCanopyProbeHeight + 7u) >> 3,
-		kCanopyProbeDepth);
-	ID3D11ShaderResourceView* nullDepthResources[2]{};
-	a_context->CSSetShaderResources(0, static_cast<UINT>(std::size(nullDepthResources)), nullDepthResources);
-	ID3D11UnorderedAccessView* nullFieldViews[2]{};
-	a_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(std::size(nullFieldViews)), nullFieldViews, nullptr);
+	const auto& skylighting = globals::features::skylighting;
+	return settings.EnableRainRoofOcclusion && skylighting.loaded && skylighting.texProbeArray &&
+	       skylighting.texProbeArray->srv.get();
 }
 
 bool RainRendering::EnsureShaders()
@@ -653,37 +482,6 @@ bool RainRendering::EnsureShaders()
 	return true;
 }
 
-bool RainRendering::EnsureDistantRainShaders()
-{
-	if (distantRainVS && distantRainPS)
-		return true;
-	if (distantRainShaderCompileAttempted)
-		return false;
-	distantRainShaderCompileAttempted = true;
-
-	std::vector<std::pair<const char*, const char*>> defines;
-	if (globals::game::isVR)
-		defines.emplace_back("VR", "");
-	auto* vertexShader = static_cast<ID3D11VertexShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainFarField.hlsl", defines, "vs_5_0", "DistantRainVS"));
-	auto* pixelShader = static_cast<ID3D11PixelShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainFarField.hlsl", defines, "ps_5_0", "DistantRainPS"));
-	if (!vertexShader || !pixelShader) {
-		if (vertexShader)
-			vertexShader->Release();
-		if (pixelShader)
-			pixelShader->Release();
-		logger::warn("[RainRendering] Distant rain shaders failed to compile; continuing without the distant field");
-		return false;
-	}
-
-	distantRainVS.attach(vertexShader);
-	distantRainPS.attach(pixelShader);
-	Util::SetResourceName(distantRainVS.get(), "RainRendering::DistantRainVS");
-	Util::SetResourceName(distantRainPS.get(), "RainRendering::DistantRainPS");
-	return true;
-}
-
 void RainRendering::ClearShaderCache()
 {
 	rainUpdateCS = nullptr;
@@ -692,14 +490,9 @@ void RainRendering::ClearShaderCache()
 	rainScatterCS = nullptr;
 	rainVS = nullptr;
 	rainPS = nullptr;
-	distantRainVS = nullptr;
-	distantRainPS = nullptr;
 	sceneColorDownsampleVS = nullptr;
 	sceneColorDownsamplePS = nullptr;
-	canopyOcclusionCS = nullptr;
 	shaderCompileAttempted = false;
-	distantRainShaderCompileAttempted = false;
-	canopyOcclusionShaderCompileAttempted = false;
 	renderPathReady = false;
 	rainTextureSRV = nullptr;
 	rainTextureLoadAttempted = false;
@@ -716,7 +509,7 @@ void RainRendering::ClearShaderCache()
 
 void RainRendering::RestoreDefaultSettings()
 {
-	settings = {};
+	settings = GetDefaultSettings();
 	NormalizeSettings();
 }
 
@@ -729,50 +522,75 @@ void RainRendering::LoadSettings(json& o_json)
 void RainRendering::SaveSettings(json& o_json)
 {
 	NormalizeSettings();
+	Util::FileHelpers::EnsureDirectoryExists(
+		Util::PathHelpers::GetDataPath().parent_path() / std::filesystem::path(kCustomRainTexturePath).parent_path());
 	o_json = settings;
+}
+
+const RainRendering::Settings& RainRendering::GetDefaultSettings()
+{
+	static const Settings defaults{};
+	return defaults;
+}
+
+float RainRendering::GetNearLayerMaximum(float a_farDistance)
+{
+	return std::min(kMaximumNearLayerDistance, a_farDistance * kNearLayerFarDistanceRatio);
+}
+
+float RainRendering::GetMidLayerMinimum(float a_nearDistance)
+{
+	return std::max(kMinimumMidLayerDistance, a_nearDistance * kMidLayerNearDistanceRatio);
+}
+
+float RainRendering::GetMidLayerMaximum(float a_farDistance)
+{
+	return std::min(kMaximumMidLayerDistance, a_farDistance * kMidLayerFarDistanceRatio);
 }
 
 void RainRendering::NormalizeSettings()
 {
+	const auto& defaults = GetDefaultSettings();
 	settings.EnableRainRendering = settings.EnableRainRendering ? 1u : 0u;
 	settings.ForceRainRendering = settings.ForceRainRendering ? 1u : 0u;
 	settings.EnableRainRoofOcclusion = settings.EnableRainRoofOcclusion ? 1u : 0u;
-	settings.EnableRainCanopyResponse = settings.EnableRainCanopyResponse ? 1u : 0u;
-	settings.EnableDistantRain = settings.EnableDistantRain ? 1u : 0u;
+	settings.EnableRainWind = settings.EnableRainWind ? 1u : 0u;
 	settings.EnableGlassyRain = settings.EnableGlassyRain ? 1u : 0u;
 	settings.EnableRainRefraction = settings.EnableRainRefraction ? 1u : 0u;
 	settings.EnableTexturedRain = settings.EnableTexturedRain ? 1u : 0u;
+	if (settings.RainTexturePath.empty())
+		settings.RainTexturePath = kDefaultRainTexturePath;
 
-	settings.RainDropCount = std::clamp(settings.RainDropCount, 2048u, kMaximumDropCount);
-	settings.RainOverheadDropCount = std::min(settings.RainOverheadDropCount, 64u);
-	settings.RainDistantDropCount = std::clamp(settings.RainDistantDropCount, 512u, kMaximumDistantDropCount);
-	settings.RainDensity = ClampFinite(settings.RainDensity, 0.0f, 2.0f, 1.0f);
-	settings.RainDistantDensity = ClampFinite(settings.RainDistantDensity, 0.0f, 2.0f, 1.0f);
-	settings.RainDistantOpacity = ClampFinite(settings.RainDistantOpacity, 0.0f, 1.0f, 0.55f);
-	settings.RainDistantStreakLength = ClampFinite(settings.RainDistantStreakLength, 4.0f, 256.0f, 64.0f);
-	settings.RainDistantStreakWidth = ClampFinite(settings.RainDistantStreakWidth, 0.2f, 8.0f, 3.0f);
-	settings.RainMinimumVisibility = ClampFinite(settings.RainMinimumVisibility, 0.0f, 1.0f, 0.01f);
-	settings.RainNearCutoffDistance = ClampFinite(settings.RainNearCutoffDistance, 0.0f, 64.0f, 4.0f);
-	settings.RainFarDistance = ClampFinite(settings.RainFarDistance, 2000.0f, 30000.0f, 6000.0f);
-
-	const float nearLayerMaximum = std::min(4000.0f, settings.RainFarDistance * 0.45f);
-	settings.RainNearLayerDistance = ClampFinite(settings.RainNearLayerDistance, 200.0f, nearLayerMaximum, 422.0f);
-	const float midLayerMinimum = std::max(500.0f, settings.RainNearLayerDistance * 1.25f);
-	const float midLayerMaximum = std::min(12000.0f, settings.RainFarDistance * 0.85f);
-	settings.RainMidLayerDistance = ClampFinite(settings.RainMidLayerDistance, midLayerMinimum, midLayerMaximum, 2371.0f);
-
-	settings.RainRefractionStrength = ClampFinite(settings.RainRefractionStrength, 0.0f,
-		globals::game::isVR ? kMaximumVRRefractionPixels : kMaximumRefractionPixels, 2.68f);
-
-	settings.RainCurtainMinDensity = ClampFinite(settings.RainCurtainMinDensity, 0.0f, 2.0f, 0.28f);
+	settings.RainDropCount = std::clamp(settings.RainDropCount, kDropCountRange.minimum, kDropCountRange.maximum);
+	settings.RainOverheadDropCount = std::clamp(settings.RainOverheadDropCount, kOverheadDropCountRange.minimum, kOverheadDropCountRange.maximum);
+	settings.RainDensity = ClampFinite(settings.RainDensity, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainDensity);
+	settings.RainWindInfluence = ClampFinite(settings.RainWindInfluence, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainWindInfluence);
+	settings.RainMinimumVisibility = ClampFinite(settings.RainMinimumVisibility, kUnitRange.minimum, kUnitRange.maximum, defaults.RainMinimumVisibility);
+	settings.RainNearCutoffDistance = ClampFinite(settings.RainNearCutoffDistance, kNearCutoffDistanceRange.minimum, kNearCutoffDistanceRange.maximum, defaults.RainNearCutoffDistance);
+	settings.RainFarDistance = ClampFinite(settings.RainFarDistance, kFarDistanceRange.minimum, kFarDistanceRange.maximum, defaults.RainFarDistance);
+	settings.RainCurtainMinDensity = ClampFinite(settings.RainCurtainMinDensity, kCurtainMinimumDensityRange.minimum, kCurtainMinimumDensityRange.maximum, defaults.RainCurtainMinDensity);
 	settings.RainCurtainMaxDensity = ClampFinite(settings.RainCurtainMaxDensity,
-		settings.RainCurtainMinDensity, 3.0f, 1.85f);
-	settings.RainRoofOcclusionFadeStart = ClampFinite(settings.RainRoofOcclusionFadeStart, 0.0f, 0.99f, 0.20f);
+		std::max(settings.RainCurtainMinDensity, kCurtainMaximumDensityRange.minimum),
+		kCurtainMaximumDensityRange.maximum, defaults.RainCurtainMaxDensity);
+
+	const float nearLayerMaximum = GetNearLayerMaximum(settings.RainFarDistance);
+	settings.RainNearLayerDistance = ClampFinite(settings.RainNearLayerDistance, kMinimumNearLayerDistance, nearLayerMaximum, defaults.RainNearLayerDistance);
+	const float midLayerMinimum = GetMidLayerMinimum(settings.RainNearLayerDistance);
+	const float midLayerMaximum = GetMidLayerMaximum(settings.RainFarDistance);
+	settings.RainMidLayerDistance = ClampFinite(settings.RainMidLayerDistance, midLayerMinimum, midLayerMaximum, defaults.RainMidLayerDistance);
+
+	settings.RainRefractionStrength = ClampFinite(
+		settings.RainRefractionStrength, kUnitRange.minimum, kMaximumRefractionPixels, defaults.RainRefractionStrength);
+
+	settings.RainRoofOcclusionFadeStart = ClampFinite(settings.RainRoofOcclusionFadeStart, kRoofFadeStartRange.minimum, kRoofFadeStartRange.maximum, defaults.RainRoofOcclusionFadeStart);
 	settings.RainRoofOcclusionFadeEnd = ClampFinite(settings.RainRoofOcclusionFadeEnd,
-		settings.RainRoofOcclusionFadeStart + 0.01f, 1.0f, 0.75f);
-	settings.RainCanopyDensityScale = ClampFinite(settings.RainCanopyDensityScale, 0.0f, 1.0f, 0.35f);
-	settings.RainCanopySpeedScale = ClampFinite(settings.RainCanopySpeedScale, 0.5f, 1.0f, 0.85f);
-	settings.RainDebugMode = std::min(settings.RainDebugMode, 8u);
+		settings.RainRoofOcclusionFadeStart + 0.01f, kUnitRange.maximum, defaults.RainRoofOcclusionFadeEnd);
+	settings.RainDebugMode = std::min(settings.RainDebugMode, kMaximumDebugMode);
+}
+
+bool RainRendering::UsesWaterMaterial() const
+{
+	return settings.EnableGlassyRain && (settings.RainDebugMode == 0 || settings.RainDebugMode >= 6);
 }
 
 void RainRendering::ApplyPerformanceProfile(PerfProfile a_profile)
@@ -800,53 +618,17 @@ std::string RainRendering::GetProfilePreviewText(PerfProfile a_profile) const
 		std::make_format_args(preset.dropCount, preset.density, preset.farDistance));
 }
 
-void RainRendering::DrawPerformanceSettings()
-{
-	NormalizeSettings();
-	int dropCount = static_cast<int>(settings.RainDropCount);
-	if (ImGui::SliderInt(T(TKEY("drop_count"), "Maximum Drop Count"), &dropCount, 2048, static_cast<int>(kMaximumDropCount)))
-		settings.RainDropCount = static_cast<uint>(dropCount);
-	int overheadDropCount = static_cast<int>(settings.RainOverheadDropCount);
-	if (ImGui::SliderInt(T(TKEY("overhead_drop_count"), "Overhead Drop Count"), &overheadDropCount, 0, 64))
-		settings.RainOverheadDropCount = static_cast<uint>(overheadDropCount);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("overhead_drop_count_tooltip"), "Reserves this many near-layer particles for a softly faded volume above the player. The total drop count does not increase."));
-	ImGui::SliderFloat(T(TKEY("density"), "Rain Density"), &settings.RainDensity, 0.0f, 2.0f, "%.2f");
-	if (ImGui::SliderFloat(T(TKEY("far_distance"), "Rain Far Distance"), &settings.RainFarDistance, 2000.0f, 30000.0f, "%.0f"))
-		NormalizeSettings();
-	if (ImGui::TreeNodeEx(T(TKEY("layer_budgets"), "Depth Layer Budgets"))) {
-		const float nearLayerMaximum = std::min(4000.0f, settings.RainFarDistance * 0.45f);
-		if (ImGui::SliderFloat(T(TKEY("near_layer_distance"), "Near Layer Distance"), &settings.RainNearLayerDistance, 200.0f, nearLayerMaximum, "%.0f units"))
-			NormalizeSettings();
-		const float midLayerMinimum = std::max(500.0f, settings.RainNearLayerDistance * 1.25f);
-		const float midLayerMaximum = std::min(12000.0f, settings.RainFarDistance * 0.85f);
-		ImGui::SliderFloat(T(TKEY("mid_layer_distance"), "Mid Layer Distance"), &settings.RainMidLayerDistance, midLayerMinimum, midLayerMaximum, "%.0f units");
-		ImGui::SliderFloat(T(TKEY("near_budget"), "Near Budget Weight"), &settings.RainNearBudgetWeight, 0.0f, 4.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("mid_budget"), "Mid Budget Weight"), &settings.RainMidBudgetWeight, 0.0f, 4.0f, "%.2f");
-		ImGui::BeginDisabled(settings.EnableDistantRain != 0);
-		ImGui::SliderFloat(T(TKEY("far_budget"), "Far Budget Weight"), &settings.RainFarBudgetWeight, 0.0f, 4.0f, "%.2f");
-		ImGui::EndDisabled();
-		const auto counts = GetLayerDropCounts();
-		const auto radii = GetLayerRadii(ClampFinite(settings.RainFarDistance, 1000.0f, 50000.0f, 12000.0f));
-		ImGui::Text(T(TKEY("allocated_drops"), "Reserved drops: %u near / %u mid / %u far"), counts[0], counts[1], counts[2]);
-		ImGui::Text(T(TKEY("effective_layer_radii"), "Effective outer ranges: %.0f / %.0f / %.0f"), radii.x, radii.y, radii.z);
-		ImGui::TextWrapped(T(TKEY("layer_budget_help"), "Weights split the existing maximum drop count. Adjacent layers overlap and fade smoothly; near/mid ranges are limited by the far range."));
-		ImGui::TreePop();
-	}
-	NormalizeSettings();
-}
-
 std::array<uint32_t, 4> RainRendering::GetLayerDropCounts() const
 {
-	const uint32_t count = std::clamp(settings.RainDropCount, 1u, kMaximumDropCount);
-	float nearWeight = ClampFinite(settings.RainNearBudgetWeight, 0.0f, 4.0f, 1.02f);
-	float midWeight = ClampFinite(settings.RainMidBudgetWeight, 0.0f, 4.0f, 1.11f);
-	const bool distantFieldReady = settings.EnableDistantRain && settings.RainDebugMode == 0 && distantRainVS && distantRainPS;
-	float farWeight = distantFieldReady ? 0.0f : ClampFinite(settings.RainFarBudgetWeight, 0.0f, 4.0f, 0.25f);
+	const auto& defaults = GetDefaultSettings();
+	const uint32_t count = std::clamp(settings.RainDropCount, kMinimumRuntimeDropCount, kMaximumDropCount);
+	float nearWeight = ClampFinite(settings.RainNearBudgetWeight, kBudgetWeightRange.minimum, kBudgetWeightRange.maximum, defaults.RainNearBudgetWeight);
+	float midWeight = ClampFinite(settings.RainMidBudgetWeight, kBudgetWeightRange.minimum, kBudgetWeightRange.maximum, defaults.RainMidBudgetWeight);
+	float farWeight = ClampFinite(settings.RainFarBudgetWeight, kBudgetWeightRange.minimum, kBudgetWeightRange.maximum, defaults.RainFarBudgetWeight);
 	if (nearWeight + midWeight + farWeight < 1e-4f) {
 		nearWeight = 1.0f;
 		midWeight = 2.0f;
-		farWeight = distantFieldReady ? 0.0f : 1.0f;
+		farWeight = 1.0f;
 	}
 	const float totalWeight = nearWeight + midWeight + farWeight;
 	const float candidates = static_cast<float>(count);
@@ -857,219 +639,10 @@ std::array<uint32_t, 4> RainRendering::GetLayerDropCounts() const
 
 float4 RainRendering::GetLayerRadii(float a_farDistance) const
 {
-	const float nearDistance = ClampFinite(settings.RainNearLayerDistance, 200.0f, a_farDistance * 0.45f, 422.0f);
-	const float midDistance = ClampFinite(settings.RainMidLayerDistance, nearDistance * 1.25f, a_farDistance * 0.85f, 2371.0f);
+	const auto& defaults = GetDefaultSettings();
+	const float nearDistance = ClampFinite(settings.RainNearLayerDistance, kMinimumNearLayerDistance, a_farDistance * kNearLayerFarDistanceRatio, defaults.RainNearLayerDistance);
+	const float midDistance = ClampFinite(settings.RainMidLayerDistance, nearDistance * kMidLayerNearDistanceRatio, a_farDistance * kMidLayerFarDistanceRatio, defaults.RainMidLayerDistance);
 	return { nearDistance, midDistance, a_farDistance, 0.2f };
-}
-
-void RainRendering::ApplyGlassyReferenceSettings()
-{
-	settings.EnableRainRendering = 1;
-	settings.EnableGlassyRain = 1;
-	settings.EnableTexturedRain = 1;
-	settings.EnableRainRefraction = 1;
-	settings.RainStreakWidth = 3.8f;
-	settings.RainStreakLength = 72.0f;
-	settings.RainVelocityStretch = 0.045f;
-	settings.RainOpacity = 0.75f;
-	settings.RainBrightness = 0.85f;
-	settings.RainMinimumVisibility = 0.20f;
-	settings.RainCoreDarkening = 0.08f;
-	settings.RainEdgeHighlight = 1.0f;
-	settings.RainRefractionStrength = globals::game::isVR ? 3.0f : 6.0f;
-	settings.RainRefractionDistance = 4800.0f;
-	settings.RainTextureNormalStrength = 1.0f;
-	settings.RainTextureReflectionStrength = 1.0f;
-	settings.RainTextureUVWidth = 1.0f;
-	settings.RainEnvironmentTransmission = 0.8f;
-	settings.RainSceneRefractionMix = 1.0f;
-	settings.RainHighlightRoughness = 0.18f;
-	settings.RainLightScattering = 0.25f;
-	settings.RainLocalLightResponse = 1.0f;
-	settings.RainDebugMode = 0;
-}
-
-void RainRendering::DrawSettings()
-{
-	NormalizeSettings();
-	DrawFlagCheckbox(T(TKEY("enable"), "Enable Airborne Rain"), settings.EnableRainRendering);
-	DrawFlagCheckbox(T(TKEY("force_rain"), "Force Rain for Testing"), settings.ForceRainRendering);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("force_rain_tooltip"), "Renders at full intensity regardless of the current weather or location."));
-	if (shaderCompileAttempted && !renderPathReady) {
-		Util::Text::Error("%s", T(TKEY("shader_compile_error"), "Airborne Rain shaders failed to compile, so the effect is not rendering."));
-		if (ImGui::Button(T(TKEY("retry_shaders"), "Retry Rain Shaders")))
-			ClearShaderCache();
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("retry_shaders_tooltip"), "Clears the failed compile state and retries when rain next renders."));
-	}
-
-	if (ImGui::TreeNodeEx(T(TKEY("volume_density"), "Volume & Density"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		DrawPerformanceSettings();
-		ImGui::SliderFloat(T(TKEY("fall_speed"), "Fall Speed"), &settings.RainFallSpeed, 500.0f, 6000.0f, "%.0f");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("fall_speed_tooltip"), "Fall speed for standard Skyrim rain. The active weather's gravity scales this value; Force Rain uses it directly."));
-		ImGui::SliderFloat(T(TKEY("near_cutoff_distance"), "Near Cutoff Distance"), &settings.RainNearCutoffDistance, 0.0f, 64.0f, "%.1f units");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("near_cutoff_distance_tooltip"), "Hard-discards rain streaks that come within this distance of the head. There is no opacity fade; zero disables the cutoff."));
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx(T(TKEY("distant_rain"), "Distant Rain Field"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		DrawFlagCheckbox(T(TKEY("distant_rain_enable"), "Enable Distant Rain Field"), settings.EnableDistantRain);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("distant_rain_tooltip"), "Replaces detailed far-layer drops with inexpensive world-space streaks shared by both VR eyes."));
-		ImGui::BeginDisabled(!settings.EnableDistantRain);
-		int distantDropCount = static_cast<int>(settings.RainDistantDropCount);
-		if (ImGui::SliderInt(T(TKEY("distant_drop_count"), "Distant Drop Count"), &distantDropCount, 512, static_cast<int>(kMaximumDistantDropCount)))
-			settings.RainDistantDropCount = static_cast<uint>(distantDropCount);
-		ImGui::SliderFloat(T(TKEY("distant_density"), "Distant Density"), &settings.RainDistantDensity, 0.0f, 2.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("distant_opacity"), "Distant Opacity"), &settings.RainDistantOpacity, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("distant_streak_length"), "Distant Streak Length"), &settings.RainDistantStreakLength, 4.0f, 256.0f, "%.1f");
-		ImGui::SliderFloat(T(TKEY("distant_streak_width"), "Distant Streak Width"), &settings.RainDistantStreakWidth, 0.2f, 8.0f, "%.2f");
-		ImGui::EndDisabled();
-		if (settings.EnableDistantRain && distantRainShaderCompileAttempted && (!distantRainVS || !distantRainPS)) {
-			ImGui::TextDisabled("%s", T(TKEY("distant_rain_unavailable"), "Distant field shaders are unavailable; detailed far rain remains active."));
-			if (ImGui::Button(T(TKEY("retry_distant_rain_shaders"), "Retry Distant Rain Shaders"))) {
-				distantRainVS = nullptr;
-				distantRainPS = nullptr;
-				distantRainShaderCompileAttempted = false;
-			}
-		}
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx(T(TKEY("streaks"), "Streak Appearance"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (ImGui::Button(T(TKEY("glassy_reference"), "Apply Glassy Reference Look")))
-			ApplyGlassyReferenceSettings();
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("glassy_reference_tooltip"), "Enables textured/refraction rain and tunes width, stretch, opacity, brightness, curvature and reflection for clearer water bodies. Keeps density, drop count, weather forcing and volume unchanged."));
-		ImGui::SliderFloat(T(TKEY("streak_length"), "Base Streak Length"), &settings.RainStreakLength, 4.0f, 500.0f, "%.1f");
-		ImGui::SliderFloat(T(TKEY("velocity_stretch"), "Velocity Stretch"), &settings.RainVelocityStretch, 0.0f, 0.25f, "%.3f");
-		ImGui::SliderFloat(T(TKEY("streak_width"), "Streak Width"), &settings.RainStreakWidth, 0.2f, 8.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("opacity"), "Rain Opacity"), &settings.RainOpacity, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("brightness"), "Rain Brightness"), &settings.RainBrightness, 0.0f, 4.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("lighting_response"), "Rain Lighting Response"), &settings.RainLightingResponse, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("minimum_visibility"), "Minimum Dark-Scene Visibility"), &settings.RainMinimumVisibility, 0.0f, 1.0f, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("minimum_visibility_tooltip"), "Keeps restrained water highlights visible when a weather or post-processing preset makes environmental lighting nearly black. This affects shaped highlights, not the whole streak."));
-		ImGui::SliderFloat(T(TKEY("intersection_fade"), "Geometry Intersection Fade"), &settings.RainIntersectionFadeDistance, 1.0f, 400.0f, "%.0f");
-		DrawFlagCheckbox(T(TKEY("glassy_rain"), "Glassy Rain"), settings.EnableGlassyRain);
-		const bool usesWaterMaterial = UsesWaterMaterial(settings);
-		if (!settings.EnableGlassyRain)
-			ImGui::TextUnformatted(T(TKEY("glassy_inactive"), "Material: standard streaks (Glassy Rain is off)"));
-		else if (!usesWaterMaterial)
-			ImGui::TextUnformatted(T(TKEY("glassy_debug_suspended"), "Material: diagnostic output replaces the water material in this debug mode"));
-		else
-			ImGui::TextUnformatted(T(TKEY("glassy_active"), "Material: transparent water"));
-
-		ImGui::BeginDisabled(!usesWaterMaterial);
-		DrawFlagCheckbox(T(TKEY("textured_rain"), "Textured Water Drops"), settings.EnableTexturedRain);
-		DrawFlagCheckbox(T(TKEY("refraction"), "Nearby Rain Refraction"), settings.EnableRainRefraction);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("refraction_tooltip"), "Adds a scene-color copy and depth-checked background distortion inside nearby world-space streaks. Each eye samples only its own view."));
-		ImGui::BeginDisabled(!settings.EnableRainRefraction);
-		ImGui::SliderFloat(T(TKEY("refraction_strength"), "Refraction Strength"), &settings.RainRefractionStrength, 0.0f,
-			globals::game::isVR ? kMaximumVRRefractionPixels : kMaximumRefractionPixels, "%.2f pixels");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("refraction_strength_tooltip"), "Maximum background displacement inside a drop, also bounded by its projected width. VR uses a lower limit. Foreground depth and eye boundaries are always respected."));
-		ImGui::EndDisabled();
-		ImGui::EndDisabled();
-		if (usesWaterMaterial && settings.EnableRainRefraction && sceneColorCopyFailed)
-			ImGui::TextDisabled("%s", T(TKEY("refraction_unavailable"), "Scene-color copy is unavailable; rain refraction is disabled."));
-
-		if (ImGui::TreeNodeEx(T(TKEY("advanced_water_material"), "Advanced Water Material"))) {
-			ImGui::BeginDisabled(!usesWaterMaterial);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("textured_rain_tooltip"), "Uses RainDrop.png as a normal/opacity map on nearby world-space streaks. Distant rain uses a simpler water surface, preserving transparency. Reuses Dynamic Cubemaps when available."));
-			ImGui::BeginDisabled(!settings.EnableTexturedRain);
-			ImGui::SliderFloat(T(TKEY("texture_normals"), "Drop Curvature"), &settings.RainTextureNormalStrength, 0.0f, 2.0f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("texture_reflections"), "Water Reflection Strength"), &settings.RainTextureReflectionStrength, 0.0f, 2.0f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("texture_uv_width"), "Texture UV Width"), &settings.RainTextureUVWidth, 0.1f, 1.0f, "%.2f");
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("texture_uv_width_tooltip"), "Samples the centered portion of the texture to trim transparent side padding. Use 1.0 for the round drop map; narrower values crop its curved edges."));
-			if (ImGui::Button(T(TKEY("reload_rain_texture"), "Reload Drop Texture"))) {
-				rainTextureSRV = nullptr;
-				rainTextureLoadAttempted = false;
-			}
-			if (rainTextureLoadAttempted && !rainTextureSRV)
-				ImGui::TextUnformatted(T(TKEY("rain_texture_unavailable"), "Drop texture unavailable; using procedural rain."));
-			ImGui::EndDisabled();
-			ImGui::SliderFloat(T(TKEY("environment_transmission"), "Environment Transmission"), &settings.RainEnvironmentTransmission, 0.0f, 1.0f, "%.2f");
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("environment_transmission_tooltip"), "Cubemap transmission fills the portion not using nearby scene distortion, including distant rain. It does not reduce Scene Distortion Mix. Zero leaves that portion as clear background transmission."));
-			if (settings.RainEnvironmentTransmission > 0.0f && !GetRainEnvironment())
-				ImGui::TextUnformatted(T(TKEY("rain_environment_unavailable"), "Environment cubemap unavailable; using background transmission."));
-			ImGui::SliderFloat(T(TKEY("core_darkening"), "Translucent Core Darkening"), &settings.RainCoreDarkening, 0.0f, 0.8f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("edge_highlight"), "Edge Highlight"), &settings.RainEdgeHighlight, 0.0f, 4.0f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("streak_variation"), "Streak Variation"), &settings.RainStreakVariation, 0.0f, 1.0f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("local_light_response"), "Local Light Response"), &settings.RainLocalLightResponse, 0.0f, 2.0f, "%.2f");
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("local_light_response_tooltip"), "Reuses the light grid once per drop for colored scattering and an intensity-weighted highlight direction. Separate from cubemap reflections. Unshadowed approximation; spot and portal-restricted lights are excluded."));
-			ImGui::SliderFloat(T(TKEY("highlight_roughness"), "Water Highlight Roughness"), &settings.RainHighlightRoughness, 0.08f, 0.6f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("light_scattering"), "Light Scattering"), &settings.RainLightScattering, 0.0f, 1.0f, "%.2f");
-			ImGui::BeginDisabled(!settings.EnableRainRefraction);
-			ImGui::SliderFloat(T(TKEY("scene_distortion_mix"), "Scene Distortion Mix"), &settings.RainSceneRefractionMix, 0.0f, 1.0f, "%.2f");
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("scene_distortion_mix_tooltip"), "Transmission taken from the distorted scene inside nearby drops. One gives scene distortion priority over cubemap transmission; Rain Opacity controls the drop's coverage."));
-			ImGui::SliderFloat(T(TKEY("refraction_distance"), "Glassy Detail Distance"), &settings.RainRefractionDistance, 256.0f, 6000.0f, "%.0f units");
-			ImGui::EndDisabled();
-			ImGui::EndDisabled();
-			ImGui::TreePop();
-		}
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx(T(TKEY("rain_curtains"), "Rain Curtains"))) {
-		ImGui::SliderFloat(T(TKEY("density_noise_scale"), "Density Noise Scale"), &settings.RainDensityNoiseScale, 256.0f, 16000.0f, "%.0f");
-		ImGui::SliderFloat(T(TKEY("density_noise_strength"), "Density Noise Strength"), &settings.RainDensityNoiseStrength, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("curtain_scale"), "Curtain Scale"), &settings.RainCurtainScale, 512.0f, 30000.0f, "%.0f");
-		ImGui::SliderFloat(T(TKEY("curtain_strength"), "Curtain Strength"), &settings.RainCurtainStrength, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("curtain_contrast"), "Curtain Contrast"), &settings.RainCurtainContrast, 0.25f, 4.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("curtain_min_density"), "Curtain Minimum Density"), &settings.RainCurtainMinDensity, 0.0f, 2.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("curtain_max_density"), "Curtain Maximum Density"), &settings.RainCurtainMaxDensity, 0.0f, 3.0f, "%.2f");
-		ImGui::TreePop();
-	}
-
-	if (ImGui::TreeNodeEx(T(TKEY("advanced_developer"), "Advanced & Developer"))) {
-		DrawFlagCheckbox(T(TKEY("roof_occlusion"), "Skylighting Roof Occlusion"), settings.EnableRainRoofOcclusion);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("roof_occlusion_tooltip"), "Uses a rain-specific solid-cover field to block rain beneath enclosing geometry without treating animated tree canopies as roofs. Toggle for GPU A/B profiling."));
-		if (!globals::features::skylighting.loaded)
-			ImGui::TextDisabled("%s", T(TKEY("roof_occlusion_unavailable"), "Skylighting is unavailable; roof occlusion falls back to scene depth only."));
-		ImGui::BeginDisabled(!settings.EnableRainRoofOcclusion);
-		if (ImGui::SliderFloat(T(TKEY("roof_occlusion_fade_start"), "Roof Fade Start"), &settings.RainRoofOcclusionFadeStart, 0.0f, 0.99f, "%.2f"))
-			NormalizeSettings();
-		ImGui::SliderFloat(T(TKEY("roof_occlusion_fade_end"), "Roof Fade End"), &settings.RainRoofOcclusionFadeEnd,
-			settings.RainRoofOcclusionFadeStart + 0.01f, 1.0f, "%.2f");
-		DrawFlagCheckbox(T(TKEY("canopy_response"), "Tree Canopy Response"), settings.EnableRainCanopyResponse);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("canopy_response_tooltip"), "Classifies animated tree cover separately from solid roofs. Canopies thin and shorten rain while buildings continue to block it."));
-		ImGui::BeginDisabled(!settings.EnableRainCanopyResponse);
-		ImGui::SliderFloat(T(TKEY("canopy_density"), "Canopy Rain Density"), &settings.RainCanopyDensityScale, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("canopy_speed"), "Canopy Fall Speed"), &settings.RainCanopySpeedScale, 0.5f, 1.0f, "%.2f");
-		ImGui::EndDisabled();
-		ImGui::EndDisabled();
-
-		const char* debugModes[] = {
-			T(TKEY("debug_off"), "Off"),
-			T(TKEY("debug_positions"), "Drop Positions"),
-			T(TKEY("debug_velocity"), "Drop Velocity"),
-			T(TKEY("debug_density"), "Density Field"),
-			T(TKEY("debug_curtains"), "Curtain Field"),
-			T(TKEY("debug_lod"), "Distance LOD"),
-			T(TKEY("debug_refraction"), "Actual Scene Distortion"),
-			T(TKEY("debug_lighting"), "Local Light Contribution"),
-			T(TKEY("debug_water_normals"), "Water Surface Normals")
-		};
-		int debugMode = static_cast<int>(settings.RainDebugMode);
-		if (ImGui::Combo(T(TKEY("debug_mode"), "Debug Visualization"), &debugMode, debugModes, static_cast<int>(std::size(debugModes))))
-			settings.RainDebugMode = static_cast<uint>(debugMode);
-		if (settings.RainDebugMode >= 6)
-			ImGui::TextWrapped("%s", T(TKEY("water_debug_help"), "Water diagnostics require Glassy Rain. Distortion: red = horizontal displacement, green = vertical; black = no effective distortion. Local Light Contribution excludes sunlight and cubemap reflections."));
-		ImGui::TreePop();
-	}
-	NormalizeSettings();
 }
 
 RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
@@ -1084,8 +657,9 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 	{
 		float intensity = 0.0f;
 		float gravity = kReferenceRainGravity;
+		float2 windSlope{};
 	};
-	const auto getWeatherSample = [](const RE::TESWeather* a_weather) {
+	const auto getWeatherSample = [](const RE::TESWeather* a_weather, const RE::BSGeometry* a_precipitation) {
 		WeatherSample sample{};
 		if (!a_weather || !a_weather->precipitationData)
 			return sample;
@@ -1105,10 +679,21 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 		                          .f;
 		if (std::isfinite(gravity) && gravity > 0.0f)
 			sample.gravity = gravity;
+		if (const auto* rainEmitter = GetRainEmitter(a_precipitation)) {
+			const auto& wind = rainEmitter->windVelocity;
+			const float verticalGravity = std::abs(rainEmitter->gravityVelocity.z);
+			if (std::isfinite(wind.x) && std::isfinite(wind.y) &&
+				std::isfinite(verticalGravity) && verticalGravity > 1.0f) {
+				sample.windSlope = { wind.x / verticalGravity, wind.y / verticalGravity };
+				const float slopeLength = sample.windSlope.Length();
+				if (slopeLength > 2.0f)
+					sample.windSlope *= 2.0f / slopeLength;
+			}
+		}
 		return sample;
 	};
 
-	const WeatherSample currentSample = getWeatherSample(sky->currentWeather);
+	const WeatherSample currentSample = getWeatherSample(sky->currentWeather, sky->precip->currentPrecip.get());
 	float currentIntensity = 0.0f;
 	if (sky->currentWeather && currentSample.intensity > 0.0f) {
 		const float fadeStart = sky->currentWeather->data.precipitationBeginFadeIn * (1.0f / 255.0f);
@@ -1116,7 +701,7 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 		                   LinearStep(fadeStart, 1.0f, sky->currentWeatherPct);
 	}
 
-	const WeatherSample previousSample = getWeatherSample(sky->lastWeather);
+	const WeatherSample previousSample = getWeatherSample(sky->lastWeather, sky->precip->lastPrecip.get());
 	float previousIntensity = 0.0f;
 	if (sky->lastWeather && previousSample.intensity > 0.0f) {
 		const float fadeEnd = sky->lastWeather->data.precipitationEndFadeOut * (1.0f / 255.0f);
@@ -1132,22 +717,31 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 		(currentSample.gravity * currentIntensity + previousSample.gravity * previousIntensity) /
 		combinedIntensity;
 	state.fallSpeedScale = std::clamp(blendedGravity / kReferenceRainGravity, 0.25f, 4.0f);
+	state.windSlope = (currentSample.windSlope * currentIntensity + previousSample.windSlope * previousIntensity) /
+	                  combinedIntensity;
 	return state;
 }
 
-float RainRendering::GetWeatherIntensity() const
+const RE::BSParticleShaderRainEmitter* RainRendering::GetRainEmitter(const RE::BSGeometry* a_precipitation)
 {
-	return GetWeatherRainState().intensity;
+	if (!a_precipitation)
+		return nullptr;
+
+	const auto* particleProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(
+		a_precipitation->GetGeometryRuntimeData().shaderProperty.get());
+	return particleProperty ?
+	           skyrim_cast<RE::BSParticleShaderRainEmitter*>(particleProperty->particleEmitter) :
+	           nullptr;
 }
 
-bool RainRendering::ReplacesVanillaRain(const RE::TESWeather* a_weather) const
+RainRendering::CommonBuffer RainRendering::GetCommonBufferData() const
 {
-	if (!loaded || !settings.EnableRainRendering || !a_weather || !a_weather->precipitationData)
-		return false;
-	const auto particleType = a_weather->precipitationData->GetSettingValue(
-															  RE::BGSShaderParticleGeometryData::DataID::kParticleType)
-	                              .i;
-	return particleType == static_cast<uint32_t>(RE::BGSShaderParticleGeometryData::ParticleType::kRain);
+	return { IsReplacingVanillaRain() ? 1u : 0u };
+}
+
+bool RainRendering::IsReplacingVanillaRain() const
+{
+	return loaded && settings.EnableRainRendering && renderPathReady;
 }
 
 float3 RainRendering::GetRainLightColor() const
@@ -1186,9 +780,9 @@ bool RainRendering::EnsureRainTexture()
 	rainTextureLoadAttempted = true;
 	ImVec2 dimensions{};
 	// The shared PNG loader preserves linear normal data and creates the mip chain once.
-	if (!Util::LoadTextureFromFile(globals::d3d::device, kRainTexturePath, rainTextureSRV.put(), dimensions) || !EnsureRainSampler()) {
+	if (!Util::LoadTextureFromFile(globals::d3d::device, settings.RainTexturePath.c_str(), rainTextureSRV.put(), dimensions) || !EnsureRainSampler()) {
 		rainTextureSRV = nullptr;
-		logger::warn("[RainRendering] Drop texture unavailable: {}; using procedural rain", kRainTexturePath);
+		logger::warn("[RainRendering] Drop texture unavailable: {}; using procedural rain", settings.RainTexturePath);
 		return false;
 	}
 	rainTextureSize = { dimensions.x, dimensions.y };
@@ -1196,7 +790,7 @@ bool RainRendering::EnsureRainTexture()
 	rainTextureSRV->GetResource(resource.put());
 	Util::SetResourceName(resource.get(), "RainRendering::DropNormalOpacity");
 	Util::SetResourceName(rainTextureSRV.get(), "RainRendering::DropNormalOpacity SRV");
-	logger::info("[RainRendering] Loaded drop normal/opacity texture: {} ({}x{})", kRainTexturePath, dimensions.x, dimensions.y);
+	logger::info("[RainRendering] Loaded drop normal/opacity texture: {} ({}x{})", settings.RainTexturePath, dimensions.x, dimensions.y);
 	return true;
 }
 
@@ -1353,30 +947,121 @@ void RainRendering::DownsampleSceneColor(
 
 void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2D_DESC& a_description, const float2& a_size, bool a_hasSceneColor) const
 {
-	const bool glassy = UsesWaterMaterial(settings);
+	const auto& defaults = GetDefaultSettings();
+	const bool glassy = UsesWaterMaterial();
 	a_data.Glassy = { glassy ? 1.0f : 0.0f,
-		ClampFinite(settings.RainCoreDarkening, 0.0f, 0.8f, 0.35f),
-		ClampFinite(settings.RainEdgeHighlight, 0.0f, 4.0f, 1.5f),
-		ClampFinite(settings.RainRefractionStrength, 0.0f, globals::game::isVR ? kMaximumVRRefractionPixels : kMaximumRefractionPixels, 2.68f) };
-	a_data.Refraction = { ClampFinite(settings.RainRefractionDistance, 256.0f, 6000.0f, 2400.0f),
+		ClampFinite(settings.RainCoreDarkening, kCoreDarkeningRange.minimum, kCoreDarkeningRange.maximum, defaults.RainCoreDarkening),
+		ClampFinite(settings.RainEdgeHighlight, kEdgeHighlightRange.minimum, kEdgeHighlightRange.maximum, defaults.RainEdgeHighlight),
+		ClampFinite(settings.RainRefractionStrength, kUnitRange.minimum, kMaximumRefractionPixels, defaults.RainRefractionStrength) };
+	a_data.Refraction = { ClampFinite(settings.RainRefractionDistance, kRefractionDistanceRange.minimum, kRefractionDistanceRange.maximum, defaults.RainRefractionDistance),
 		a_hasSceneColor ? 1.0f : 0.0f,
-		glassy ? ClampFinite(settings.RainStreakVariation, 0.0f, 1.0f, 0.45f) : 0.0f,
-		ClampFinite(settings.RainEnvironmentTransmission, 0.0f, 1.0f, 0.8f) };
+		glassy ? ClampFinite(settings.RainStreakVariation, kUnitRange.minimum, kUnitRange.maximum, defaults.RainStreakVariation) : 0.0f,
+		ClampFinite(settings.RainEnvironmentTransmission, kUnitRange.minimum, kUnitRange.maximum, defaults.RainEnvironmentTransmission) };
 	a_data.ScreenSize = { a_size.x, a_size.y, 1.0f / a_description.Width, 1.0f / a_description.Height };
 	a_data.TexturedRain = { glassy && settings.EnableTexturedRain && rainTextureSRV ? 1.0f : 0.0f,
-		ClampFinite(settings.RainTextureNormalStrength, 0.0f, 2.0f, 2.0f),
-		ClampFinite(settings.RainTextureReflectionStrength, 0.0f, 2.0f, 1.0f), refractionSampler && GetRainEnvironment() ? 1.0f : 0.0f };
+		ClampFinite(settings.RainTextureNormalStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainTextureNormalStrength),
+		ClampFinite(settings.RainTextureReflectionStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainTextureReflectionStrength), refractionSampler && GetRainEnvironment() ? 1.0f : 0.0f };
 	a_data.RainTextureShape = { rainTextureSize.x, rainTextureSize.y,
-		ClampFinite(settings.RainTextureUVWidth, 0.1f, 1.0f, 1.0f), 0.0f };
-	a_data.MaterialLighting = { ClampFinite(settings.RainHighlightRoughness, 0.08f, 0.6f, 0.18f),
-		ClampFinite(settings.RainLightScattering, 0.0f, 1.0f, 0.25f),
-		ClampFinite(settings.RainSceneRefractionMix, 0.0f, 1.0f, 1.0f), 0.0f };
+		ClampFinite(settings.RainTextureUVWidth, kTextureUVWidthRange.minimum, kTextureUVWidthRange.maximum, defaults.RainTextureUVWidth), 0.0f };
+	a_data.MaterialLighting = { ClampFinite(settings.RainHighlightRoughness, kHighlightRoughnessRange.minimum, kHighlightRoughnessRange.maximum, defaults.RainHighlightRoughness),
+		ClampFinite(settings.RainLightScattering, kUnitRange.minimum, kUnitRange.maximum, defaults.RainLightScattering),
+		ClampFinite(settings.RainSceneRefractionMix, kUnitRange.minimum, kUnitRange.maximum, defaults.RainSceneRefractionMix), 0.0f };
 	const auto& lightLimitFix = globals::features::lightLimitFix;
 	if (glassy && lightLimitFix.loaded && lightLimitFix.lights && lightLimitFix.lightGrid && lightLimitFix.lightIndexList) {
-		a_data.LocalLighting = { ClampFinite(settings.RainLocalLightResponse, 0.0f, 2.0f, 0.6f),
+		a_data.LocalLighting = { ClampFinite(settings.RainLocalLightResponse, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainLocalLightResponse),
 			a_data.Refraction.x, std::max(lightLimitFix.lightsNear, 0.1f), std::max(lightLimitFix.lightsFar, lightLimitFix.lightsNear + 1.0f) };
 		a_data.LightGrid = { lightLimitFix.clusterSize[0], lightLimitFix.clusterSize[1], lightLimitFix.clusterSize[2], lightLimitFix.lightCount };
 	}
+}
+
+RainRendering::PerFrame RainRendering::BuildPerFrameData(
+	const WeatherRainState& a_weather,
+	const D3D11_TEXTURE2D_DESC& a_description,
+	const float2& a_size,
+	bool a_hasSceneColor) const
+{
+	const auto& defaults = GetDefaultSettings();
+	const float farDistance = ClampFinite(settings.RainFarDistance, kRuntimeFarDistanceRange.minimum, kRuntimeFarDistanceRange.maximum, defaults.RainFarDistance);
+	const auto head = Util::GetAverageEyePosition();
+	const auto lightColor = GetRainLightColor();
+
+	PerFrame data{};
+	data.HeadPositionAndTime = { head.x, head.y, head.z, globals::state->timer };
+	data.VolumeSizeAndDensity = {
+		farDistance * 2.0f,
+		farDistance * 2.0f,
+		farDistance * 2.0f,
+		ClampFinite(settings.RainDensity, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainDensity)
+	};
+	data.WeatherFallDepth = {
+		a_weather.intensity,
+		ClampFinite(settings.RainFallSpeed, kRuntimeFallSpeedRange.minimum, kRuntimeFallSpeedRange.maximum, defaults.RainFallSpeed) * a_weather.fallSpeedScale,
+		0.0f,
+		ClampFinite(settings.RainIntersectionFadeDistance, kRuntimeIntersectionFadeRange.minimum, kRuntimeIntersectionFadeRange.maximum, defaults.RainIntersectionFadeDistance)
+	};
+	data.Streak = {
+		ClampFinite(settings.RainStreakLength, kRuntimeStreakLengthRange.minimum, kRuntimeStreakLengthRange.maximum, defaults.RainStreakLength),
+		ClampFinite(settings.RainVelocityStretch, kUnitRange.minimum, kUnitRange.maximum, defaults.RainVelocityStretch),
+		ClampFinite(settings.RainStreakWidth, kRuntimeStreakWidthRange.minimum, kRuntimeStreakWidthRange.maximum, defaults.RainStreakWidth),
+		ClampFinite(settings.RainOpacity, kUnitRange.minimum, kUnitRange.maximum, defaults.RainOpacity)
+	};
+	data.Appearance = {
+		ClampFinite(settings.RainBrightness, kRuntimeBrightnessRange.minimum, kRuntimeBrightnessRange.maximum, defaults.RainBrightness),
+		ClampFinite(settings.RainLightingResponse, kUnitRange.minimum, kUnitRange.maximum, defaults.RainLightingResponse),
+		ClampFinite(settings.RainMinimumVisibility, kUnitRange.minimum, kUnitRange.maximum, defaults.RainMinimumVisibility),
+		ClampFinite(settings.RainNearCutoffDistance, kNearCutoffDistanceRange.minimum, kNearCutoffDistanceRange.maximum, defaults.RainNearCutoffDistance)
+	};
+	data.DistanceNoise = {
+		farDistance,
+		ClampFinite(settings.RainDensityNoiseScale, kRuntimeDensityNoiseScaleRange.minimum, kRuntimeDensityNoiseScaleRange.maximum, defaults.RainDensityNoiseScale),
+		ClampFinite(settings.RainDensityNoiseStrength, kUnitRange.minimum, kUnitRange.maximum, defaults.RainDensityNoiseStrength),
+		0.0f
+	};
+	data.Curtain = {
+		ClampFinite(settings.RainCurtainScale, kRuntimeCurtainScaleRange.minimum, kRuntimeCurtainScaleRange.maximum, defaults.RainCurtainScale),
+		ClampFinite(settings.RainCurtainStrength, kUnitRange.minimum, kUnitRange.maximum, defaults.RainCurtainStrength),
+		ClampFinite(settings.RainCurtainContrast, kRuntimeCurtainContrastRange.minimum, kRuntimeCurtainContrastRange.maximum, defaults.RainCurtainContrast),
+		0.0f
+	};
+	data.CurtainDensity = {
+		ClampFinite(settings.RainCurtainMinDensity, kRuntimeCurtainDensityRange.minimum, kRuntimeCurtainDensityRange.maximum, defaults.RainCurtainMinDensity),
+		ClampFinite(settings.RainCurtainMaxDensity, kRuntimeCurtainDensityRange.minimum, kRuntimeCurtainDensityRange.maximum, defaults.RainCurtainMaxDensity),
+		0.0f,
+		0.0f
+	};
+	data.LightColor = { lightColor.x, lightColor.y, lightColor.z, 0.0f };
+	data.CameraData = Util::GetCameraData();
+	data.GridAndDebug = {
+		kGridWidth,
+		kGridDepth,
+		kGridHeight,
+		std::min<uint>(settings.RainDebugMode, kMaximumDebugMode)
+	};
+	data.LayerRadii = GetLayerRadii(farDistance);
+	data.LayerCounts = GetLayerDropCounts();
+	const bool hasRoofOcclusion = CanUseRoofOcclusion();
+	const float roofFadeStart = ClampFinite(
+		settings.RainRoofOcclusionFadeStart, kRoofFadeStartRange.minimum, kRoofFadeStartRange.maximum, defaults.RainRoofOcclusionFadeStart);
+	const float roofFadeEnd = std::max(
+		ClampFinite(settings.RainRoofOcclusionFadeEnd, kUnitRange.minimum, kUnitRange.maximum, defaults.RainRoofOcclusionFadeEnd),
+		roofFadeStart + 0.01f);
+	const uint32_t overheadDropCount = std::min(settings.RainOverheadDropCount, data.LayerCounts[0]);
+	data.RoofOcclusion = {
+		hasRoofOcclusion ? 1.0f : 0.0f,
+		roofFadeStart,
+		roofFadeEnd,
+		static_cast<float>(overheadDropCount)
+	};
+	data.VanillaWind = {
+		a_weather.windSlope.x,
+		a_weather.windSlope.y,
+		settings.EnableRainWind ?
+			ClampFinite(settings.RainWindInfluence, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainWindInfluence) :
+			0.0f,
+		0.0f
+	};
+	UpdateGlassyConstants(data, a_description, a_size, a_hasSceneColor);
+	return data;
 }
 
 void RainRendering::DrawBeforeWater()
@@ -1433,102 +1118,20 @@ void RainRendering::DrawRain()
 	}
 	renderPathReady = true;
 	lastDrawFrame = frame;
-	const bool drawDistantRain = settings.EnableDistantRain && settings.RainDebugMode == 0 &&
-	                             EnsureDistantRainShaders();
 
 	CS_GPU_PASS("RainRendering::AirborneRain");
-	if (UsesWaterMaterial(settings)) {
+	if (UsesWaterMaterial()) {
 		EnsureRainSampler();
 		if (settings.EnableTexturedRain)
 			EnsureRainTexture();
 	}
-	const bool hasSceneColor = mainTarget.SRV && UsesWaterMaterial(settings) && settings.EnableRainRefraction &&
+	const bool hasSceneColor = mainTarget.SRV && UsesWaterMaterial() && settings.EnableRainRefraction &&
 	                           settings.RainSceneRefractionMix > 0.0f && settings.RainRefractionStrength > 0.0f &&
 	                           EnsureSceneColorCopy(mainTarget.texture, mainTarget.RTV);
 
-	const float farDistance = ClampFinite(settings.RainFarDistance, 1000.0f, 50000.0f, 12000.0f);
-	const auto head = Util::GetAverageEyePosition();
-	const auto lightColor = GetRainLightColor();
-
-	PerFrame data{};
-	data.HeadPositionAndTime = { head.x, head.y, head.z, globals::state->timer };
-	data.VolumeSizeAndDensity = {
-		farDistance * 2.0f,
-		farDistance * 2.0f,
-		farDistance * 2.0f,
-		ClampFinite(settings.RainDensity, 0.0f, 2.0f, 0.72f)
-	};
-	data.WeatherFallDepth = {
-		weather.intensity,
-		ClampFinite(settings.RainFallSpeed, 100.0f, 10000.0f, 2600.0f) * weather.fallSpeedScale,
-		0.0f,
-		ClampFinite(settings.RainIntersectionFadeDistance, 1.0f, 1000.0f, 96.0f)
-	};
-	data.Streak = {
-		ClampFinite(settings.RainStreakLength, 1.0f, 1000.0f, 80.0f),
-		ClampFinite(settings.RainVelocityStretch, 0.0f, 1.0f, 0.075f),
-		ClampFinite(settings.RainStreakWidth, 0.05f, 20.0f, 5.18f),
-		ClampFinite(settings.RainOpacity, 0.0f, 1.0f, 0.48f)
-	};
-	data.Appearance = {
-		ClampFinite(settings.RainBrightness, 0.0f, 8.0f, 1.15f),
-		ClampFinite(settings.RainLightingResponse, 0.0f, 1.0f, 0.50f),
-		ClampFinite(settings.RainMinimumVisibility, 0.0f, 1.0f, 0.01f),
-		ClampFinite(settings.RainNearCutoffDistance, 0.0f, 64.0f, 4.0f)
-	};
-	data.DistanceNoise = {
-		farDistance,
-		ClampFinite(settings.RainDensityNoiseScale, 64.0f, 50000.0f, 3200.0f),
-		ClampFinite(settings.RainDensityNoiseStrength, 0.0f, 1.0f, 0.65f),
-		0.0f
-	};
-	data.Curtain = {
-		ClampFinite(settings.RainCurtainScale, 64.0f, 80000.0f, 7500.0f),
-		ClampFinite(settings.RainCurtainStrength, 0.0f, 1.0f, 0.80f),
-		ClampFinite(settings.RainCurtainContrast, 0.1f, 8.0f, 1.75f),
-		0.0f
-	};
-	data.CurtainDensity = {
-		ClampFinite(settings.RainCurtainMinDensity, 0.0f, 4.0f, 0.28f),
-		ClampFinite(settings.RainCurtainMaxDensity, 0.0f, 4.0f, 1.85f),
-		0.0f,
-		0.0f
-	};
-	data.LightColor = { lightColor.x, lightColor.y, lightColor.z, 0.0f };
-	data.CameraData = Util::GetCameraData();
-	data.GridAndDebug = {
-		kGridWidth,
-		kGridDepth,
-		kGridHeight,
-		std::min<uint>(settings.RainDebugMode, 8u)
-	};
-	data.LayerRadii = GetLayerRadii(farDistance);
-	data.LayerCounts = GetLayerDropCounts();
+	PerFrame data = BuildPerFrameData(weather, mainDescription, dynamicSize, hasSceneColor);
 	const auto& skylighting = globals::features::skylighting;
-	const bool hasRoofOcclusion = settings.EnableRainRoofOcclusion && skylighting.loaded &&
-	                              skylighting.texProbeArray && skylighting.texProbeArray->srv.get();
-	const bool hasCanopyClassification = settings.EnableRainCanopyResponse && hasRoofOcclusion &&
-	                                     skylighting.texOcclusion && skylighting.texOcclusion->srv.get() &&
-	                                     skylighting.comparisonSampler && canopyOcclusionCS && solidCoverOcclusion &&
-	                                     canopyClassification && canopyAccumulation;
-	const float roofFadeStart = ClampFinite(settings.RainRoofOcclusionFadeStart, 0.0f, 0.99f, 0.20f);
-	const float roofFadeEnd = std::max(
-		ClampFinite(settings.RainRoofOcclusionFadeEnd, 0.0f, 1.0f, 0.75f), roofFadeStart + 0.01f);
-	const uint32_t overheadDropCount = std::min(settings.RainOverheadDropCount, data.LayerCounts[0]);
-	data.RoofOcclusion = { hasRoofOcclusion ? 1.0f : 0.0f, roofFadeStart, roofFadeEnd, static_cast<float>(overheadDropCount) };
-	data.DistantRain = {
-		ClampFinite(settings.RainDistantDensity, 0.0f, 2.0f, 1.0f),
-		ClampFinite(settings.RainDistantOpacity, 0.0f, 1.0f, 0.55f),
-		ClampFinite(settings.RainDistantStreakLength, 4.0f, 256.0f, 64.0f),
-		ClampFinite(settings.RainDistantStreakWidth, 0.2f, 8.0f, 3.0f)
-	};
-	data.Canopy = {
-		hasCanopyClassification ? 1.0f : 0.0f,
-		ClampFinite(settings.RainCanopyDensityScale, 0.0f, 1.0f, 0.35f),
-		ClampFinite(settings.RainCanopySpeedScale, 0.5f, 1.0f, 0.85f),
-		0.0f
-	};
-	UpdateGlassyConstants(data, mainDescription, dynamicSize, hasSceneColor);
+	const bool hasRoofOcclusion = data.RoofOcclusion.x > 0.5f;
 	perFrameCB->Update(data);
 
 	const uint32_t dropCount = data.LayerCounts[3];
@@ -1538,8 +1141,6 @@ void RainRendering::DrawRain()
 	{
 		CS_GPU_PASS("RainRendering::UpdateDrops");
 		RainComputeState savedComputeState(context);
-		if (hasCanopyClassification)
-			UpdateCanopyOcclusion(context, sharedBuffer, frameBuffer);
 		context->CSSetShader(rainUpdateCS.get(), nullptr, 0);
 		context->CSSetConstantBuffers(0, 1, &rainBuffer);
 		context->CSSetConstantBuffers(5, 1, &sharedBuffer);
@@ -1556,12 +1157,6 @@ void RainRendering::DrawRain()
 		if (hasRoofOcclusion)
 			computeResources[3] = skylighting.texProbeArray->srv.get();
 		context->CSSetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
-		ID3D11ShaderResourceView* canopyResources[] = {
-			hasCanopyClassification ? canopyClassification->srv.get() : nullptr,
-			hasCanopyClassification ? canopyAccumulation->srv.get() : nullptr
-		};
-		context->CSSetShaderResources(41, static_cast<UINT>(std::size(canopyResources)), canopyResources);
-
 		std::array<ID3D11UnorderedAccessView*, 5> computeUAVs{};
 		computeUAVs[0] = dropBuffer->UAV();
 		context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
@@ -1636,14 +1231,4 @@ void RainRendering::DrawRain()
 	context->PSSetSamplers(0, 1, &sampler);
 
 	context->DrawInstancedIndirect(indirectDrawArgsBuffer->resource.get(), 0);
-	if (drawDistantRain)
-		DrawDistantRain(context, settings.RainDistantDropCount, globals::game::isVR ? 2u : 1u);
-}
-
-void RainRendering::DrawDistantRain(ID3D11DeviceContext* a_context, uint32_t a_dropCount, uint32_t a_eyeCount)
-{
-	CS_GPU_PASS("RainRendering::DistantRain");
-	a_context->VSSetShader(distantRainVS.get(), nullptr, 0);
-	a_context->PSSetShader(distantRainPS.get(), nullptr, 0);
-	a_context->DrawInstanced(6, a_dropCount * a_eyeCount, 0, 0);
 }

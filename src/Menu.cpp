@@ -1174,7 +1174,19 @@ void Menu::ProcessInputEventQueue()
 					std::function<void()> action;
 				};
 				auto shaderCache = globals::shaderCache;
+				auto* editorWindow = EditorWindow::GetSingleton();
 				KeyAction keyActions[] = {
+					{ editorWindow && editorWindow->IsInPreviewMode() ? settings.ToggleKey : settings.CSEditorToggleKey, [editorWindow]() {
+						 if (!editorWindow)
+							 return;
+						 if (editorWindow->GetPreviewMode() == EditorWindow::PreviewMode::FreeCamera) {
+							 editorWindow->ToggleFreeCameraLock();
+						 } else if (editorWindow->IsInPreviewMode()) {
+							 editorWindow->ExitPreviewMode();
+						 } else {
+							 CSEditor::ToggleEditorWindow();
+						 }
+					 } },
 					{ settings.ToggleKey, [this]() {
 						 if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
 							 IsEnabled = !IsEnabled;
@@ -1187,20 +1199,6 @@ void Menu::ProcessInputEventQueue()
 					{ settings.ShaderBlockPrevKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(); } },
 					{ settings.ShaderBlockNextKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(false); } },
 					{ settings.OverlayToggleKey, []() { Menu::GetSingleton()->overlayVisible = !Menu::GetSingleton()->overlayVisible; } },
-					{ settings.CSEditorToggleKey, []() {
-						 auto* ew = EditorWindow::GetSingleton();
-						 if (!ew)
-							 return;
-						 if (ew->GetPreviewMode() == EditorWindow::PreviewMode::FreeCamera) {
-							 // Flying → lock camera position for editing
-							 ew->ToggleFreeCameraLock();
-						 } else if (ew->IsInPreviewMode()) {
-							 // Locked or PlayMode → fully exit preview
-							 ew->ExitPreviewMode();
-						 } else {
-							 CSEditor::ToggleEditorWindow();
-						 }
-					 } },
 					{ settings.ScreenshotKey, []() {
 						 if (globals::features::screenshotFeature.loaded)
 							 globals::features::screenshotFeature.captureRequested = true;

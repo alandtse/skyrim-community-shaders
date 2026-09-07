@@ -1235,7 +1235,7 @@ void EditorWindow::RenderUI()
 		char previewStatusBuf[128] = {};
 		bool showPreviewStatus = previewMode != PreviewMode::None;
 		if (showPreviewStatus) {
-			std::string hotkey = Util::Input::KeyIdToString(menu->GetSettings().CSEditorToggleKey);
+			std::string hotkey = Util::Input::KeyIdToString(menu->GetSettings().ToggleKey);
 			if (previewMode == PreviewMode::FreeCamera)
 				std::snprintf(previewStatusBuf, sizeof(previewStatusBuf), T(TKEY("preview_free_camera"), " [ %s ] FREE CAMERA (Speed: %.0f)"), hotkey.c_str(), flySpeed);
 			else if (previewMode == PreviewMode::FreeCameraLocked)

@@ -75,15 +75,11 @@ namespace ExponentialHeightFog
 		return (sliceExp - gridZParams.y) / max(gridZParams.x, 1e-20f);
 	}
 
-	float ComputeVolumetricNormalizedSlice(float viewDepth, float gridSizeZ, float3 gridZParams)
-	{
-		gridSizeZ = clamp(gridSizeZ, 16.0f, 160.0f);
-		return log2(max(viewDepth * gridZParams.x + gridZParams.y, 1e-6f)) * gridZParams.z / gridSizeZ;
-	}
-
 	float ComputeVolumetricNormalizedSlice(float viewDepth, float gridSizeZ)
 	{
-		return ComputeVolumetricNormalizedSlice(viewDepth, gridSizeZ, GetVolumetricGridZParams(gridSizeZ));
+		gridSizeZ = clamp(gridSizeZ, 16.0f, 160.0f);
+		float3 gridZParams = GetVolumetricGridZParams(gridSizeZ);
+		return log2(max(viewDepth * gridZParams.x + gridZParams.y, 1e-6f)) * gridZParams.z / gridSizeZ;
 	}
 
 	float ComputeVolumetricNormalizedSlice(float viewDepth)

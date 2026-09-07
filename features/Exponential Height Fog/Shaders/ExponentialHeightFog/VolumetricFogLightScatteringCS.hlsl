@@ -91,9 +91,7 @@ float3 ComputeHistoryVolumeUVAndDepth(float3 positionWS, uint eyeIndex, out bool
 	historyUV = Stereo::ConvertToStereoUV(historyUV, eyeIndex);
 #endif
 
-	// History belongs to the slice distribution saved with the previous volume.
-	float historyZ = ExponentialHeightFog::ComputeVolumetricNormalizedSlice(
-		previousViewDepth, float(VolumetricFogGridSize.z), VolumetricFogPreviousGridZParams.xyz);
+	float historyZ = ExponentialHeightFog::ComputeVolumetricNormalizedSlice(previousViewDepth);
 	float3 volumeUV = float3(historyUV, historyZ);
 	validHistory = !any(volumeUV < 0.0f) && !any(volumeUV >= 1.0f);
 	return saturate(volumeUV);

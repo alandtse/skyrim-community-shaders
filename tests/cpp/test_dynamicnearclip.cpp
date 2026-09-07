@@ -1,28 +1,8 @@
 #include "Features/VR/NearClipController.h"
-#include "Features/VR/NearClipIgnoredModels.h"
 #include "Features/VR/NearClipProjection.h"
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
-#include <string>
-
-TEST_CASE("VR near clip excludes exact fog NIF basenames across model directories", "[vr][nearclip]")
-{
-	using VRNearClipMeshes::MatchesNormalizedPath;
-	REQUIRE(VRNearClipMeshes::kIgnoredNames.size() == 314);
-	for (const auto name : VRNearClipMeshes::kIgnoredNames) {
-		REQUIRE(MatchesNormalizedPath(name));
-		REQUIRE(MatchesNormalizedPath("meshes/effects/" + std::string(name)));
-		REQUIRE(MatchesNormalizedPath("meshes/modded/fog/" + std::string(name)));
-		REQUIRE_FALSE(MatchesNormalizedPath("other_" + std::string(name)));
-		REQUIRE_FALSE(MatchesNormalizedPath(std::string(name) + ".bak"));
-	}
-	REQUIRE_FALSE(MatchesNormalizedPath(""));
-	REQUIRE_FALSE(MatchesNormalizedPath("meshes/effects/"));
-	REQUIRE_FALSE(MatchesNormalizedPath("meshes/clutter/skull01.nif"));
-	REQUIRE_FALSE(MatchesNormalizedPath("meshes/effects/fxmistlow03.nif"));
-	REQUIRE_FALSE(MatchesNormalizedPath("meshes/fxmistlow01.nif/wall.nif"));
-}
 
 TEST_CASE("VR near extraction handles small near planes and explicit matrix layouts", "[vr][nearclip]")
 {

@@ -140,20 +140,6 @@ public:
 	 */
 	struct Settings : VRNearClipSettings
 	{
-		bool FogClearance = true;                               ///< Hide listed fog geometry inside the headset clearance radius.
-		float FogClearanceRadius = 4.0f;                        ///< Radius in Skyrim units, shared by both eyes.
-		bool ReplaceCameraFogWithVolume = true;                 ///< Replace camera-attached fog planes with local volumetric density.
-		bool ForceLocalFog = false;                             ///< Keep local volumetric fog active without a camera fog trigger.
-		bool DisableAllFogMeshes = false;                       ///< Skip all recognized fog mesh draws on the CPU.
-		float LocalFogRadius = 768.0f;                          ///< Radius of the player-centered local fog field in Skyrim units.
-		float LocalFogDensity = 0.0015f;                        ///< Extinction per Skyrim unit at full local density.
-		float LocalFogHeightScale = 0.5f;                       ///< Vertical radius relative to the horizontal radius.
-		float LocalFogNoiseScale = 0.006f;                      ///< World-space noise frequency in inverse Skyrim units.
-		float LocalFogNoiseAmount = 0.65f;                      ///< Fraction of density shaped by procedural noise.
-		float LocalFogDriftSpeed = 12.0f;                       ///< World-space noise drift in Skyrim units per second.
-		float LocalFogFadeOutSpeed = 1.5f;                      ///< Linear fade-out rate after the camera fog effect disappears.
-		float4 LocalFogColor = { 0.85f, 0.88f, 0.92f, 0.18f };  ///< RGB scattering tint and ambient strength.
-
 		// Performance optimization settings
 		bool EnableDepthBufferCullingExterior = true;  ///< Enable depth buffer culling for VR performance
 		bool EnableDepthBufferCullingInterior = true;
@@ -195,18 +181,6 @@ public:
 		void ClampToValidRanges()
 		{
 			ClampNearClipSettings();
-			FogClearanceRadius = std::clamp(std::isfinite(FogClearanceRadius) ? FogClearanceRadius : 4.0f, 0.1f, 32.0f);
-			LocalFogRadius = std::clamp(std::isfinite(LocalFogRadius) ? LocalFogRadius : 768.0f, 64.0f, 4096.0f);
-			LocalFogDensity = std::clamp(std::isfinite(LocalFogDensity) ? LocalFogDensity : 0.0015f, 0.00001f, 0.02f);
-			LocalFogHeightScale = std::clamp(std::isfinite(LocalFogHeightScale) ? LocalFogHeightScale : 0.5f, 0.1f, 2.0f);
-			LocalFogNoiseScale = std::clamp(std::isfinite(LocalFogNoiseScale) ? LocalFogNoiseScale : 0.006f, 0.0001f, 0.05f);
-			LocalFogNoiseAmount = std::clamp(std::isfinite(LocalFogNoiseAmount) ? LocalFogNoiseAmount : 0.65f, 0.0f, 1.0f);
-			LocalFogDriftSpeed = std::clamp(std::isfinite(LocalFogDriftSpeed) ? LocalFogDriftSpeed : 12.0f, 0.0f, 100.0f);
-			LocalFogFadeOutSpeed = std::clamp(std::isfinite(LocalFogFadeOutSpeed) ? LocalFogFadeOutSpeed : 1.5f, 0.1f, 10.0f);
-			LocalFogColor.x = std::clamp(std::isfinite(LocalFogColor.x) ? LocalFogColor.x : 0.85f, 0.0f, 1.0f);
-			LocalFogColor.y = std::clamp(std::isfinite(LocalFogColor.y) ? LocalFogColor.y : 0.88f, 0.0f, 1.0f);
-			LocalFogColor.z = std::clamp(std::isfinite(LocalFogColor.z) ? LocalFogColor.z : 0.92f, 0.0f, 1.0f);
-			LocalFogColor.w = std::clamp(std::isfinite(LocalFogColor.w) ? LocalFogColor.w : 0.18f, 0.0f, 2.0f);
 			mouseDeadzone = std::clamp(mouseDeadzone, 0.0f, 1.0f);
 			StereoBlendDepthSigma = std::clamp(StereoBlendDepthSigma, 0.001f, 0.1f);
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);

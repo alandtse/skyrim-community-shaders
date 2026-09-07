@@ -21,7 +21,7 @@ struct VRNearClipSettings
 		};
 		NormalNearClip = clamp(NormalNearClip, 5.0f, 0.1f, 30.0f);
 		MinimumNearClip = clamp(MinimumNearClip, 0.1f, 0.01f, NormalNearClip);
-		NearDistanceScale = clamp(NearDistanceScale, 0.25f, 0.05f, 0.5f);
+		NearDistanceScale = clamp(NearDistanceScale, 0.25f, 0.05f, 1.0f);
 		RestoreSpeed = clamp(RestoreSpeed, 0.3f, 0.01f, 10.0f);
 	}
 };
@@ -34,10 +34,10 @@ struct VRNearClipController
 	float current = 0.1f;
 	float releaseDelay = kReleaseDelay;
 
-	/** @brief Start conservatively while waiting for geometry visible at the minimum plane. */
+	/** @brief Start at the normal plane; the first valid depth sample can lower it immediately. */
 	void Reset(const VRNearClipSettings& settings)
 	{
-		current = settings.MinimumNearClip;
+		current = settings.NormalNearClip;
 		releaseDelay = kReleaseDelay;
 	}
 

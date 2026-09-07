@@ -22,7 +22,6 @@
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
-#include "Features/VR/NearClipMeshExclusions.h"
 #include "Features/VolumetricLighting.h"
 
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
@@ -1066,14 +1065,7 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
-		if (VRNearClipMeshes::ShouldSkipFogMesh(a_pass))
-			return;
-		if (globals::game::isVR && globals::features::vr.dynamicNearClip.DeferIgnoredDepth(a_pass, a_technique, a_alphaTest, a_renderFlags, func.get()))
-			return;
-
-		VRNearClipMeshes::UpdateFogClearance(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
-		VRNearClipMeshes::UpdateFogClearance(nullptr);
 	}
 
 	void BSBatchRenderer_RenderPassImmediately2::thunk(
@@ -1084,14 +1076,7 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
-		if (VRNearClipMeshes::ShouldSkipFogMesh(a_pass))
-			return;
-		if (globals::game::isVR && globals::features::vr.dynamicNearClip.DeferIgnoredDepth(a_pass, a_technique, a_alphaTest, a_renderFlags, func.get()))
-			return;
-
-		VRNearClipMeshes::UpdateFogClearance(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
-		VRNearClipMeshes::UpdateFogClearance(nullptr);
 	}
 
 	void BSBatchRenderer_RenderPassImmediately3::thunk(
@@ -1102,14 +1087,7 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
-		if (VRNearClipMeshes::ShouldSkipFogMesh(a_pass))
-			return;
-		if (globals::game::isVR && globals::features::vr.dynamicNearClip.DeferIgnoredDepth(a_pass, a_technique, a_alphaTest, a_renderFlags, func.get()))
-			return;
-
-		VRNearClipMeshes::UpdateFogClearance(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
-		VRNearClipMeshes::UpdateFogClearance(nullptr);
 	}
 
 	void Sky_UpdateColors::thunk(RE::Sky* sky, float a_delta)

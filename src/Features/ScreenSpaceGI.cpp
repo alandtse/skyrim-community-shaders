@@ -463,7 +463,7 @@ void ScreenSpaceGI::SaveSettings(json& o_json)
 RE::BSEventNotifyControl ScreenSpaceGI::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
 {
 	if (a_event->menuName == RE::LoadingMenu::MENU_NAME && !a_event->opening)
-		globals::features::screenSpaceGI.queuedResetHistory = true;
+		globals::features::screenSpaceGI.QueueHistoryReset();
 
 	return RE::BSEventNotifyControl::kContinue;
 }

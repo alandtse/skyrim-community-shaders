@@ -4,7 +4,6 @@
 #include "Common/Color.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
-#include "ExponentialHeightFog/VRLocalFog.hlsli"
 #include "ExponentialHeightFog/VolumetricFogCommon.hlsli"
 
 #if defined(DYNAMIC_CUBEMAPS)
@@ -162,27 +161,12 @@ namespace ExponentialHeightFog
 		return float4(combinedOpacity > 1e-4f ? combinedPremultiplied / combinedOpacity : float3(0.0f, 0.0f, 0.0f), combinedOpacity);
 	}
 
-	float4 CombineVRLocalWorldFog(float4 backgroundFog, float3 positionWS, uint eyeIndex)
-	{
-		float4 localFog = SampleVRLocalWorldFog(positionWS, eyeIndex);
-		float backgroundTransmittance = 1.0f - backgroundFog.w;
-		float combinedTransmittance = localFog.a * backgroundTransmittance;
-		float combinedOpacity = saturate(1.0f - combinedTransmittance);
-		float3 combinedPremultiplied = localFog.rgb + localFog.a * backgroundFog.rgb * backgroundFog.w;
-		return float4(combinedOpacity > 1e-4f ? combinedPremultiplied / combinedOpacity : 0.0f.xxx, combinedOpacity);
-	}
-
 	float4 GetExponentialHeightFogInternal(float3 positionWS, float3 cameraWS, float3 fogColor, bool useScreenPosition, float4 screenPosition, bool applyVolumetricFog)
 	{
 		float fogHeightFalloff = SharedData::exponentialHeightFogSettings.fogHeightFalloff * 0.001f;
 		float fogDensity = SharedData::exponentialHeightFogSettings.fogDensity * 0.001f;
 		if (fogDensity <= 0.0f) {
-			if (!applyVolumetricFog || (!ShouldApplyVolumetricFog() && !ShouldApplyVRLocalFog()))
-				return 0.0f;
-			float4 emptyAnalyticalFog = 0.0f.xxxx;
-			uint eyeIndex = GetEyeIndexFromCameraWS(cameraWS);
-			float4 backgroundFog = useScreenPosition ? CombineVolumetricFog(emptyAnalyticalFog, screenPosition) : CombineVolumetricFog(emptyAnalyticalFog, positionWS, eyeIndex);
-			return CombineVRLocalWorldFog(backgroundFog, positionWS, eyeIndex);
+			return 0.0f;
 		}
 		uint eyeIndex = GetEyeIndexFromCameraWS(cameraWS);
 		float3 viewToPos = positionWS;
@@ -257,8 +241,7 @@ namespace ExponentialHeightFog
 		if (!applyVolumetricFog) {
 			return analyticalFog;
 		}
-		float4 backgroundFog = useScreenPosition ? CombineVolumetricFog(analyticalFog, screenPosition) : CombineVolumetricFog(analyticalFog, positionWS, eyeIndex);
-		return CombineVRLocalWorldFog(backgroundFog, positionWS, eyeIndex);
+		return useScreenPosition ? CombineVolumetricFog(analyticalFog, screenPosition) : CombineVolumetricFog(analyticalFog, positionWS, eyeIndex);
 	}
 
 	float4 GetExponentialHeightFog(float3 positionWS, float3 cameraWS, float3 fogColor)

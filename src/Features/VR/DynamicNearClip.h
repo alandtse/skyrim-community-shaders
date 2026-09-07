@@ -19,16 +19,12 @@ public:
 	void ClearShaderCache();
 	/** @brief Set the source frustums before Skyrim rebuilds projections and culling data. */
 	void BeforeCameraUpdate();
-	/** @brief Sample solid prepass depth before excluded fog draws, or completed opaque depth. */
+	/** @brief Sample the existing world depth prepass or completed opaque depth. */
 	void CaptureDepth(const RE::NiCamera* camera, ID3D11ShaderResourceView* prepassDepth = nullptr, ID3D11ShaderResourceView* terrainDepth = nullptr);
-	/** @brief Begin collecting excluded draws within the existing world depth prepass. */
+	/** @brief Begin sampling within the existing world depth prepass. */
 	void BeginWorldDepth();
-	/** @brief Probe solid depth, then issue each postponed fog depth draw exactly once. */
+	/** @brief Finish the world depth prepass and submit its probe. */
 	void FinishWorldDepth();
-	/** @brief Original depth draw entry point, retained for issuing postponed mesh draws. */
-	using DepthDrawFunction = void (*)(RE::BSRenderPass*, uint32_t, bool, uint32_t);
-	/** @brief Postpone only tagged model draws in the world depth prepass until after probing. */
-	bool DeferIgnoredDepth(RE::BSRenderPass* pass, uint32_t technique, bool alphaTest, uint32_t renderFlags, DepthDrawFunction draw);
 	/** @brief Whether this camera frame uses the adaptive override, including pending restoration. */
 	bool IsControllingCamera() const { return controlledCamera.get() != nullptr; }
 	/** @brief Draw controls and observed projection values in the VR settings panel. */
@@ -40,8 +36,10 @@ private:
 	using Clock = std::chrono::steady_clock;
 	struct EyeDepth
 	{
-		float nearest;
+		float absoluteNearest;
+		float relevantNearest;
 		uint32_t validSamples;
+		uint32_t padding;
 	};
 	struct Readback
 	{
@@ -58,37 +56,8 @@ private:
 		uint32_t hasTerrainDepth;
 		float padding[9]{};
 	};
-	struct DepthDrawState
-	{
-		D3D11_VIEWPORT viewPort;
-		RE::BSGraphics::DepthStencilDepthMode depthMode;
-		RE::BSGraphics::DepthStencilDepthMode previousDepthMode;
-		uint32_t stencilMode;
-		uint32_t stencilRef;
-		uint32_t fillMode;
-		uint32_t cullMode;
-		uint32_t depthBiasMode;
-		uint32_t scissorMode;
-		uint32_t alphaBlendMode;
-		uint32_t alphaToCoverage;
-		uint32_t alphaWriteMode;
-		bool alphaTest;
-		float alphaTestRef;
-
-		static DepthDrawState Capture();
-		void Apply() const;
-	};
-	struct DeferredDepthDraw
-	{
-		RE::BSRenderPass pass;
-		uint32_t technique;
-		bool alphaTest;
-		uint32_t renderFlags;
-		DepthDrawFunction draw;
-		DepthDrawState state;
-	};
 	static_assert(sizeof(ProbeConstants) == 64);
-	static_assert(sizeof(EyeDepth) == 8);
+	static_assert(sizeof(EyeDepth) == 16);
 
 	void RestoreCamera();
 	void ReadDepth(Clock::time_point now);
@@ -113,8 +82,7 @@ private:
 	float inputMinimumNear = 0.0f;
 	float inputFarNearRatio = 0.0f;
 	std::array<float, 2> nearest{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
-	float previousNearest = std::numeric_limits<float>::infinity();
-	float approachSpeed = 0.0f;
+	std::array<float, 2> absoluteNearest{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
 	uint64_t nextSerial = 0;
 	uint64_t acceptedSerial = 0;
 	uint32_t updateFrame = UINT32_MAX;
@@ -126,16 +94,12 @@ private:
 	bool hookReady = false;
 	bool resourcesReady = false;
 	bool failed = false;
-	bool recoveryProbe = false;
+	bool ssgiReleaseResetPending = false;
 	const char* status = "Waiting for camera";
 	winrt::com_ptr<ID3D11ComputeShader> probeShader;
 	winrt::com_ptr<ID3D11Buffer> probeResult;
 	winrt::com_ptr<ID3D11UnorderedAccessView> probeUAV;
 	std::unique_ptr<ConstantBuffer> probeConstants;
 	std::array<Readback, 3> readbacks;
-	std::array<DeferredDepthDraw, 512> deferredDepthDraws{};
-	uint32_t deferredDepthCount = 0;
-	uint32_t excludedDepthCount = 0;
 	bool collectingWorldDepth = false;
-	bool excludedDepthOverflow = false;
 };

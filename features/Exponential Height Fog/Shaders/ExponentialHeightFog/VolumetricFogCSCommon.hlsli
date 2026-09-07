@@ -13,7 +13,6 @@ cbuffer VolumetricFogCB : register(b0)
 	float4 VolumetricFogFrameJitterOffsets[16];
 	float4 VolumetricFogHistoryParameters;
 	float4 VolumetricFogJitterParameters;
-	float4 VolumetricFogPreviousGridZParams;
 };
 
 #define VolumetricFogGridSize VolumetricFogGridSizeAndFlags.xyz

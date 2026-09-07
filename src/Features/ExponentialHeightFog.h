@@ -47,12 +47,6 @@ public:
 	void RegisterWeatherVariables() override;
 	/** @brief Captures the current directional shadow map SRV for use in volumetric fog light scattering. */
 	void CaptureDirectionalShadowMap();
-	/** @brief Return whether camera-attached fog can be hidden in favor of the local world-space fog. */
-	bool IsLocalFogReplacementReady() const;
-	/** @brief Return whether the local world-space density is currently being rendered. */
-	bool IsLocalFogActive() const;
-	/** @brief Return the current local volumetric density blend. */
-	float GetLocalFogBlend() const;
 
 	struct alignas(16) Settings
 	{
@@ -91,13 +85,8 @@ public:
 		float volumetricUpsampleJitterMultiplier = 1.0f;
 		float volumetricLocalLightScatteringIntensity = 1.0f;
 		float2 pad0;
-		float4 localFogDensityRadiusHeightClearance = {};
-		float4 localFogNoise = {};
-		float4 localFogColor = {};
-		float4 localFogCenterWS = {};
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
-	static_assert(sizeof(Settings) == 256);
 
 	Settings GetCommonBufferData() const;
 
@@ -111,13 +100,10 @@ private:
 		float4 frameJitterOffsets[16] = {};
 		float4 historyParameters = {};
 		float4 jitterParameters = {};  // x = LightScatteringSampleJitterMultiplier, y = StateFrameIndexMod8, zw = unused
-		float4 previousGridZParams = {};
 	};
 	STATIC_ASSERT_ALIGNAS_16(VolumetricFogCB);
 
-	Settings BuildFrameSettings(bool localFogActive) const;
-	void UpdateLocalFogState();
-	void EnsureVolumetricResources(const Settings& frameSettings);
+	void EnsureVolumetricResources();
 	void ReleaseVolumetricResources();
 	void BindIntegratedLightScattering();
 	ID3D11ComputeShader* GetMaterialSetupCS();
@@ -140,11 +126,7 @@ private:
 	Util::LazyShader<ID3D11ComputeShader> lightScatteringCS;
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;
 	DirectX::XMUINT4 currentGridSize = {};
-	float4 historyGridZParams = {};
 	bool hasLightScatteringHistory = false;
 	bool hasConservativeDepthHistory = false;
 	uint32_t lastPrepassFrame = UINT32_MAX;
-	float localFogBlend = 0.0f;
-	bool localFogReplacementReady = false;
-	bool localFogWasActive = false;
 };

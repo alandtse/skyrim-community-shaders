@@ -393,20 +393,16 @@ public:
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
-		float FogClearanceRadius;  ///< Zero disables fog fragment clipping for this draw.
-		float2 pad0;
+		float3 pad0;
 
 		bool operator==(const PermutationCB& other) const
 		{
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
-			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
-			       FogClearanceRadius == other.FogClearanceRadius;
+			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
-	static_assert(sizeof(PermutationCB) == 32);
-	static_assert(offsetof(PermutationCB, FogClearanceRadius) == 20);
 
 	ConstantBuffer* permutationCB = nullptr;
 

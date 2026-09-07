@@ -1,5 +1,4 @@
 #include "Common/Color.hlsli"
-#include "Common/FogClearance.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Math.hlsli"
@@ -702,7 +701,6 @@ PS_OUTPUT main(PS_INPUT input)
 #	else
 	uint eyeIndex = input.EyeIndex;
 #	endif  // !VR
-	FogClearance::Apply(input.WorldPosition.xyz, eyeIndex);
 
 	float4 fogMul = 1;
 #	if !defined(MULTBLEND)

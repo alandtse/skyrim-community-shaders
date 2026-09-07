@@ -1,4 +1,3 @@
-#include "Common/FogClearance.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/LodLandscape.hlsli"
 #include "Common/Math.hlsli"
@@ -398,9 +397,6 @@ PS_OUTPUT main(PS_INPUT input)
 #	else
 	uint eyeIndex = input.EyeIndex;
 #	endif  // !VR
-#	if defined(RENDER_DEPTH) && !defined(RENDER_SHADOWMASK_ANY)
-	FogClearance::ApplyScreen(input.PositionCS, eyeIndex);
-#	endif
 #	if defined(ADDITIONAL_ALPHA_MASK)
 	uint2 alphaMask = input.PositionCS.xy;
 	alphaMask.x = ((alphaMask.x << 2) & 12);

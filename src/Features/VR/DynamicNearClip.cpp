@@ -1,11 +1,10 @@
 #include "DynamicNearClip.h"
 
-#include "Features/ExponentialHeightFog.h"
+#include "Features/ScreenSpaceGI.h"
 #include "Features/TerrainBlending.h"
 #include "Features/VR.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
-#include "NearClipMeshExclusions.h"
 #include "NearClipProjection.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -17,7 +16,6 @@ namespace
 	constexpr float kMaximumSampleAge = 0.2f;
 	constexpr float kCameraGap = 0.5f;
 	constexpr float kLogInterval = 2.0f;
-	constexpr float kPredictionTime = 1.0f / 90.0f;
 
 	// Skyrim VR 1.4.15's frustum setter reads these at +1E8/+1EC; see dynamic-near-clip.md.
 	struct ProjectionLimits
@@ -61,16 +59,6 @@ namespace
 		}
 	};
 
-	void FinishDepthBatch()
-	{
-		static REL::Relocation<RE::BSShader**> currentShader{ REL::Offset(0x34D6258) };
-		static REL::Relocation<uint32_t*> currentTechnique{ REL::Offset(0x34D6254) };
-		static REL::Relocation<void()> clearBatchCache{ REL::Offset(0x1349770) };
-		if (*currentShader)
-			(*currentShader)->RestoreTechnique(*currentTechnique);
-		clearBatchCache();
-	}
-
 	bool ApproximatelyEqual(float a, float b)
 	{
 		return std::isfinite(a) && std::isfinite(b) && std::abs(a - b) <= std::max(0.0001f, std::abs(b) * 0.001f);
@@ -82,7 +70,6 @@ void VRDynamicNearClip::Install()
 {
 	if (!globals::game::isVR || REL::Module::get().version() != SKSE::RUNTIME_VR_1_4_15)
 		return;
-	VRNearClipMeshes::Install();
 	const auto call = REL::Offset(0x5B9F38).address();
 	constexpr std::array<uint8_t, 5> expected{ 0xE8, 0x93, 0x78, 0xD6, 0x00 };
 	if (std::memcmp(reinterpret_cast<const void*>(call), expected.data(), expected.size()) != 0) {
@@ -100,7 +87,7 @@ void VRDynamicNearClip::Install()
 	};
 	if (std::memcmp(reinterpret_cast<const void*>(depthCopy), expectedCopy.data(), expectedCopy.size()) != 0 ||
 		std::memcmp(reinterpret_cast<const void*>(REL::Offset(0x1349770).address()), expectedClear.data(), expectedClear.size()) != 0) {
-		logger::warn("VR dynamic near clip: world depth signatures changed; fog mesh exclusion unavailable");
+		logger::warn("VR dynamic near clip: world depth signatures changed; prepass capture unavailable");
 		return;
 	}
 	SKSE::GetTrampoline().write_call<5>(depthCopy, CopyWorldDepth::thunk);
@@ -147,9 +134,7 @@ void VRDynamicNearClip::RestoreCamera()
 	for (auto& readback : readbacks)
 		readback.pending = false;
 	lastSample = {};
-	previousNearest = std::numeric_limits<float>::infinity();
-	approachSpeed = 0.0f;
-	recoveryProbe = false;
+	ssgiReleaseResetPending = false;
 	updateFrame = UINT32_MAX;
 }
 
@@ -173,18 +158,10 @@ void VRDynamicNearClip::ReadDepth(Clock::time_point now)
 		if (readback.serial <= acceptedSerial || std::chrono::duration<float>(now - readback.captured).count() > kMaximumSampleAge)
 			continue;
 		acceptedSerial = readback.serial;
-		for (uint32_t eye = 0; eye < 2; ++eye)
-			nearest[eye] = sample[eye].validSamples && std::isfinite(sample[eye].nearest) && sample[eye].nearest > 0.0f ? sample[eye].nearest : std::numeric_limits<float>::infinity();
-		const float distance = std::min(nearest[0], nearest[1]);
-		const auto& settings = globals::features::vr.settings;
-		if (std::isfinite(previousNearest) && previousNearest * settings.NearDistanceScale < settings.NormalNearClip &&
-			(!std::isfinite(distance) || distance > previousNearest * 2.0f))
-			recoveryProbe = true;
-		const float elapsed = std::chrono::duration<float>(readback.captured - lastSample).count();
-		approachSpeed = std::isfinite(previousNearest) && std::isfinite(distance) && elapsed > 0.0f ?
-		                    std::max(0.0f, (previousNearest - distance) / elapsed) :
-		                    0.0f;
-		previousNearest = distance;
+		for (uint32_t eye = 0; eye < 2; ++eye) {
+			absoluteNearest[eye] = sample[eye].validSamples && std::isfinite(sample[eye].absoluteNearest) && sample[eye].absoluteNearest > 0.0f ? sample[eye].absoluteNearest : std::numeric_limits<float>::infinity();
+			nearest[eye] = sample[eye].validSamples && std::isfinite(sample[eye].relevantNearest) && sample[eye].relevantNearest > 0.0f ? sample[eye].relevantNearest : std::numeric_limits<float>::infinity();
+		}
 		lastSample = readback.captured;
 	}
 }
@@ -235,6 +212,14 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 			return;
 		}
 	}
+	const bool fixedNear = ApproximatelyEqual(settings.MinimumNearClip, settings.NormalNearClip);
+	const auto& sourceNear = controlledCamera ? savedNear : inputNear;
+	if (fixedNear && ApproximatelyEqual(sourceNear[0], settings.NormalNearClip) && ApproximatelyEqual(sourceNear[1], settings.NormalNearClip)) {
+		RestoreCamera();
+		targetNear = settings.NormalNearClip;
+		status = "Requested near matches engine: no override";
+		return;
+	}
 	const auto now = Clock::now();
 	if (controlledCamera.get() != camera) {
 		RestoreCamera();
@@ -254,8 +239,8 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		float elapsed = std::chrono::duration<float>(now - lastUpdate).count();
 		if (elapsed > kCameraGap) {
 			controller.Reset(settings);
+			ssgiReleaseResetPending = false;
 			lastSample = {};
-			previousNearest = std::numeric_limits<float>::infinity();
 			for (auto& readback : readbacks)
 				readback.pending = false;
 		}
@@ -264,35 +249,37 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 			RestoreCamera();
 			return;
 		}
-		// A close surface disappearing may have crossed the old plane; expose it on the next normal frame.
-		if (recoveryProbe) {
-			controller.Reset(settings);
-			recoveryProbe = false;
-		}
+		bool resetSSGIHistory = false;
 		const float age = std::chrono::duration<float>(now - lastSample).count();
 		const bool fresh = lastSample != Clock::time_point{} && age <= kMaximumSampleAge;
 		const float distance = std::min(nearest[0], nearest[1]);
-		const float predicted = std::max(0.0f, distance - approachSpeed * (age + kPredictionTime));
-		targetNear = std::isfinite(distance) ? std::clamp(predicted * settings.NearDistanceScale, settings.MinimumNearClip, settings.NormalNearClip) : settings.NormalNearClip;
+		targetNear = std::isfinite(distance) ? std::clamp(distance * settings.NearDistanceScale, settings.MinimumNearClip, settings.NormalNearClip) : settings.NormalNearClip;
+		const float previousNear = controller.current;
 		controller.Update(targetNear, elapsed, fresh, settings);
+		if (controller.current < previousNear * 0.9f) {
+			resetSSGIHistory = true;
+			ssgiReleaseResetPending = true;
+		} else if (ssgiReleaseResetPending && targetNear > previousNear * (1.0f + VRNearClipController::kHysteresis)) {
+			resetSSGIHistory = true;
+			ssgiReleaseResetPending = false;
+		}
+		if (resetSSGIHistory && globals::features::screenSpaceGI.loaded)
+			globals::features::screenSpaceGI.QueueHistoryReset();
 		lastUpdate = now;
 		updateFrame = globals::state->frameCount;
 		status = fresh ? "Active" : "Waiting for depth (holding near plane)";
 	}
 	// Preserve changes from other camera controllers for when this experiment is disabled.
-	if (appliedNear > 0.0f && !ApproximatelyEqual(cameraData.viewFrustumBuffer->fNear, appliedNear))
-		savedBufferNear = cameraData.viewFrustumBuffer->fNear;
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		if (appliedNear > 0.0f && !ApproximatelyEqual(cameraData.viewFrustumArray[eye].fNear, appliedNear))
 			savedNear[eye] = cameraData.viewFrustumArray[eye].fNear;
 		cameraData.viewFrustumArray[eye].fNear = controller.current;
 	}
-	cameraData.viewFrustumBuffer->fNear = controller.current;
 	GetProjectionLimits(*camera).minimumNear = std::min(savedMinimum, settings.MinimumNearClip);
 	appliedNear = controller.current;
 	if (std::chrono::duration<float>(now - lastLog).count() >= kLogInterval) {
-		logger::debug("VR dynamic near clip: near={:.4f}, target={:.4f}, nearest L/R={:.3f}/{:.3f}, {}",
-			appliedNear, targetNear, nearest[0], nearest[1], status);
+		logger::debug("VR dynamic near clip: near={:.4f}, target={:.4f}, relevant L/R={:.3f}/{:.3f}, absolute L/R={:.3f}/{:.3f}, {}",
+			appliedNear, targetNear, nearest[0], nearest[1], absoluteNearest[0], absoluteNearest[1], status);
 		lastLog = now;
 	}
 }
@@ -392,95 +379,22 @@ void VRDynamicNearClip::BeginWorldDepth()
 	if (collectingWorldDepth || !controlledCamera || !resourcesReady || failed ||
 		!globals::features::vr.settings.DynamicNearClip || controlledCamera.get() != RE::Main::WorldRootCamera())
 		return;
-	deferredDepthCount = 0;
-	excludedDepthCount = 0;
-	excludedDepthOverflow = false;
 	collectingWorldDepth = true;
-}
-
-VRDynamicNearClip::DepthDrawState VRDynamicNearClip::DepthDrawState::Capture()
-{
-	const auto& state = globals::game::shadowState->GetVRRuntimeData();
-	return { state.viewPort, state.depthStencilDepthMode, state.depthStencilDepthModePrevious,
-		state.depthStencilStencilMode, state.stencilRef, state.rasterStateFillMode, state.rasterStateCullMode,
-		state.rasterStateDepthBiasMode, state.rasterStateScissorMode, state.alphaBlendMode,
-		state.alphaBlendAlphaToCoverage, state.alphaBlendWriteMode, state.alphaTestEnabled, state.alphaTestRef };
-}
-
-void VRDynamicNearClip::DepthDrawState::Apply() const
-{
-	auto& state = globals::game::shadowState->GetVRRuntimeData();
-	state.viewPort = viewPort;
-	state.depthStencilDepthMode = depthMode;
-	state.depthStencilDepthModePrevious = previousDepthMode;
-	state.depthStencilStencilMode = stencilMode;
-	state.stencilRef = stencilRef;
-	state.rasterStateFillMode = fillMode;
-	state.rasterStateCullMode = cullMode;
-	state.rasterStateDepthBiasMode = depthBiasMode;
-	state.rasterStateScissorMode = scissorMode;
-	state.alphaBlendMode = alphaBlendMode;
-	state.alphaBlendAlphaToCoverage = alphaToCoverage;
-	state.alphaBlendWriteMode = alphaWriteMode;
-	state.alphaTestEnabled = alphaTest;
-	state.alphaTestRef = alphaTestRef;
-	state.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VIEWPORT,
-		RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE, RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_STENCILREF_MODE,
-		RE::BSGraphics::ShaderFlags::DIRTY_RASTER_CULL_MODE, RE::BSGraphics::ShaderFlags::DIRTY_RASTER_DEPTH_BIAS,
-		RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND, RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_TEST_REF,
-		RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_ENABLE_TEST);
-}
-
-bool VRDynamicNearClip::DeferIgnoredDepth(RE::BSRenderPass* pass, uint32_t technique, bool alphaTest, uint32_t renderFlags, DepthDrawFunction draw)
-{
-	if (!collectingWorldDepth || !pass || !pass->shader || pass->shader->shaderType.get() != RE::BSShader::Type::Utility ||
-		!VRNearClipMeshes::IsIgnored(pass->geometry))
-		return false;
-	if (deferredDepthCount == deferredDepthDraws.size()) {
-		excludedDepthOverflow = true;
-		return false;
-	}
-	deferredDepthDraws[deferredDepthCount++] = { *pass, technique, alphaTest, renderFlags, draw, DepthDrawState::Capture() };
-	return true;
 }
 
 void VRDynamicNearClip::FinishWorldDepth()
 {
 	if (!collectingWorldDepth)
 		return;
-	excludedDepthCount = deferredDepthCount;
 	auto& terrain = globals::features::terrainBlending;
-	if (deferredDepthCount && terrain.renderTerrainDepth) {
-		terrain.renderTerrainDepth = false;
-		terrain.ResetTerrainDepth();
-	}
 	auto* depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
 	if (terrain.loaded && terrain.depthSRVBackup)
 		depth = terrain.depthSRVBackup;
 	auto* terrainDepth = terrain.loaded && terrain.settings.Enabled && globals::shaderCache->IsEnabled() ? terrain.terrainDepth.depthSRV : nullptr;
-	if (depth && !excludedDepthOverflow)
+	if (depth)
 		CaptureDepth(controlledCamera.get(), depth, terrainDepth);
-	// Effect materials can write depth later without a prepass; never replace this with their depth.
 	captureFrame = globals::state->frameCount;
-	if (excludedDepthOverflow)
-		status = "Fog exclusion queue full; holding near plane";
 	collectingWorldDepth = false;
-	if (deferredDepthCount) {
-		CS_GPU_PASS("VR::ExcludedFogDepth");
-		const auto savedState = DepthDrawState::Capture();
-		for (uint32_t index = 0; index < deferredDepthCount; ++index) {
-			auto& entry = deferredDepthDraws[index];
-			if (VRNearClipMeshes::ShouldSkipFogMesh(&entry.pass))
-				continue;
-			entry.state.Apply();
-			VRNearClipMeshes::UpdateFogClearance(&entry.pass);
-			entry.draw(&entry.pass, entry.technique, entry.alphaTest, entry.renderFlags);
-		}
-		FinishDepthBatch();
-		VRNearClipMeshes::UpdateFogClearance(nullptr);
-		savedState.Apply();
-	}
-	deferredDepthCount = 0;
 }
 
 void VRDynamicNearClip::CaptureDepth(const RE::NiCamera* camera, ID3D11ShaderResourceView* prepassDepth, ID3D11ShaderResourceView* terrainDepth)
@@ -579,12 +493,9 @@ void VRDynamicNearClip::DrawValues()
 	ImGui::Text("Source minimum %.6g | far/near limit %.6g", inputMinimumNear, inputFarNearRatio);
 	ImGui::Text("Last projection near L/R: %.4f / %.4f", observedNear[0], observedNear[1]);
 	ImGui::Text("Last engine near: %.4f | cached L/R: %.4f / %.4f", observedEngineNear, cachedNear[0], cachedNear[1]);
-	ImGui::Text("Excluded fog depth draws: %u | tagged model loads: %u", excludedDepthCount, VRNearClipMeshes::TaggedModelCount());
-	const auto& fogSettings = globals::features::vr.settings;
-	ImGui::Text("Fog clearance: %s | radius %.2f", fogSettings.FogClearance ? "on" : "off", fogSettings.FogClearanceRadius);
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		if (std::isfinite(nearest[eye]))
-			ImGui::Text("Nearest %s: %.3f", eye == 0 ? "L" : "R", nearest[eye]);
+			ImGui::Text("Nearest %s: relevant %.3f | absolute %.3f", eye == 0 ? "L" : "R", nearest[eye], absoluteNearest[eye]);
 		else
 			ImGui::Text("Nearest %s: no valid geometry", eye == 0 ? "L" : "R");
 	}
@@ -599,42 +510,11 @@ void VRDynamicNearClip::DrawSettings()
 		ImGui::Checkbox(T("feature.vr.near_clip.enable", "Dynamic near clip"), &settings.DynamicNearClip);
 		ImGui::SliderFloat(T("feature.vr.near_clip.normal", "Normal near clip"), &settings.NormalNearClip, 0.1f, 30.0f, "%.2f");
 		ImGui::SliderFloat(T("feature.vr.near_clip.minimum", "Minimum near clip"), &settings.MinimumNearClip, 0.01f, settings.NormalNearClip, "%.3f", ImGuiSliderFlags_Logarithmic);
-		ImGui::SliderFloat(T("feature.vr.near_clip.scale", "Near distance scale"), &settings.NearDistanceScale, 0.05f, 0.5f, "%.2f");
+		ImGui::SliderFloat(T("feature.vr.near_clip.scale", "Near distance scale"), &settings.NearDistanceScale, 0.05f, 1.0f, "%.2f");
 		ImGui::SliderFloat(T("feature.vr.near_clip.restore", "Restore speed (per second)"), &settings.RestoreSpeed, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 		ImGui::Checkbox(T("feature.vr.near_clip.readout", "Show near clip headset readout"), &settings.DynamicNearClipReadout);
-		ImGui::Checkbox(T("feature.vr.near_clip.fog_clearance", "Keep fog away from headset"), &settings.FogClearance);
-		ImGui::SliderFloat(T("feature.vr.near_clip.fog_radius", "Fog clearance radius"), &settings.FogClearanceRadius, 0.1f, 32.0f, "%.2f");
-		ImGui::TextWrapped("%s", T("feature.vr.near_clip.fog_help", "Listed fog is invisible inside this radius around the midpoint between your eyes. The rest of each mesh stays visible. This also works with dynamic near clip turned off."));
 		ImGui::TextWrapped("%s", T("feature.vr.near_clip.help", "Distances use Skyrim units. Both eyes share the smaller required near distance. The central depth probe cannot see transparent surfaces or geometry already clipped between samples."));
 		DrawValues();
-	}
-
-	if (ImGui::CollapsingHeader(T("feature.vr.local_fog.header", "Local Volumetric Fog (Experimental)"))) {
-		ImGui::Checkbox(T("feature.vr.local_fog.enable", "Replace camera-attached fog planes"), &settings.ReplaceCameraFogWithVolume);
-		ImGui::Checkbox(T("feature.vr.local_fog.force", "Force local volumetric fog"), &settings.ForceLocalFog);
-		ImGui::Checkbox(T("feature.vr.local_fog.disable_meshes", "Disable all recognized fog meshes"), &settings.DisableAllFogMeshes);
-		const auto& localFog = globals::features::exponentialHeightFog;
-		const char* localFogStatus = !localFog.loaded ?
-		                                 T("feature.vr.local_fog.status_unavailable", "Unavailable") :
-		                             !localFog.IsLocalFogActive() ?
-		                                 T("feature.vr.local_fog.status_idle", "Idle") :
-		                             localFog.IsLocalFogReplacementReady() ?
-		                                 T("feature.vr.local_fog.status_ready", "Active and ready") :
-		                                 T("feature.vr.local_fog.status_waiting", "Active, shader path not ready");
-		ImGui::Text(T("feature.vr.local_fog.status", "Status: %s | blend %.2f"), localFogStatus, localFog.GetLocalFogBlend());
-		ImGui::Text(T("feature.vr.local_fog.mesh_status", "Mesh classifier: %s | recognized loads: %u | skipped draws: %u"),
-			VRNearClipMeshes::IsInstalled() ? T("feature.vr.local_fog.mesh_installed", "installed") : T("feature.vr.local_fog.mesh_not_installed", "not installed"),
-			VRNearClipMeshes::TaggedModelCount(), VRNearClipMeshes::SkippedDrawCount());
-		ImGui::SliderFloat(T("feature.vr.local_fog.radius", "Fog field radius"), &settings.LocalFogRadius, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_Logarithmic);
-		ImGui::SliderFloat(T("feature.vr.local_fog.density", "Fog density"), &settings.LocalFogDensity, 0.00001f, 0.02f, "%.5f", ImGuiSliderFlags_Logarithmic);
-		ImGui::SliderFloat(T("feature.vr.local_fog.height", "Vertical scale"), &settings.LocalFogHeightScale, 0.1f, 2.0f, "%.2f");
-		ImGui::SliderFloat(T("feature.vr.local_fog.noise_scale", "Noise scale"), &settings.LocalFogNoiseScale, 0.0001f, 0.05f, "%.4f", ImGuiSliderFlags_Logarithmic);
-		ImGui::SliderFloat(T("feature.vr.local_fog.noise_amount", "Noise amount"), &settings.LocalFogNoiseAmount, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T("feature.vr.local_fog.drift", "Drift speed"), &settings.LocalFogDriftSpeed, 0.0f, 100.0f, "%.1f");
-		ImGui::ColorEdit3(T("feature.vr.local_fog.color", "Scattering color"), &settings.LocalFogColor.x);
-		ImGui::SliderFloat(T("feature.vr.local_fog.ambient", "Ambient scattering"), &settings.LocalFogColor.w, 0.0f, 2.0f, "%.2f");
-		ImGui::SliderFloat(T("feature.vr.local_fog.fade", "Fade-out speed"), &settings.LocalFogFadeOutSpeed, 0.1f, 10.0f, "%.2f");
-		ImGui::TextWrapped("%s", T("feature.vr.local_fog.help", "Fog density is integrated through a world-space ellipsoid around the headset. Each eye traces to the shaded surface without a screen-space grid or temporal reprojection."));
 	}
 	settings.ClampToValidRanges();
 }

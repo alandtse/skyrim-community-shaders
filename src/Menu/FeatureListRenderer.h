@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Menu.h"
+
 #include <functional>
 #include <map>
 #include <string>
@@ -44,6 +46,7 @@ public:
 	 * and right-column settings content.
 	 *
 	 * @param footerHeight Height reserved for the footer area below the list.
+	 * @param sidebar Sidebar visibility, animation progress, and expanded width.
 	 * @param selectedMenu Index of the currently selected menu item (updated on selection change).
 	 * @param featureSearch Current search filter string (updated by the search input).
 	 * @param pendingFeatureSelection Name of a feature to auto-select (cleared after processing).
@@ -53,6 +56,7 @@ public:
 	 */
 	static void RenderFeatureList(
 		float footerHeight,
+		Menu::SidebarState& sidebar,
 		size_t& selectedMenu,
 		std::string& featureSearch,
 		std::string& pendingFeatureSelection,

@@ -194,6 +194,23 @@ public:
 		offThreadFeatureSelection = std::move(a_featureName);
 	}
 
+	/** @brief Queues sidebar visibility for the render thread without saving settings. */
+	void RequestSidebarVisibility(bool visible)
+	{
+		pendingSidebarVisibility.store(visible ? 1 : 0, std::memory_order_relaxed);
+	}
+
+	/** @brief Render-thread state for the sliding navigation sidebar. */
+	struct SidebarState
+	{
+		bool visible = true;
+		float progress = 1.0f;
+		float width = 0.0f;
+		float contentWidth = 0.0f;
+		float availableWidth = 0.0f;
+		float widthRatio = ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO;
+	};
+
 	// Search bar state
 	std::string featureSearch;  // For left pane feature search
 	/** @brief Draws the in-game performance/debug overlay */
@@ -261,6 +278,7 @@ private:
 	// last-writer-wins; toggles accumulate so rapid sub-frame toggles aren't dropped.
 	std::atomic<VisibilityRequest> pendingAbsolute{ VisibilityRequest::None };  // None/Open/Close
 	std::atomic<unsigned int> pendingToggleCount{ 0 };
+	std::atomic<int> pendingSidebarVisibility{ -1 };
 
 	// Off-thread feature-menu selection request (see RequestFeatureMenu), drained into
 	// pendingFeatureSelection on the render thread in ProcessInputEventQueue.
@@ -298,6 +316,7 @@ public:
 	};
 	struct UIIcons
 	{
+		UIIcon sidebar;
 		UIIcon saveSettings;
 		UIIcon loadSettings;
 		UIIcon deleteSettings;
@@ -638,6 +657,7 @@ private:
 	std::string cachedIniPath;  // io.IniFilename must point to a string that lives for the duration of the runtime
 
 	// Menu navigation
+	SidebarState sidebar;
 	std::string pendingFeatureSelection;  // Feature to select on next frame
 	// Anchor id set alongside pendingFeatureSelection (see SelectFeatureMenu); a
 	// feature's DrawSettings consumes it via ConsumeSectionAnchor to scroll there.

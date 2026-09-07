@@ -32,10 +32,12 @@ public:
 	 * @param canShowIcons True if action icons (save, load, clear cache, etc.) should be shown.
 	 * @param uiScale Current UI scale factor for sizing icon buttons.
 	 * @param uiIcons Reference to the loaded icon textures and sizes.
+	 * @param sidebarVisible Sidebar visibility toggled by the top-left button.
 	 */
-	static void RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Menu::UIIcons& uiIcons);
+	static void RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Menu::UIIcons& uiIcons, bool& sidebarVisible);
 
 private:
+	static void RenderSidebarToggle(const ImVec2& buttonSize, const Menu::UIIcons& uiIcons, const char* tooltip, bool& sidebarVisible);
 	static std::vector<ActionIcon> BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons);
 	static void RenderActionIcons(const std::vector<ActionIcon>& actionIcons, bool isDocked, float uiScale);
 	static void RenderDockedIcons(const std::vector<ActionIcon>& actionIcons, float uiScale);

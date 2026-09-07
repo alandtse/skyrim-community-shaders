@@ -367,6 +367,7 @@ const Menu::ThemeSettings::FontRoleSettings& Menu::GetDefaultFontRole(FontRole r
 
 Menu::~Menu()
 {  // Release icon textures if loaded
+	uiIcons.sidebar.Release();
 	uiIcons.saveSettings.Release();
 	uiIcons.loadSettings.Release();
 	uiIcons.deleteSettings.Release();
@@ -825,7 +826,7 @@ void Menu::DrawSettings()
 		bool showLogo = uiIcons.logo.texture != nullptr;
 
 		// Render header using extracted component
-		MenuHeaderRenderer::RenderHeader(isDocked, showLogo, canShowIcons, uiScale, uiIcons);
+		MenuHeaderRenderer::RenderHeader(isDocked, showLogo, canShowIcons, uiScale, uiIcons, sidebar.visible);
 
 		// Main content starts here - no additional separator needed as it's already handled in the conditions above
 
@@ -840,6 +841,7 @@ void Menu::DrawSettings()
 		// Render feature list using extracted component
 		FeatureListRenderer::RenderFeatureList(
 			footer_height,
+			sidebar,
 			selectedMenu,
 			featureSearch,
 			pendingFeatureSelection,
@@ -1058,6 +1060,10 @@ static std::vector<InputCombo> DeriveCSEditorKey(const std::vector<InputCombo>& 
 
 void Menu::ProcessInputEventQueue()
 {
+	const int requestedSidebarVisibility = pendingSidebarVisibility.exchange(-1, std::memory_order_relaxed);
+	if (requestedSidebarVisibility != -1)
+		sidebar.visible = requestedSidebarVisibility != 0;
+
 	// Apply any off-thread visibility requests (e.g. devbench) here on the render thread,
 	// mirroring the ToggleKey path, so SetVisible's ImGui access stays on the owning thread.
 	// Absolute open/close first, then toggle parity, so rapid sub-frame toggles aren't dropped.

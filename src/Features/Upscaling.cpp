@@ -337,10 +337,6 @@ void Upscaling::DrawPerfModeToggle()
 // for discoverability; the body knobs are collapsed by default and greyed until opted in.
 void Upscaling::DrawFoveationControls(bool showTuning)
 {
-	if (vrSubmit.IsHookActive()) {
-		ImGui::TextWrapped("Submit-stage render scaling uses full-eye upscaling. Disable render scaling and restart to use foveated upscaling.");
-		return;
-	}
 	ImGui::Separator();
 	foveatedRender.DrawEnable();
 	// Hub view shows just the enable; the deep tuning tree lives in the Upscaling panel.

@@ -37,31 +37,31 @@ namespace
 		~SubmitScope() { entered = false; }
 	};
 
-	std::unique_ptr<Texture2D> MakeTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name)
-	{
-		D3D11_TEXTURE2D_DESC desc{};
-		desc.Width = width;
-		desc.Height = height;
-		desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
-		desc.Format = format;
-		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		auto texture = std::make_unique<Texture2D>(desc, name.c_str());
-		D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
-		srv.Format = format;
-		srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srv.Texture2D.MipLevels = 1;
-		texture->CreateSRV(srv);
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
-		uav.Format = format;
-		uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-		texture->CreateUAV(uav);
-		return texture;
-	}
-
 	struct ColorConstants
 	{
 		uint32_t width, height, offset, conversion;
 	};
+}
+
+std::unique_ptr<Texture2D> VRSubmitUpscaling::MakeTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name)
+{
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = width;
+	desc.Height = height;
+	desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+	desc.Format = format;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+	auto texture = std::make_unique<Texture2D>(desc, name.c_str());
+	D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+	srv.Format = format;
+	srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srv.Texture2D.MipLevels = 1;
+	texture->CreateSRV(srv);
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
+	uav.Format = format;
+	uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+	texture->CreateUAV(uav);
+	return texture;
 }
 
 void VRSubmitUpscaling::InstallRenderTargetSizeHook()
@@ -167,6 +167,7 @@ void VRSubmitUpscaling::SetupResources()
 		return;
 	std::lock_guard lock(mutex);
 	Invalidate();
+	ClearFoveationResources();
 	for (auto& eye : eyes)
 		eye = {};
 	sourceCopy = nullptr;
@@ -255,6 +256,7 @@ void VRSubmitUpscaling::CaptureInputs()
 		for (auto& shader : encodeShaders)
 			shader.Reset();
 		colorShader.Reset();
+		ClearFoveationResources();
 		failed = false;
 	}
 	if (failed)
@@ -411,36 +413,49 @@ bool VRSubmitUpscaling::ReconstructPair(ID3D11Texture2D* source, vr::EColorSpace
 	resetHistory = lastSuccessCycle == UINT64_MAX || lastSuccessCycle + 1 != captureCycle;
 	if (upscaling.pendingDLSSReset.exchange(false))
 		resetHistory = true;
+	for (uint32_t eye = 0; eye < 2; ++eye)
+		ConvertColor(sourceView.get(), eyes[eye].color->uav.get(), plan.renderWidth, plan.renderHeight, eye * plan.renderWidth, gamma ? 1 : 0);
+	const bool wasFoveated = foveatedPair;
+	foveatedPair = PrepareFoveation();
+	if (wasFoveated && !foveatedPair) {
+		resetHistory = true;
+		if (capturedMethod == uint32_t(Upscaling::UpscaleMethod::kDLSS))
+			upscaling.streamline.DestroyDLSSResources();
+	}
 	for (uint32_t eye = 0; eye < 2; ++eye) {
-		auto& resources = eyes[eye];
-		ConvertColor(sourceView.get(), resources.color->uav.get(), plan.renderWidth, plan.renderHeight, eye * plan.renderWidth, gamma ? 1 : 0);
+		auto& fullEye = eyes[eye];
+		auto& resources = foveatedPair ? foveatedEyes[eye].crop : fullEye;
+		const auto input = foveatedPair ? foveatedEyes[eye].input : sl::Extent{ 0, 0, plan.renderWidth, plan.renderHeight };
+		const auto output = foveatedPair ? foveatedEyes[eye].output : sl::Extent{ 0, 0, plan.outputWidth, plan.outputHeight };
 		dispatching = true;
 		bool success;
 		if (capturedMethod == uint32_t(Upscaling::UpscaleMethod::kDLSS)) {
 			CS_GPU_PASS("Upscaling::SubmitDLSS");
-			auto constants = cameraConstants[eye];
+			auto constants = GetEyeConstants(eye);
 			if (resetHistory)
 				constants.reset = sl::Boolean::eTrue;
 			success = upscaling.streamline.EvaluateDLSS(eye == 0 ? upscaling.streamline.viewport : upscaling.streamline.viewportRight, eye,
 				resources.color->resource.get(), resources.output->resource.get(), resources.depth->resource.get(), resources.motion->resource.get(),
 				resources.reactive->resource.get(), resources.transparency->resource.get(),
-				{ 0, 0, plan.renderWidth, plan.renderHeight }, { 0, 0, plan.outputWidth, plan.outputHeight }, plan.outputWidth, plan.outputHeight, &constants);
+				{ 0, 0, input.width, input.height }, { 0, 0, output.width, output.height }, output.width, output.height, &constants);
 		} else {
 			CS_GPU_PASS("Upscaling::SubmitFSR");
 			success = upscaling.fidelityFX.UpscaleRegion(eye, resources.color->resource.get(), resources.depth->resource.get(), resources.motion->resource.get(),
 				resources.reactive->resource.get(), resources.transparency->resource.get(), resources.output->resource.get(),
-				plan.renderWidth, plan.renderHeight, plan.outputWidth, plan.outputHeight, float(plan.renderWidth), float(plan.renderHeight), upscaling.settings.sharpnessFSR);
+				input.width, input.height, output.width, output.height, float(plan.renderWidth), float(plan.renderHeight), upscaling.settings.sharpnessFSR, foveatedPair);
 		}
 		dispatching = false;
 		if (!success)
 			return false;
 		context->ClearState();
-		auto* reconstructed = resources.output.get();
+		if (foveatedPair)
+			ComposeFoveatedEye(eye);
+		auto* reconstructed = fullEye.output.get();
 		if (capturedMethod == uint32_t(Upscaling::UpscaleMethod::kDLSS) && upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0) {
-			if (upscaling.rcas.ApplySharpen(resources.output->srv.get(), resources.sharpened->uav.get(), std::exp2(2 * upscaling.settings.sharpnessDLSS - 2)))
-				reconstructed = resources.sharpened.get();
+			if (upscaling.rcas.ApplySharpen(fullEye.output->srv.get(), fullEye.sharpened->uav.get(), std::exp2(2 * upscaling.settings.sharpnessDLSS - 2)))
+				reconstructed = fullEye.sharpened.get();
 		}
-		ConvertColor(reconstructed->srv.get(), resources.submit->uav.get(), plan.outputWidth, plan.outputHeight, 0, gamma ? 2 : 0);
+		ConvertColor(reconstructed->srv.get(), fullEye.submit->uav.get(), plan.outputWidth, plan.outputHeight, 0, gamma ? 2 : 0);
 	}
 	if (FAILED(globals::d3d::device->GetDeviceRemovedReason()))
 		return false;
@@ -510,6 +525,8 @@ vr::EVRCompositorError VRSubmitUpscaling::SubmitHook::thunk(vr::IVRCompositor* s
 	if (result != vr::VRCompositorError_None)
 		owner.Fail("compositor rejected reconstructed output");
 	else
-		owner.SetStatus(owner.capturedMethod == uint32_t(Upscaling::UpscaleMethod::kDLSS) ? "DLSS output submitted" : "FSR output submitted");
+		owner.SetStatus(std::format("{} output submitted ({})",
+			owner.capturedMethod == uint32_t(Upscaling::UpscaleMethod::kDLSS) ? "DLSS" : "FSR",
+			owner.foveatedPair ? "foveated" : "full eye"));
 	return result;
 }

@@ -190,13 +190,14 @@ history resets because the final color contains UI absent from world depth.
 | Streamline / FidelityFX | Reuse per-eye dispatch; add only explicit reset/color-domain inputs needed at submission. Preserve existing callers' defaults.                         |
 | State / VR API          | Redirect existing read-only scale and restart reporting to the same plan.                                                                              |
 | Effects11               | Consume render-sized engine color before submit; remove reliance on PerfMode's private display output for this path.                                   |
-| FoveatedRender          | Leave the current disabled-render-scale route unchanged; the new submit path initially uses full-eye vendor dispatch.                                  |
+| FoveatedRender          | Leave the current disabled-render-scale route unchanged; submit-stage scaling crops owned eye inputs and reuses stretch/blend operations.              |
 
 Read-only resolution consumers use `vrSubmit`; no compatibility getters
 pretend that the removed PerfMode display texture exists. Effects11 consumes
-engine color before submission. Foveated reconstruction is inactive while
-submit-stage scaling is engaged, and its controls explain this restriction.
-Its render-scale-disabled route remains available.
+engine color before submission. The existing pre-post-processing foveated
+route remains available when render scaling is disabled. Submit-stage scaling
+has its own per-eye crop orchestration using the same region and
+peripheral-quality controls.
 
 ## Initial C++ verification
 
@@ -273,3 +274,49 @@ matched the Release output:
 `6835146FD9FBD0764E4EDE2692D294C0A070FB49C4B5CFD0619037E7CFFD6E85`.
 Only DLL/PDB changed in this follow-up; shaders and Streamline directories
 were untouched. The correction still needs an in-game check.
+
+## Submit-stage foveation
+
+The submit owner now retains independent crop textures and periphery histories
+for each eye. `VRSubmitUpscalingFoveation.cpp` implements that part of the same
+component; it introduces no additional hooks or engine target redirections.
+The existing boot-latched enable, stereo region presets, stretch, temporal
+smoothing, visualization, and edge blending controls are used. Submit-stage
+foveation uses isolated crops for every DLSS preset. The older Faster mode is
+inapplicable to these per-eye inputs and is disabled in the controls.
+
+Before vendor dispatch, resolve and validate both eye rectangles, allocate
+owned crops, copy captured inputs, and fill both output backgrounds through
+the existing stretch operation. Input crop extents use even dimensions and
+are checked against DLSS's supported render range. Asymmetric eye sizes and
+off-center regions have independent resources. Full Eye or unsupported crop
+parameters select full-eye reconstruction without changing engine resolution.
+Resource or stretch failures latch full-eye reconstruction until reset.
+
+DLSS receives crop-adjusted captured projection/reprojection matrices and
+motion-vector scale computed from the actual rounded crop. FSR uses the
+existing host crop path and full-eye motion-vector pixel extents. A change of
+crop dimensions, position, or full-eye/foveated route resets temporal history
+and recreates DLSS contexts before evaluation. No eye is evaluated twice in
+one compositor cycle. A vendor failure retains the original pair fallback.
+
+The periphery uses a single-eye permutation of the existing temporal shader,
+with owned ping-pong history reset at cycle gaps, region changes, and resource
+resets. The original SBS permutation remains unchanged. Shader failure uses
+the current peripheral color. Existing hard-copy, feather, or dither blending
+places each crop into its owned full-eye output; a failed blend falls back to
+a valid hard copy. Sharpening and final color-space conversion follow the
+existing submit path. Status distinguishes foveated and full-eye submissions.
+
+Paused-menu behavior is unchanged. Foveated runtime quality and performance
+still require in-game verification; no shader compilation or validation is
+performed by this implementation task.
+
+Luna's direct Release C++ build passed with zero errors and five existing
+MSB8028 intermediate-directory warnings. The new translation unit compiled
+and linked. DLL SHA-256:
+`112F807DB6F0FE79C6ED7EDDC844C9F1084D0EE313D860012288A8838956D406`.
+Build log: `build/open-shaders-deploy/foveation-cpp-20260907.log`.
+Numeric checks confirmed crop-corner mapping and motion-vector displacement
+for centered, nasal, and rounded crop extents. No deployment or commit was
+performed for the foveation addition.

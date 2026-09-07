@@ -74,6 +74,19 @@ private:
 		std::unique_ptr<Texture2D> depth, motion, reactive, transparency;
 	};
 	EyeResources eyes[2];
+	struct FoveatedEye
+	{
+		sl::Extent input{}, output{};
+		EyeResources crop;
+		std::unique_ptr<Texture2D> history[2];
+		uint32_t historyIndex = 0;
+		bool historyValid = false;
+	};
+	FoveatedEye foveatedEyes[2];
+	bool foveatedPair = false, foveationUnavailable = false;
+	Util::LazyShader<ID3D11ComputeShader> peripheryShader;
+	std::unique_ptr<ConstantBuffer> peripheryBuffer;
+	winrt::com_ptr<ID3D11SamplerState> peripherySampler;
 	std::unique_ptr<ConstantBuffer> encodeBuffer, colorBuffer;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolatedState;
@@ -102,6 +115,12 @@ private:
 	void SetStatus(std::string_view message);
 	void Fail(std::string_view reason);
 	bool EnsureResources();
+	static std::unique_ptr<Texture2D> MakeTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name);
+	void ClearFoveationResources();
+	bool PrepareFoveation();
+	ID3D11ShaderResourceView* SmoothPeriphery(uint32_t eye);
+	sl::Constants GetEyeConstants(uint32_t eye) const;
+	void ComposeFoveatedEye(uint32_t eye);
 	bool ReconstructPair(ID3D11Texture2D* source, vr::EColorSpace colorSpace);
 	bool ValidateSource(ID3D11Texture2D* source, vr::EVREye eye, const vr::VRTextureBounds_t* bounds) const;
 	void ConvertColor(ID3D11ShaderResourceView* source, ID3D11UnorderedAccessView* output,

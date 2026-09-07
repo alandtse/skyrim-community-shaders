@@ -14,7 +14,8 @@ cbuffer VRStereoOptParams : register(b1)
 	float EdgeDepthThreshold;     // Relative depth difference threshold for edge detection
 	uint RepairFromEye0Depth;     // 1 = culled Eye 1 pixels take Eye 0's warped final depth when nearer than the prepass depth
 
-	float2 _pad1;
+	uint DepthHistoryValid;           // 1 = DepthHistory holds the previous frame's final depth
+	uint UseUnrepairableMask;         // 1 = Eye 1 reads the unrepairable-strip feedback mask
 	float FoveatedRadius;             // reserved for foveated reprojection — see alandtse/open-shaders#143
 	float DirectionalOcclusionRatio;  // Eye 0 must be closer than this fraction of Eye 1's depth (0 = disabled)
 

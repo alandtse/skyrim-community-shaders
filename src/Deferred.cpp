@@ -235,6 +235,9 @@ void Deferred::EarlyPrepasses()
 {
 	CS_GPU_PASS("Deferred::EarlyPrepass");
 
+	if (globals::game::isVR)
+		globals::features::vr.stereoOpt.SnapshotFinalDepthHistory(sceneDepthFinal);
+
 	sceneDepthFinal = false;
 
 	auto shaderCache = globals::shaderCache;

@@ -15,10 +15,77 @@
 
 Texture2D<float> DepthTexture : register(t0);
 
+#ifdef CLASSIFY_WITH_HISTORY
+Texture2D<float> DepthHistory : register(t1);     // previous frame's final depth (full SBS)
+Texture2D<uint> UnrepairableMask : register(t2);  // 1 = Eye 1 half-width pixel no Eye 0 depth could repair
+#endif
+
 RWTexture2D<uint> ModeTextureRW : register(u0);
 
 // Sentinel for the edge-detection search: means "no discontinuity found yet".
 static const uint kEdgeDistNone = 0xFFFFFFFFu;
+
+#ifdef CLASSIFY_WITH_HISTORY
+static const uint kHistoryTapCount = 3;  // samples along the segment to the previous-frame position
+static const int kMaskNeighborhood = 1;  // half-extent of the unrepairable-mask lookup window
+
+/**
+* @brief SBS pixel coordinate this surface point occupied in the previous frame.
+*
+* Unprojects the current-frame depth to world, rebases by the camera position delta, and
+* projects through the previous frame's unjittered view-projection.
+*
+* @param uv Stereo UV of the pixel [0,1]
+* @param depth Raw depth at the pixel
+* @param eyeIndex Eye the pixel belongs to (0 or 1)
+* @return Previous-frame SBS pixel coordinate (may be clamped into the eye by the UV conversion)
+*/
+float2 PreviousFramePixel(float2 uv, float depth, uint eyeIndex)
+{
+	float2 monoUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
+	float4 clip = float4(monoUV * float2(2, -2) - float2(1, -1), depth, 1);
+	float4 world = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], clip);
+	world /= world.w;
+	world.xyz += FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPreviousPosAdjust[eyeIndex].xyz;
+	float4 prevClip = mul(FrameBuffer::CameraPreviousViewProjUnjittered[eyeIndex], world);
+	prevClip /= prevClip.w;
+	float2 prevMonoUV = prevClip.xy * float2(0.5, -0.5) + 0.5;
+	return Stereo::ConvertToStereoUV(prevMonoUV, eyeIndex) * FrameDim;
+}
+
+/**
+* @brief Depth for the reprojection tests: the prepass depth, lowered to the nearest
+* previous-frame final depth found along the motion segment.
+*
+* The z-prepass omits alpha-tested geometry, leaving a too-far depth there; every classifier
+* decision is monotone toward native shading in the nearer direction, so the min can only
+* un-cull. Writes the previous-frame pixel coordinate through prevPx.
+*
+* @param px Pixel to classify
+* @param eyeIndex Eye the pixel belongs to (0 or 1)
+* @param[out] prevPx Previous-frame SBS pixel coordinate (0 when history is unused)
+* @return min(prepass depth, reprojected previous-frame final depth)
+*/
+float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx)
+{
+	float d = DepthTexture[px];
+	prevPx = 0;
+	if (DepthHistoryValid == 0 || d < EPSILON_DEPTH_SKY || d >= DEPTH_UNRENDERED)
+		return d;
+
+	prevPx = PreviousFramePixel((float2(px) + 0.5) / FrameDim, d, eyeIndex);
+	[unroll] for (uint k = 0; k < kHistoryTapCount; k++)
+	{
+		float2 tap = lerp(float2(px), prevPx, k / float(kHistoryTapCount - 1));
+		int2 tapPx = Stereo::ClampToEyeBounds(int2(round(tap)), eyeIndex, FrameDim);
+		float h = DepthHistory[tapPx];
+		// Sky and unrendered history texels carry no surface to lower the depth to.
+		if (h >= EPSILON_DEPTH_SKY && h < DEPTH_UNRENDERED)
+			d = min(d, h);
+	}
+	return d;
+}
+#endif
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	if (any(dtid >= uint2(FrameDim)))
@@ -67,9 +134,37 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 	// Early return: disoccluded pixels are always MODE_DISOCCLUDED regardless of edge proximity.
 	// This ensures MinEdgeDistance never affects disocclusion classification.
 	if (!isSky) {
+#ifdef CLASSIFY_WITH_HISTORY
+		float2 prevPx = 0;
+		float reprojDepth = ClassifyDepth(dtid, eyeIndex, prevPx);
+
+		// Eye 1 strip that was culled last frame with no Eye 0 depth to repair it:
+		// nothing can reconstruct it, so shade it natively this frame.
+		if (eyeIndex == 1 && UseUnrepairableMask != 0) {
+			float2 maskPx = prevPx - float2(FrameDim.x * 0.5, 0);
+			int2 maskMax = int2(int(FrameDim.x / 2) - 1, int(FrameDim.y) - 1);
+			int2 maskCoord = clamp(int2(round(maskPx)), int2(0, 0), maskMax);
+			bool unrepairable = false;
+			[unroll] for (int dy = -kMaskNeighborhood; dy <= kMaskNeighborhood; dy++)
+			{
+				[unroll] for (int dx = -kMaskNeighborhood; dx <= kMaskNeighborhood; dx++)
+				{
+					int2 tap = clamp(maskCoord + int2(dx, dy), int2(0, 0), maskMax);
+					unrepairable = unrepairable || (UnrepairableMask[tap] != 0);
+				}
+			}
+			if (unrepairable) {
+				ModeTextureRW[dtid] = MODE_DISOCCLUDED;
+				return;
+			}
+		}
+#else
+		float reprojDepth = centerDepth;
+#endif
+
 		Stereo::StereoBilateralResult reproj = Stereo::ReprojectToOtherEye(
 			uv,
-			centerDepth,
+			reprojDepth,
 			eyeIndex,
 			FrameDim);
 
@@ -77,13 +172,18 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 		if (!reproj.valid) {
 			isDisoccluded = true;
 		} else {
+#ifdef CLASSIFY_WITH_HISTORY
+			float2 ignoredPrevPx = 0;
+			float otherDepth = ClassifyDepth(uint2(reproj.otherPx), 1 - eyeIndex, ignoredPrevPx);
+#else
 			float otherDepth = DepthTexture[reproj.otherPx];
+#endif
 			// Raw reversed-Z depth comparison for disocclusion detection.
 			// Using raw depth avoids concentric semicircle artifacts that occur
 			// with linearized depth due to precision band boundaries in the
 			// hyperbolic depth-to-linear conversion.
-			float maxRaw = max(max(centerDepth, otherDepth), EPSILON_DIVISION);
-			float rawRelDiff = abs(centerDepth - otherDepth) / maxRaw;
+			float maxRaw = max(max(reprojDepth, otherDepth), EPSILON_DIVISION);
+			float rawRelDiff = abs(reprojDepth - otherDepth) / maxRaw;
 			isDisoccluded = (rawRelDiff > DisocclusionThreshold);
 
 			// Directional disocclusion: catches silhouette edges the symmetric rawRelDiff check
@@ -92,7 +192,8 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 				bool otherIsSky = (otherDepth < EPSILON_DEPTH_SKY) || (otherDepth >= 1.0);
 				if (!otherIsSky) {
 					float linOther = SharedData::GetScreenDepth(otherDepth);
-					isDisoccluded = (linOther < linCenter * DirectionalOcclusionRatio);
+					float linReproj = SharedData::GetScreenDepth(reprojDepth);
+					isDisoccluded = (linOther < linReproj * DirectionalOcclusionRatio);
 				}
 			}
 		}

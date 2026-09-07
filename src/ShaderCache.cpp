@@ -347,10 +347,8 @@ namespace SIE
 		return Util::ContentHash::HashString(state);
 	}
 
-	// Unlike GetGlobalDefinesDigest(), covers a C++-side change to which #defines a given raw
-	// descriptor maps to (e.g. a technique gaining RENDER_DEPTH) even when the .hlsl source
-	// bytes don't change -- without this, such a change leaves a stale disk-cached blob
-	// reading as valid forever. `key` is the already-computed GetShaderString(hashkey=true).
+	// `key` already encodes the descriptor's actual #defines; omitting it lets a C++-side
+	// change to that mapping keep a stale disk-cached blob reading as valid forever.
 	static Util::ContentHash::Hash128 GetPerShaderDefinesDigest(const std::string& key)
 	{
 		return Util::ContentHash::HashString(key);

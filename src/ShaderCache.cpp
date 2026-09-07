@@ -347,6 +347,15 @@ namespace SIE
 		return Util::ContentHash::HashString(state);
 	}
 
+	// Unlike GetGlobalDefinesDigest(), covers a C++-side change to which #defines a given raw
+	// descriptor maps to (e.g. a technique gaining RENDER_DEPTH) even when the .hlsl source
+	// bytes don't change -- without this, such a change leaves a stale disk-cached blob
+	// reading as valid forever. `key` is the already-computed GetShaderString(hashkey=true).
+	static Util::ContentHash::Hash128 GetPerShaderDefinesDigest(const std::string& key)
+	{
+		return Util::ContentHash::HashString(key);
+	}
+
 	// Batches manifest writes instead of re-serializing the whole file per
 	// shader; CompilationSet::Complete() guarantees a final flush per batch.
 	constexpr uint64_t kManifestFlushBatchSize = 25;
@@ -1789,7 +1798,7 @@ namespace SIE
 					if (std::filesystem::exists(shaderSourcePath)) {
 						if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
 							decidedByDigest = true;
-							const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+							const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
 							diskCacheOutdated = *recorded != combined.ToHex();
 							if (diskCacheOutdated) {
 								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
@@ -1996,7 +2005,7 @@ namespace SIE
 					// Record the digest of what just got compiled; the manifest-first
 					// check above reads this back to decide disk-cache validity.
 					if (const auto digest = GetShaderContentDigestTimed(path, std::filesystem::path(path).parent_path(), cache)) {
-						const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+						const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
 						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath), combined.ToHex());
 					}
 				}

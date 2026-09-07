@@ -51,17 +51,9 @@ void GrassCollision::QueueCollisions()
 		}
 	};
 
-	// Actor query code from po3 under MIT
-	// https://github.com/powerof3/PapyrusExtenderSSE/blob/7a73b47bc87331bec4e16f5f42f2dbc98b66c3a7/include/Papyrus/Functions/Faction.h#L24C7-L46
-	if (const auto processLists = RE::ProcessLists::GetSingleton(); processLists) {
-		for (auto& actorHandle : processLists->highActorHandles) {
-			addActorCandidate(actorHandle);
-		}
-	}
-
-	if (auto player = RE::PlayerCharacter::GetSingleton()) {
-		addActorCandidate(player->GetHandle());
-	}
+	Util::ForEachLoadedActor([&](RE::Actor* a_actor) {
+		addActorCandidate(a_actor->GetHandle());
+	});
 
 	std::sort(actorCandidates.begin(), actorCandidates.end(), [](const GrassCollisionActorCandidate& a, const GrassCollisionActorCandidate& b) {
 		return a.sqDistance < b.sqDistance;

@@ -2,6 +2,7 @@
 
 #include "Globals.h"
 #include "State.h"
+#include "Utils/ActorUtils.h"
 #include "WetnessEffects.h"
 
 #include <algorithm>
@@ -56,12 +57,8 @@ namespace CharacterRainSurfaces
 
 		void TagGeometryTree(RE::NiAVObject* a_root, std::int32_t a_flags)
 		{
-			if (!a_root)
-				return;
-
-			RE::BSVisit::TraverseScenegraphGeometries(a_root, [a_flags](RE::BSGeometry* a_geometry) {
+			Util::ForEachGeometry(a_root, [a_flags](RE::BSGeometry* a_geometry) {
 				SetSurfaceFlags(a_geometry, a_flags);
-				return RE::BSVisit::BSVisitControl::kContinue;
 			});
 		}
 
@@ -87,11 +84,9 @@ namespace CharacterRainSurfaces
 			if (!a_actor || !a_actor->Is3DLoaded())
 				return;
 
-			auto* thirdPersonRoot = a_actor->Get3D(false);
-			auto* firstPersonRoot = a_actor->Get3D(true);
-			TagGeometryTree(thirdPersonRoot, Character);
-			if (firstPersonRoot != thirdPersonRoot)
-				TagGeometryTree(firstPersonRoot, Character);
+			Util::ForEachActorGeometry(a_actor, [](RE::BSGeometry* a_geometry) {
+				SetSurfaceFlags(a_geometry, Character);
+			});
 			TagHeldWeapons(a_actor);
 		}
 
@@ -201,15 +196,9 @@ namespace CharacterRainSurfaces
 			pendingActorRefreshes.clear();
 		}
 
-		if (auto* player = globals::game::player)
-			QueueActor(player->GetFormID(), kGeometryRefreshPasses);
-
-		if (const auto* processLists = RE::ProcessLists::GetSingleton()) {
-			for (const auto& actorHandle : processLists->highActorHandles) {
-				if (const auto actor = actorHandle.get())
-					QueueActor(actor->GetFormID(), kGeometryRefreshPasses);
-			}
-		}
+		Util::ForEachLoadedActor([](RE::Actor* a_actor) {
+			QueueActor(a_actor->GetFormID(), kGeometryRefreshPasses);
+		});
 	}
 
 	void RefreshPendingActors()

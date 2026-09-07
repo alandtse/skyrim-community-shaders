@@ -2,6 +2,7 @@
 
 #pragma once
 #include "RE/Skyrim.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,26 @@ namespace RE
 
 namespace Util
 {
+	/**
+	 * @brief Visits actors currently resolvable from the player and high-process actor list.
+	 * @param a_callback Callback invoked once for each actor.
+	 */
+	void ForEachLoadedActor(const std::function<void(RE::Actor*)>& a_callback);
+
+	/**
+	 * @brief Visits every geometry below a scenegraph root.
+	 * @param a_root Scenegraph root to traverse.
+	 * @param a_callback Callback invoked for each geometry.
+	 */
+	void ForEachGeometry(RE::NiAVObject* a_root, const std::function<void(RE::BSGeometry*)>& a_callback);
+
+	/**
+	 * @brief Visits geometry in both first- and third-person actor roots.
+	 * @param a_actor Actor whose loaded geometry should be traversed.
+	 * @param a_callback Callback invoked for each geometry.
+	 */
+	void ForEachActorGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback);
+
 	/**
      * @brief Extracts the shape bounds from a collision object.
      * @param collisionObj Pointer to the collision object.

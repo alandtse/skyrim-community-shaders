@@ -1,9 +1,54 @@
 #include "ActorUtils.h"
+
+#include "Globals.h"
+
 #include <algorithm>
 #include <cmath>
 
 namespace Util
 {
+	// Actor query pattern adapted from po3 under MIT.
+	// https://github.com/powerof3/PapyrusExtenderSSE/blob/7a73b47bc87331bec4e16f5f42f2dbc98b66c3a7/include/Papyrus/Functions/Faction.h#L24C7-L46
+	void ForEachLoadedActor(const std::function<void(RE::Actor*)>& a_callback)
+	{
+		if (!a_callback)
+			return;
+
+		auto* player = globals::game::player;
+		if (player)
+			a_callback(player);
+
+		if (const auto* processLists = RE::ProcessLists::GetSingleton()) {
+			for (const auto& actorHandle : processLists->highActorHandles) {
+				if (const auto actor = actorHandle.get(); actor && actor.get() != player)
+					a_callback(actor.get());
+			}
+		}
+	}
+
+	void ForEachGeometry(RE::NiAVObject* a_root, const std::function<void(RE::BSGeometry*)>& a_callback)
+	{
+		if (!a_root || !a_callback)
+			return;
+
+		RE::BSVisit::TraverseScenegraphGeometries(a_root, [&a_callback](RE::BSGeometry* a_geometry) {
+			a_callback(a_geometry);
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+	}
+
+	void ForEachActorGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback)
+	{
+		if (!a_actor || !a_actor->Is3DLoaded() || !a_callback)
+			return;
+
+		auto* thirdPersonRoot = a_actor->Get3D(false);
+		auto* firstPersonRoot = a_actor->Get3D(true);
+		ForEachGeometry(thirdPersonRoot, a_callback);
+		if (firstPersonRoot != thirdPersonRoot)
+			ForEachGeometry(firstPersonRoot, a_callback);
+	}
+
 	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)
 	{
 		if (!collisionObj)

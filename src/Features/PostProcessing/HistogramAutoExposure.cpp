@@ -206,17 +206,9 @@ void HistogramAutoExposure::SetupResources()
 void HistogramAutoExposure::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&histogramCS, &histogramAvgCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ histogramCS, histogramAvgCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/HistogramAutoExposure");

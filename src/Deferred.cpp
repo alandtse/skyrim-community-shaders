@@ -484,9 +484,6 @@ void Deferred::DeferredPasses()
 	if (globals::features::effects11.loaded)
 		globals::features::effects11.DrawVolumetricRays();
 #endif
-
-	if (globals::features::rainRendering.loaded)
-		globals::features::rainRendering.DrawBeforeWater();
 }
 
 void Deferred::EndDeferred()
@@ -769,6 +766,8 @@ void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 	state->inWorld = true;
 	state->worldRenderedThisFrame = true;
 	func(a1);
+	if (globals::features::rainRendering.loaded)
+		globals::features::rainRendering.DrawForcedRainFallback();
 
 	state->inWorld = false;
 	state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);

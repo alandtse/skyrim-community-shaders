@@ -294,17 +294,9 @@ void LocalExposure::SetupResources()
 void LocalExposure::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&setupCS, &downsampleCS, &blurHorizontalCS, &blurVerticalCS, &gridCS, &resolveCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ setupCS, downsampleCS, blurHorizontalCS, blurVerticalCS, gridCS, resolveCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/LocalExposure");

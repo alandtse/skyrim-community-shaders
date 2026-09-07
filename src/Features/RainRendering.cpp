@@ -53,7 +53,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainCurtainMaxDensity,
 	RainIntersectionFadeDistance,
 	RainDebugMode,
-	EnableGlassyRain,
 	EnableRainRefraction,
 	RainCoreDarkening,
 	RainEdgeHighlight,
@@ -61,7 +60,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainRefractionDistance,
 	RainStreakVariation,
 	RainLocalLightResponse,
-	EnableTexturedRain,
 	RainTexturePath,
 	RainTextureNormalStrength,
 	RainTextureReflectionStrength,
@@ -555,9 +553,7 @@ void RainRendering::NormalizeSettings()
 	settings.ForceRainRendering = settings.ForceRainRendering ? 1u : 0u;
 	settings.EnableRainRoofOcclusion = settings.EnableRainRoofOcclusion ? 1u : 0u;
 	settings.EnableRainWind = settings.EnableRainWind ? 1u : 0u;
-	settings.EnableGlassyRain = settings.EnableGlassyRain ? 1u : 0u;
 	settings.EnableRainRefraction = settings.EnableRainRefraction ? 1u : 0u;
-	settings.EnableTexturedRain = settings.EnableTexturedRain ? 1u : 0u;
 	if (settings.RainTexturePath.empty())
 		settings.RainTexturePath = kDefaultRainTexturePath;
 
@@ -590,7 +586,7 @@ void RainRendering::NormalizeSettings()
 
 bool RainRendering::UsesWaterMaterial() const
 {
-	return settings.EnableGlassyRain && (settings.RainDebugMode == 0 || settings.RainDebugMode >= 6);
+	return settings.RainDebugMode == 0 || settings.RainDebugMode >= 6;
 }
 
 void RainRendering::ApplyPerformanceProfile(PerfProfile a_profile)
@@ -773,16 +769,50 @@ bool RainRendering::EnsureRainSampler()
 	return true;
 }
 
+std::filesystem::path RainRendering::ResolveRainTexturePath(const std::filesystem::path& a_path) const
+{
+	if (a_path.empty())
+		return {};
+	if (a_path.is_absolute())
+		return Util::PathHelpers::SafeExists(a_path) ? a_path : std::filesystem::path{};
+
+	const auto virtualPath = Util::PathHelpers::GetDataPath().parent_path() / a_path;
+	if (Util::PathHelpers::SafeExists(virtualPath))
+		return virtualPath;
+
+	const auto realPath = Util::PathHelpers::GetRealPathFromDataRelative(a_path);
+	return Util::PathHelpers::SafeExists(realPath) ? realPath : std::filesystem::path{};
+}
+
 bool RainRendering::EnsureRainTexture()
 {
 	if (rainTextureLoadAttempted)
 		return rainTextureSRV != nullptr;
 	rainTextureLoadAttempted = true;
+	if (!EnsureRainSampler()) {
+		logger::warn("[RainRendering] Drop texture sampler unavailable; glassy rain cannot render");
+		return false;
+	}
+
 	ImVec2 dimensions{};
-	// The shared PNG loader preserves linear normal data and creates the mip chain once.
-	if (!Util::LoadTextureFromFile(globals::d3d::device, settings.RainTexturePath.c_str(), rainTextureSRV.put(), dimensions) || !EnsureRainSampler()) {
+	auto loadTexture = [&](const std::filesystem::path& a_source) {
+		const auto resolvedPath = ResolveRainTexturePath(a_source);
+		return !resolvedPath.empty() &&
+		       Util::LoadTextureFromFile(globals::d3d::device, resolvedPath.string().c_str(), rainTextureSRV.put(), dimensions);
+	};
+
+	const std::filesystem::path selectedPath{ settings.RainTexturePath };
+	bool loadedTexture = loadTexture(selectedPath);
+	if (!loadedTexture && selectedPath.lexically_normal() != std::filesystem::path(kDefaultRainTexturePath).lexically_normal()) {
+		logger::warn("[RainRendering] Drop texture unavailable: {}; loading bundled default", settings.RainTexturePath);
+		loadedTexture = loadTexture(kDefaultRainTexturePath);
+		if (loadedTexture)
+			settings.RainTexturePath = kDefaultRainTexturePath;
+	}
+
+	if (!loadedTexture) {
 		rainTextureSRV = nullptr;
-		logger::warn("[RainRendering] Drop texture unavailable: {}; using procedural rain", settings.RainTexturePath);
+		logger::warn("[RainRendering] Bundled drop texture unavailable; glassy rain cannot render");
 		return false;
 	}
 	rainTextureSize = { dimensions.x, dimensions.y };
@@ -958,7 +988,7 @@ void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2
 		glassy ? ClampFinite(settings.RainStreakVariation, kUnitRange.minimum, kUnitRange.maximum, defaults.RainStreakVariation) : 0.0f,
 		ClampFinite(settings.RainEnvironmentTransmission, kUnitRange.minimum, kUnitRange.maximum, defaults.RainEnvironmentTransmission) };
 	a_data.ScreenSize = { a_size.x, a_size.y, 1.0f / a_description.Width, 1.0f / a_description.Height };
-	a_data.TexturedRain = { glassy && settings.EnableTexturedRain && rainTextureSRV ? 1.0f : 0.0f,
+	a_data.TexturedRain = { glassy && rainTextureSRV && refractionSampler ? 1.0f : 0.0f,
 		ClampFinite(settings.RainTextureNormalStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainTextureNormalStrength),
 		ClampFinite(settings.RainTextureReflectionStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainTextureReflectionStrength), refractionSampler && GetRainEnvironment() ? 1.0f : 0.0f };
 	a_data.RainTextureShape = { rainTextureSize.x, rainTextureSize.y,
@@ -1064,19 +1094,15 @@ RainRendering::PerFrame RainRendering::BuildPerFrameData(
 	return data;
 }
 
-void RainRendering::DrawBeforeWater()
+void RainRendering::DrawAtVanillaRainPass()
 {
-	const uint32_t frame = globals::state->frameCount;
-	const bool waterWasRecentlyBlended =
-		lastWaterBlendFrame != UINT32_MAX && frame - lastWaterBlendFrame <= 1u;
-	if (!waterWasRecentlyBlended)
-		DrawRain();
+	DrawRain();
 }
 
-void RainRendering::DrawAfterWater()
+void RainRendering::DrawForcedRainFallback()
 {
-	lastWaterBlendFrame = globals::state->frameCount;
-	DrawRain();
+	if (settings.ForceRainRendering)
+		DrawRain();
 }
 
 void RainRendering::DrawRain()
@@ -1116,16 +1142,16 @@ void RainRendering::DrawRain()
 		renderPathReady = false;
 		return;
 	}
+	const bool usesWaterMaterial = UsesWaterMaterial();
+	if (usesWaterMaterial && !EnsureRainTexture()) {
+		renderPathReady = false;
+		return;
+	}
 	renderPathReady = true;
 	lastDrawFrame = frame;
 
 	CS_GPU_PASS("RainRendering::AirborneRain");
-	if (UsesWaterMaterial()) {
-		EnsureRainSampler();
-		if (settings.EnableTexturedRain)
-			EnsureRainTexture();
-	}
-	const bool hasSceneColor = mainTarget.SRV && UsesWaterMaterial() && settings.EnableRainRefraction &&
+	const bool hasSceneColor = mainTarget.SRV && usesWaterMaterial && settings.EnableRainRefraction &&
 	                           settings.RainSceneRefractionMix > 0.0f && settings.RainRefractionStrength > 0.0f &&
 	                           EnsureSceneColorCopy(mainTarget.texture, mainTarget.RTV);
 

@@ -723,12 +723,7 @@ void ScreenSpaceGI::SetupResources()
 
 void ScreenSpaceGI::ClearShaderCache()
 {
-	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &giEye0OnlyCompute, &blurCompute, &stereoSyncCompute, &reprojectCompute, &reprojectDebugCompute, &upsampleCompute
-	};
-
-	for (auto shader : shaderPtrs)
-		*shader = nullptr;
+	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute });
 
 	CompileComputeShaders();
 }

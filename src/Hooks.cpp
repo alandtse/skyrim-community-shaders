@@ -313,9 +313,6 @@ namespace WaterBlendHistory
 				clearColor);
 
 			func(imageSpaceShader, shape, param);
-
-			if (globals::features::rainRendering.loaded)
-				globals::features::rainRendering.DrawAfterWater();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -422,6 +419,10 @@ namespace PostProcessingExtensions
 		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 		{
 			func(This, Pass, RenderFlags);
+			if (globals::features::rainRendering.loaded &&
+				globals::state->currentPixelDescriptor == static_cast<uint32_t>(SIE::ShaderCache::ParticleShaderTechniques::EnvCubeRain)) {
+				globals::features::rainRendering.DrawAtVanillaRainPass();
+			}
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)
 				globals::features::effects11.ModifyParticle(Pass);

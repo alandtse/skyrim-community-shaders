@@ -403,35 +403,12 @@ void DoF::SetupResources()
 void DoF::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&UpdateFocusCS,
-		&CalculateCoCCS,
-		&CoCTileFlattenCS,
-		&CoCTileDilateHCS,
-		&CoCTileDilateVCS,
-		&DownsampleCS,
-		&DownsampleLegacyCS,
-		&ReduceColorCoCCS,
-		&ReduceColorCS,
-		&FarBlurCS,
-		&NearBlurCS,
-		&FarGatherCS[0],
-		&FarGatherCS[1],
-		&NearGatherCS[0],
-		&NearGatherCS[1],
-		&GatherPostfilterCS,
-		&CombinerCS,
-		&PostSmoothing1CS,
-		&PostSmoothing2AndFocusingCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ UpdateFocusCS, CalculateCoCCS, CoCTileFlattenCS, CoCTileDilateHCS, CoCTileDilateVCS,
+			DownsampleCS, DownsampleLegacyCS, ReduceColorCoCCS, ReduceColorCS, FarBlurCS, NearBlurCS,
+			FarGatherCS[0], FarGatherCS[1], NearGatherCS[0], NearGatherCS[1],
+			GatherPostfilterCS, CombinerCS, PostSmoothing1CS, PostSmoothing2AndFocusingCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/DoF");

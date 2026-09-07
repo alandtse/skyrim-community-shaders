@@ -8,6 +8,7 @@
 #endif
 
 #define RAIN_COMPUTE_GROUP_SIZE 128
+#define RAIN_PREFIX_GROUP_SIZE 1024
 
 struct RainDrop
 {
@@ -152,6 +153,7 @@ void RejectDrop(uint dropIndex, float3 position)
 }
 
 static const float RainFrustumGuardBand = 0.05f;
+static const float RainRefractionDepthFade = 12.0f;
 
 bool RainCapsuleOutsidePlane(float4 plane, float3 startPosition, float3 endPosition, float radius)
 {
@@ -358,7 +360,9 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 		}
 	}
 #endif
-	float opacity = Streak.w * roofVisibility * WeatherFallDepth.x * lerp(1.0f, 0.55f, distanceRatio);
+	float opacity = roofVisibility * WeatherFallDepth.x * lerp(1.0f, 0.55f, distanceRatio);
+	if (Glassy.x <= 0.5f)
+		opacity *= Streak.w;
 
 	float lightLuminance = dot(max(LightColor.rgb, 0.0f), float3(0.2126f, 0.7152f, 0.0722f));
 	float lighting = lerp(1.0f, 0.35f + sqrt(saturate(lightLuminance)), saturate(Appearance.y));
@@ -420,16 +424,16 @@ groupshared uint RainGroupScan[RAIN_COMPUTE_GROUP_SIZE];
 		RainGroupOffsetsRW[groupID.x] = RainGroupScan[RAIN_COMPUTE_GROUP_SIZE - 1u];
 }
 
-groupshared uint RainGroupPrefixScan[512];
+groupshared uint RainGroupPrefixScan[RAIN_PREFIX_GROUP_SIZE];
 
-[numthreads(512, 1, 1)] void RainPrefixCS(uint3 groupThreadID : SV_GroupThreadID) {
+[numthreads(RAIN_PREFIX_GROUP_SIZE, 1, 1)] void RainPrefixCS(uint3 groupThreadID : SV_GroupThreadID) {
 	uint groupCount = (LayerCounts.w + RAIN_COMPUTE_GROUP_SIZE - 1u) / RAIN_COMPUTE_GROUP_SIZE;
 	uint groupIndex = groupThreadID.x;
 	uint groupVisibleCount = groupIndex < groupCount ? RainGroupOffsetsRW[groupIndex] : 0u;
 	RainGroupPrefixScan[groupIndex] = groupVisibleCount;
 	GroupMemoryBarrierWithGroupSync();
 
-	[unroll] for (uint offset = 1u; offset < 512u; offset <<= 1u)
+	[unroll] for (uint offset = 1u; offset < RAIN_PREFIX_GROUP_SIZE; offset <<= 1u)
 	{
 		uint precedingCount = groupIndex >= offset ? RainGroupPrefixScan[groupIndex - offset] : 0u;
 		GroupMemoryBarrierWithGroupSync();
@@ -440,7 +444,7 @@ groupshared uint RainGroupPrefixScan[512];
 	if (groupIndex < groupCount)
 		RainGroupOffsetsRW[groupIndex] = RainGroupPrefixScan[groupIndex] - groupVisibleCount;
 	if (groupIndex == 0u) {
-		uint visibleDropCount = RainGroupPrefixScan[511];
+		uint visibleDropCount = RainGroupPrefixScan[RAIN_PREFIX_GROUP_SIZE - 1u];
 		RainIndirectArgsRW.Store(0, 12u);
 #ifdef VR
 		RainIndirectArgsRW.Store(4, visibleDropCount * 2u);
@@ -555,7 +559,7 @@ RainVertexOutput RainVS(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
 		// The two world-space ribbons share one coverage budget and identical weights in both eyes.
 		ribbonCoverage = ribbonFacing[planeIndex] / max(ribbonFacing.x + ribbonFacing.y, 1e-5f);
 		output.LightDirection = drop.LightDirection;
-		if (TexturedRain.x > 0.5f && output.DetailFade > 0.0f) {
+		if (TexturedRain.x > 0.5f) {
 			float2 projectedAlong = ProjectWorldVectorToPixels(
 				streakAxis * drop.PositionLength.w * 0.5f, centerClip, eyeIndex);
 			float halfLength = length(projectedAlong);
@@ -611,21 +615,24 @@ float4 RainPS(RainVertexOutput input) : SV_Target0
 	{
 		float resolvedWidth = smoothstep(0.35f, 1.25f, input.ScreenSideAndWidth.z);
 		RainMaterial::Surface water = RainMaterial::Evaluate(input, widthFade * endFade * spawnReveal, resolvedWidth);
-		float coverage = input.ColorOpacity.a * water.Opacity * intersectionFade;
-		if (coverage <= 1e-4f)
+		float opticalCoverage = input.ColorOpacity.a * water.Opacity * intersectionFade;
+		if (opticalCoverage <= 1e-4f)
 			discard;
-		float transmission = (1.0f - water.Fresnel) * (1.0f - Glassy.y * water.Core);
+		float surfaceOpacity = saturate(Streak.w);
+		float surfaceFresnel = min(water.Fresnel * surfaceOpacity, RainMaterial::MaximumSurfaceFresnel);
+		float transmission = (1.0f - surfaceFresnel) * (1.0f - Glassy.y * water.Core);
 		float refractionAmount = Refraction.y > 0.5f ? input.DetailFade * MaterialLighting.z : 0.0f;
 		float environmentAmount = TexturedRain.w > 0.5f ? Refraction.w * (1.0f - refractionAmount) : 0.0f;
-		float3 waterRadiance = water.Reflection + water.LocalLighting + water.DirectionalLighting +
+		float reflectionScale = surfaceFresnel / max(water.Fresnel, 1e-4f);
+		float3 waterRadiance = water.Reflection * reflectionScale + water.DirectLighting + water.ScatteredLighting * surfaceOpacity +
 		                       water.EnvironmentTransmission * transmission * environmentAmount;
 		// Preserve a restrained glass rim when environment grading drives every sampled light source to black.
 		float visibilityShape = saturate(water.Fresnel * 0.85f + water.Core * 0.15f);
 		float3 minimumVisibility = Color::IrradianceToLinear(float3(0.62f, 0.72f, 0.82f)) *
 		                           Appearance.x * Appearance.z * visibilityShape;
-		waterRadiance += minimumVisibility;
+		waterRadiance += minimumVisibility * surfaceOpacity;
 		float2 actualDisplacement = 0.0f;
-		[branch] if (refractionAmount > 0.0f && coverage > 0.0f)
+		[branch] if (refractionAmount > 0.0f && opticalCoverage > 0.0f)
 		{
 			float eyeWidth = ScreenSize.x;
 #	ifdef VR
@@ -658,7 +665,7 @@ float4 RainPS(RainVertexOutput input) : SV_Target0
 				min(
 					HalfResolutionSceneDepth.Load(int3(clamp(sampleBase + float2(0, 1), halfMinimum, halfMaximum), 0)),
 					HalfResolutionSceneDepth.Load(int3(clamp(sampleBase + 1.0f, halfMinimum, halfMaximum), 0))));
-			float safeRefraction = saturate((refractedDepth - input.ViewDepth) / max(WeatherFallDepth.w, 1.0f));
+			float safeRefraction = saturate((refractedDepth - input.ViewDepth) / RainRefractionDepthFade);
 			actualDisplacement = (refractedPixel - pixel) * safeRefraction * refractionAmount;
 			float2 halfResolution = float2(halfWidth, halfHeight);
 			float3 background = SceneColor.SampleLevel(RefractionSampler, halfPixel / halfResolution, 0).rgb;
@@ -668,16 +675,16 @@ float4 RainPS(RainVertexOutput input) : SV_Target0
 		// Unsampled transmission stays in the destination blend, keeping the water body clear at every LOD.
 		float extinction = 1.0f - transmission * (1.0f - environmentAmount - refractionAmount);
 		color = Color::IrradianceToGamma(waterRadiance / max(extinction, 1e-4f));
-		alpha = coverage * extinction;
+		alpha = opticalCoverage * extinction;
 		if (GridAndDebug.w == 6u) {
 			color = float3(abs(actualDisplacement) / max(Glassy.w, 1.0f), 0.0f);
-			alpha = coverage;
+			alpha = opticalCoverage;
 		} else if (GridAndDebug.w == 7u) {
 			color = Color::IrradianceToGamma(water.LocalLighting);
-			alpha = coverage;
+			alpha = opticalCoverage;
 		} else if (GridAndDebug.w == 8u) {
 			color = water.NormalWorld * 0.5f + 0.5f;
-			alpha = coverage;
+			alpha = opticalCoverage;
 		}
 	}
 	return float4(color, alpha);

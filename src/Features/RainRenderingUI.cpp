@@ -66,36 +66,6 @@ void RainRendering::DrawPerformanceSettings()
 	NormalizeSettings();
 }
 
-void RainRendering::ApplyGlassyReferenceSettings()
-{
-	const auto& defaults = GetDefaultSettings();
-	settings.EnableRainRendering = defaults.EnableRainRendering;
-	settings.EnableGlassyRain = defaults.EnableGlassyRain;
-	settings.EnableTexturedRain = 1u;
-	settings.EnableRainRefraction = defaults.EnableRainRefraction;
-	settings.RainStreakWidth = defaults.RainStreakWidth;
-	settings.RainStreakLength = defaults.RainStreakLength;
-	settings.RainVelocityStretch = defaults.RainVelocityStretch;
-	settings.RainOpacity = defaults.RainOpacity;
-	settings.RainBrightness = defaults.RainBrightness;
-	settings.RainLightingResponse = defaults.RainLightingResponse;
-	settings.RainMinimumVisibility = defaults.RainMinimumVisibility;
-	settings.RainCoreDarkening = defaults.RainCoreDarkening;
-	settings.RainEdgeHighlight = defaults.RainEdgeHighlight;
-	settings.RainRefractionStrength = defaults.RainRefractionStrength;
-	settings.RainRefractionDistance = defaults.RainRefractionDistance;
-	settings.RainTextureNormalStrength = defaults.RainTextureNormalStrength;
-	settings.RainTextureReflectionStrength = defaults.RainTextureReflectionStrength;
-	settings.RainTextureUVWidth = defaults.RainTextureUVWidth;
-	settings.RainEnvironmentTransmission = defaults.RainEnvironmentTransmission;
-	settings.RainSceneRefractionMix = defaults.RainSceneRefractionMix;
-	settings.RainHighlightRoughness = defaults.RainHighlightRoughness;
-	settings.RainLightScattering = defaults.RainLightScattering;
-	settings.RainLocalLightResponse = defaults.RainLocalLightResponse;
-	settings.RainDebugMode = 0;
-	NormalizeSettings();
-}
-
 void RainRendering::DrawGeneralSettings()
 {
 	DrawFlagCheckbox(T(TKEY("enable"), "Enable Airborne Rain"), settings.EnableRainRendering);
@@ -160,13 +130,7 @@ void RainRendering::DrawTextureSettings(bool a_usesWaterMaterial)
 	if (!ImGui::TreeNodeEx(T(TKEY("texture_map"), "Drop Texture")))
 		return;
 
-	ImGui::BeginDisabled(!a_usesWaterMaterial);
-	DrawFlagCheckbox(T(TKEY("textured_rain"), "Textured Water Drops"), settings.EnableTexturedRain);
-	ImGui::EndDisabled();
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("textured_rain_tooltip"), "Uses an optional normal/opacity map on world-space streaks when one is available. Reuses Dynamic Cubemaps when available."));
-
-	ImGui::TextWrapped("%s", T(TKEY("texture_install_help"), "Airborne Rain includes a default RGBA normal/opacity texture. To use your own without replacing it, install your texture here:"));
+	ImGui::TextWrapped("%s", T(TKEY("texture_install_help"), "Glassy rain requires an RGBA normal/opacity texture. Airborne Rain includes a default; to use your own without replacing it, install your texture here:"));
 	ImGui::Indent();
 	ImGui::TextUnformatted(kCustomRainTexturePath);
 	ImGui::Unindent();
@@ -175,7 +139,7 @@ void RainRendering::DrawTextureSettings(bool a_usesWaterMaterial)
 	if (ImGui::Button(T(TKEY("use_default_texture"), "Use Default Texture")))
 		SelectRainTexture(kDefaultRainTexturePath);
 	ImGui::SameLine();
-	const bool customTextureAvailable = Util::PathHelpers::SafeExists(kCustomRainTexturePath);
+	const bool customTextureAvailable = !ResolveRainTexturePath(kCustomRainTexturePath).empty();
 	ImGui::BeginDisabled(!customTextureAvailable);
 	if (ImGui::Button(T(TKEY("use_custom_texture"), "Use Custom Texture")))
 		SelectRainTexture(kCustomRainTexturePath);
@@ -184,7 +148,7 @@ void RainRendering::DrawTextureSettings(bool a_usesWaterMaterial)
 		ImGui::TextDisabled("%s", T(TKEY("custom_texture_unavailable"), "No custom texture was found at the path above."));
 
 	const auto effects11RainTexture = GetEffects11RainTexturePath();
-	const bool effects11TextureAvailable = !effects11RainTexture.empty() && Util::PathHelpers::SafeExists(effects11RainTexture);
+	const bool effects11TextureAvailable = !ResolveRainTexturePath(effects11RainTexture).empty();
 	ImGui::BeginDisabled(!effects11TextureAvailable);
 	if (ImGui::Button(T(TKEY("load_effects11_texture"), "Load from Effects 11 Preset")))
 		SelectRainTexture(effects11RainTexture);
@@ -195,11 +159,11 @@ void RainRendering::DrawTextureSettings(bool a_usesWaterMaterial)
 	if (rainTextureSRV)
 		Util::Text::Success(T(TKEY("texture_loaded"), "Drop texture loaded (%.0f x %.0f)."), rainTextureSize.x, rainTextureSize.y);
 	else if (rainTextureLoadAttempted)
-		Util::Text::WrappedWarning(T(TKEY("rain_texture_unavailable"), "Drop texture not found at %s; using procedural rain."), settings.RainTexturePath.c_str());
+		Util::Text::WrappedWarning(T(TKEY("rain_texture_unavailable"), "Drop texture not found at %s; glassy rain cannot render."), settings.RainTexturePath.c_str());
 	else
-		ImGui::TextDisabled("%s", T(TKEY("texture_pending"), "The file is checked when textured rain next renders."));
+		ImGui::TextDisabled("%s", T(TKEY("texture_pending"), "The file is checked when glassy rain next renders."));
 
-	ImGui::BeginDisabled(!a_usesWaterMaterial || !settings.EnableTexturedRain);
+	ImGui::BeginDisabled(!a_usesWaterMaterial);
 	ImGui::SliderFloat(T(TKEY("texture_normals"), "Drop Curvature"), &settings.RainTextureNormalStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, "%.2f");
 	ImGui::SliderFloat(T(TKEY("texture_reflections"), "Water Reflection Strength"), &settings.RainTextureReflectionStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, "%.2f");
 	ImGui::SliderFloat(T(TKEY("texture_uv_width"), "Texture UV Width"), &settings.RainTextureUVWidth, kTextureUVWidthRange.minimum, kTextureUVWidthRange.maximum, "%.2f");
@@ -218,16 +182,8 @@ void RainRendering::DrawWaterMaterialSettings()
 	if (!ImGui::TreeNodeEx(T(TKEY("water_material"), "Water Material"), ImGuiTreeNodeFlags_DefaultOpen))
 		return;
 
-	if (ImGui::Button(T(TKEY("glassy_reference"), "Apply Glassy Reference Look")))
-		ApplyGlassyReferenceSettings();
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("glassy_reference_tooltip"), "Enables textured/refraction rain and tunes width, stretch, opacity, brightness, curvature and reflection for clearer water bodies. Keeps density, drop count, weather forcing and volume unchanged."));
-
-	DrawFlagCheckbox(T(TKEY("glassy_rain"), "Glassy Rain"), settings.EnableGlassyRain);
 	const bool usesWaterMaterial = UsesWaterMaterial();
-	if (!settings.EnableGlassyRain)
-		ImGui::TextDisabled("%s", T(TKEY("glassy_inactive"), "Material: standard streaks (Glassy Rain is off)"));
-	else if (!usesWaterMaterial)
+	if (!usesWaterMaterial)
 		ImGui::TextDisabled("%s", T(TKEY("glassy_debug_suspended"), "Material: diagnostic output replaces the water material in this debug mode"));
 	else
 		Util::Text::Success("%s", T(TKEY("glassy_active"), "Material: transparent water"));
@@ -266,7 +222,7 @@ void RainRendering::DrawWaterMaterialSettings()
 		ImGui::BeginDisabled(!settings.EnableRainRefraction);
 		ImGui::SliderFloat(T(TKEY("scene_distortion_mix"), "Scene Distortion Mix"), &settings.RainSceneRefractionMix, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("scene_distortion_mix_tooltip"), "Transmission taken from the distorted scene inside nearby drops. One gives scene distortion priority over cubemap transmission; Rain Opacity controls the drop's coverage."));
+			ImGui::TextUnformatted(T(TKEY("scene_distortion_mix_tooltip"), "Transmission taken from the distorted scene inside nearby drops. One gives scene distortion priority over cubemap transmission; Rain Opacity controls broad reflection and scattering without weakening refraction or direct light glints."));
 		ImGui::SliderFloat(T(TKEY("refraction_distance"), "Glassy Detail Distance"), &settings.RainRefractionDistance, kRefractionDistanceRange.minimum, kRefractionDistanceRange.maximum, "%.0f units");
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
@@ -328,7 +284,7 @@ void RainRendering::DrawDiagnosticsSettings()
 	if (ImGui::Combo(T(TKEY("debug_mode"), "Debug Visualization"), &debugMode, debugModes, static_cast<int>(std::size(debugModes))))
 		settings.RainDebugMode = static_cast<uint>(debugMode);
 	if (settings.RainDebugMode >= 6)
-		ImGui::TextWrapped("%s", T(TKEY("water_debug_help"), "Water diagnostics require Glassy Rain. Distortion: red = horizontal displacement, green = vertical; black = no effective distortion. Local Light Contribution excludes sunlight and cubemap reflections."));
+		ImGui::TextWrapped("%s", T(TKEY("water_debug_help"), "Distortion: red = horizontal displacement, green = vertical; black = no effective distortion. Local Light Contribution excludes sunlight and cubemap reflections."));
 	ImGui::TreePop();
 }
 

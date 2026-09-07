@@ -20,7 +20,7 @@ private:
 		T maximum;
 	};
 
-	static constexpr uint32_t kMaximumDropCount = 65536;
+	static constexpr uint32_t kMaximumDropCount = 131072;
 	static constexpr uint32_t kRainComputeGroupSize = 128;
 	static constexpr uint32_t kMaximumCompactionGroupCount = kMaximumDropCount / kRainComputeGroupSize;
 	static constexpr uint32_t kMaximumDebugMode = 8;
@@ -79,49 +79,47 @@ public:
 		uint ForceRainRendering = 0;
 		uint EnableRainRoofOcclusion = 1;
 		uint EnableRainWind = 1;
-		uint RainDropCount = 20495;
-		uint RainOverheadDropCount = 30;
+		uint RainDropCount = 65536;
+		uint RainOverheadDropCount = 32;
 		float RainDensity = 2.0f;
 		float RainFallSpeed = 2336.0f;
 		float RainWindInfluence = 2.0f;
 
 		float RainStreakLength = 72.0f;
 		float RainVelocityStretch = 0.045f;
-		float RainStreakWidth = 3.60f;
+		float RainStreakWidth = 1.54f;
 
 		float RainOpacity = 0.20f;
 		float RainBrightness = 0.85f;
-		float RainLightingResponse = 0.51f;
+		float RainLightingResponse = 0.13f;
 		float RainMinimumVisibility = 0.02f;
 		float RainNearCutoffDistance = 4.0f;
-		float RainFarDistance = 6000.0f;
-		float RainNearLayerDistance = 1065.0f;
-		float RainMidLayerDistance = 2420.0f;
-		float RainNearBudgetWeight = 4.00f;
+		float RainFarDistance = 10468.0f;
+		float RainNearLayerDistance = 1324.0f;
+		float RainMidLayerDistance = 3056.0f;
+		float RainNearBudgetWeight = 1.01f;
 		float RainMidBudgetWeight = 1.00f;
-		float RainFarBudgetWeight = 0.15f;
-		float RainDensityNoiseScale = 5089.0f;
+		float RainFarBudgetWeight = 0.44f;
+		float RainDensityNoiseScale = 2596.0f;
 		float RainDensityNoiseStrength = 0.76f;
 
-		float RainCurtainScale = 7500.0f;
-		float RainCurtainStrength = 0.80f;
-		float RainCurtainContrast = 1.75f;
+		float RainCurtainScale = 4068.0f;
+		float RainCurtainStrength = 0.33f;
+		float RainCurtainContrast = 1.15f;
 
-		float RainCurtainMinDensity = 0.28f;
-		float RainCurtainMaxDensity = 1.85f;
+		float RainCurtainMinDensity = 0.51f;
+		float RainCurtainMaxDensity = 1.50f;
 
 		float RainIntersectionFadeDistance = 200.0f;
 		uint RainDebugMode = 0;
 
-		uint EnableGlassyRain = 1;
 		uint EnableRainRefraction = 1;
 		float RainCoreDarkening = 0.08f;
 		float RainEdgeHighlight = 1.0f;
 		float RainRefractionStrength = 6.0f;
 		float RainRefractionDistance = 6000.0f;
-		float RainStreakVariation = 0.45f;
+		float RainStreakVariation = 0.75f;
 		float RainLocalLightResponse = 1.5f;
-		uint EnableTexturedRain = 0;
 		std::string RainTexturePath = kDefaultRainTexturePath;
 		float RainTextureNormalStrength = 2.0f;
 		float RainTextureReflectionStrength = 1.0f;
@@ -222,10 +220,10 @@ public:
 	/** @brief Releases runtime-compiled shaders so they can be rebuilt on demand. */
 	void ClearShaderCache() override;
 
-	/** @brief Draws rain before water when no water composite was observed recently. */
-	void DrawBeforeWater();
-	/** @brief Draws rain after the water composite and records the water-active frame. */
-	void DrawAfterWater();
+	/** @brief Draws airborne rain at Skyrim's native rain-particle pass. */
+	void DrawAtVanillaRainPass();
+	/** @brief Draws forced test rain when no native rain-particle pass ran this frame. */
+	void DrawForcedRainFallback();
 
 private:
 	struct WeatherRainState
@@ -245,7 +243,6 @@ private:
 	void DrawSpatialVariationSettings();
 	void DrawOcclusionSettings();
 	void DrawDiagnosticsSettings();
-	void ApplyGlassyReferenceSettings();
 	static const Settings& GetDefaultSettings();
 	static float GetNearLayerMaximum(float a_farDistance);
 	static float GetMidLayerMinimum(float a_nearDistance);
@@ -260,6 +257,7 @@ private:
 	bool EnsureShaders();
 	bool EnsureRainSampler();
 	bool EnsureRainTexture();
+	std::filesystem::path ResolveRainTexturePath(const std::filesystem::path& a_path) const;
 	std::filesystem::path GetEffects11RainTexturePath() const;
 	void SelectRainTexture(const std::filesystem::path& a_path);
 	bool EnsureSceneColorShaders();
@@ -302,6 +300,5 @@ private:
 	bool sceneColorCopyFailed = false;
 	bool shaderCompileAttempted = false;
 	bool renderPathReady = false;
-	uint32_t lastWaterBlendFrame = UINT32_MAX;
 	uint32_t lastDrawFrame = UINT32_MAX;
 };

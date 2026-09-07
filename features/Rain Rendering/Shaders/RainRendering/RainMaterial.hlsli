@@ -15,6 +15,7 @@ namespace RainMaterial
 	static const float WaterFresnelF0 = WaterFresnelRatio * WaterFresnelRatio;
 	static const float UnresolvedWaterFresnel = 0.08f;
 	static const float LensDeflectionScale = 2.0f;
+	static const float MaximumSurfaceFresnel = 0.35f;
 
 	/** @brief Filtered water shape and light response in the shared world-space streak basis. */
 	struct Surface
@@ -27,7 +28,8 @@ namespace RainMaterial
 		float3 EnvironmentTransmission;
 		float3 NormalWorld;
 		float3 LocalLighting;
-		float3 DirectionalLighting;
+		float3 DirectLighting;
+		float3 ScatteredLighting;
 	};
 
 	/** @brief Evaluates a filtered water highlight without tinting it by the environment reflection. */
@@ -54,15 +56,13 @@ namespace RainMaterial
 	}
 
 	/** @brief Shades one textured drop using a head-centered view shared by both eyes. */
-	Surface Evaluate(RainVertexOutput input, float proceduralCoverage, float resolvedWidth)
+	Surface Evaluate(RainVertexOutput input, float silhouetteFade, float resolvedWidth)
 	{
 		Surface water = (Surface)0;
-		float crossSection = clamp(input.StreakCoordinate.y, -0.98f, 0.98f);
-		float3 normalTS = normalize(float3(crossSection * TexturedRain.y, 0.0f, sqrt(1.0f - crossSection * crossSection)));
-		water.Opacity = proceduralCoverage;
+		float3 normalTS = float3(0.0f, 0.0f, 1.0f);
 		float detailWeight = input.DetailFade * resolvedWidth;
 		float mip = 0.0f;
-		[branch] if (TexturedRain.x > 0.5f && detailWeight > 0.0f)
+		[branch] if (TexturedRain.x > 0.5f)
 		{
 			float2 textureUV = float2(0.5f + input.StreakCoordinate.y * RainTextureShape.z * 0.5f, input.StreakCoordinate.x);
 			float2 projectedSize = max(float2(input.ScreenSideAndWidth.z, input.ScreenAlongAndLength.z) * 2.0f, 0.25f);
@@ -71,7 +71,7 @@ namespace RainMaterial
 			float4 normalOpacity = RainNormalOpacity.SampleLevel(RefractionSampler, textureUV, mip);
 			float3 textureNormal = normalize(float3((normalOpacity.xy * 2.0f - 1.0f) * TexturedRain.y, max(normalOpacity.z * 2.0f - 1.0f, 0.05f)));
 			normalTS = normalize(lerp(normalTS, textureNormal, detailWeight));
-			water.Opacity = lerp(proceduralCoverage, saturate(normalOpacity.a), detailWeight);
+			water.Opacity = saturate(normalOpacity.a) * silhouetteFade;
 		}
 		float3 planeNormal = cross(input.StreakSideWorld, input.StreakAxisWorld);
 		planeNormal *= dot(planeNormal, input.HeadViewDirection) < 0.0f ? -1.0f : 1.0f;
@@ -112,13 +112,18 @@ namespace RainMaterial
 		float directionConfidence = saturate(dot(input.LightDirection.xyz, input.LightDirection.xyz));
 		float3 localDirection = SafeNormalize(input.LightDirection.xyz, input.HeadViewDirection);
 		float3 localHighlight = DirectHighlight(normalWS, input.HeadViewDirection, localDirection, roughness) * directionConfidence;
-		water.LocalLighting = localIrradiance * (localHighlight * TexturedRain.z +
-													MaterialLighting.y * input.LightDirection.w * water.Core * (1.0f - water.Fresnel));
+		float3 localDirectLighting = localIrradiance * localHighlight * TexturedRain.z;
+		float3 localScatteredLighting =
+			localIrradiance * MaterialLighting.y * input.LightDirection.w * water.Core * (1.0f - water.Fresnel);
+		water.LocalLighting = localDirectLighting + localScatteredLighting;
 		float3 sunDirection = SafeNormalize(SharedData::DirLightDirection.xyz, float3(0.0f, 0.0f, 1.0f));
 		float3 sunHighlight = DirectHighlight(normalWS, input.HeadViewDirection, sunDirection, roughness);
 		float sunScattering = 0.1f + pow(saturate(dot(-sunDirection, input.HeadViewDirection)), 4.0f);
-		water.DirectionalLighting = DirectionalIrradiance() * (sunHighlight * TexturedRain.z +
-																  MaterialLighting.y * sunScattering * water.Core * (1.0f - water.Fresnel));
+		float3 directionalIrradiance = DirectionalIrradiance();
+		float3 directionalDirectLighting = directionalIrradiance * sunHighlight * TexturedRain.z;
+		water.DirectLighting = localDirectLighting + directionalDirectLighting;
+		water.ScatteredLighting = localScatteredLighting +
+		                          directionalIrradiance * MaterialLighting.y * sunScattering * water.Core * (1.0f - water.Fresnel);
 		return water;
 	}
 }

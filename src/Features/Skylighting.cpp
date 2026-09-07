@@ -162,13 +162,7 @@ void Skylighting::SetupResources()
 
 void Skylighting::ClearShaderCache()
 {
-	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&probeUpdateCompute,
-		&occlusionOnlyProbeUpdateCompute
-	};
-
-	for (auto shader : shaderPtrs)
-		*shader = nullptr;
+	Util::ClearShaders<ID3D11ComputeShader>({ probeUpdateCompute, occlusionOnlyProbeUpdateCompute });
 
 	CompileComputeShaders();
 }
@@ -541,10 +535,13 @@ void Skylighting::RenderOcclusion()
 	auto* shaderCache = globals::shaderCache;
 	auto* renderer = globals::game::renderer;
 	auto* sky = globals::game::sky;
+	const bool interior = Util::IsInterior();
 
 	if (!shaderCache->IsEnabled()) {
-		CS_GPU_PASS("Skylighting::PrecipitationMask");
-		Precipitation::RenderOriginal();
+		if (!interior) {
+			CS_GPU_PASS("Skylighting::PrecipitationMask");
+			Precipitation::RenderOriginal();
+		}
 		return;
 	}
 
@@ -552,7 +549,6 @@ void Skylighting::RenderOcclusion()
 		return;
 
 	auto* precipitation = sky->precip;
-	const bool interior = Util::IsInterior();
 	if (!interior) {
 		CS_GPU_PASS("Skylighting::PrecipitationMask");
 		auto precipitationObject = precipitation->currentPrecip ? precipitation->currentPrecip : precipitation->lastPrecip;

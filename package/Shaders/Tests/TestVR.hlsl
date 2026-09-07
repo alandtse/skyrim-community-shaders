@@ -6,6 +6,7 @@
 #define COMPUTESHADER
 #include "/Shaders/Common/VR.hlsli"
 #include "/Shaders/Common/VRReproject.hlsli"
+#include "/Shaders/Common/VRStereoEffects.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
 static const float kEps = 0.0001f;
@@ -301,10 +302,25 @@ static const float kEps = 0.0001f;
 	ASSERT(IsTrue, abs(right.y - 0.75) < kEps);
 }
 
-	/// @tags vr, stereo, edge-detection
-	/// ClampToEyeUV: y coordinate is not modified
-	[numthreads(1, 1, 1)] void TestClampToEyeUVYUnchanged()
+	/// @tags vr, stereo, sampling, dynamic-resolution
+	/// Dynamic-resolution clamping keeps bilinear samples on either side of the eye seam
+	[numthreads(1, 1, 1)] void TestClampDynamicStereoUVToEyeTexel()
 {
+	uint2 textureDimensions = uint2(200, 100);
+	float2 resolutionScale = float2(0.8, 0.6);
+	float2 left = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+		float2(0.45, 0.3), 0, textureDimensions, resolutionScale);
+	float2 right = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+		float2(0.35, 0.3), 1, textureDimensions, resolutionScale);
+	ASSERT(IsTrue, abs(left.x - 0.3975) < kEps);
+	ASSERT(IsTrue, abs(right.x - 0.4025) < kEps);
+	ASSERT(IsTrue, abs(left.y - 0.3) < kEps);
+	ASSERT(IsTrue, abs(right.y - 0.3) < kEps);
+}
+
+/// @tags vr, stereo, edge-detection
+/// ClampToEyeUV: y coordinate is not modified
+[numthreads(1, 1, 1)] void TestClampToEyeUVYUnchanged() {
 	float2 result = Stereo::ClampToEyeUV(float2(0.25, 1.5), 0);
 	ASSERT(IsTrue, abs(result.y - 1.5) < kEps);
 
@@ -312,9 +328,10 @@ static const float kEps = 0.0001f;
 	ASSERT(IsTrue, abs(result.y - (-0.5)) < kEps);
 }
 
-/// @tags vr, stereo, uv
-/// ConvertToStereoUV clamps input x to [0,1] via saturate
-[numthreads(1, 1, 1)] void TestConvertToStereoUVClamping() {
+	/// @tags vr, stereo, uv
+	/// ConvertToStereoUV clamps input x to [0,1] via saturate
+	[numthreads(1, 1, 1)] void TestConvertToStereoUVClamping()
+{
 	// x > 1 should be clamped to 1 before conversion
 	float2 uv = float2(1.5, 0.5);
 	float2 resultLeft = Stereo::ConvertToStereoUV(uv, 0);
@@ -329,10 +346,9 @@ static const float kEps = 0.0001f;
 	ASSERT(IsTrue, abs(resultLeft.x - 0.0) < kEps);  // saturate(-0.5)=0.0, (0+0)/2=0
 }
 
-	/// @tags vr, stereo, uv
-	/// ConvertUVToNormalizedScreenSpace maps to [-1,1] range
-	[numthreads(1, 1, 1)] void TestConvertUVToNormalizedScreenSpace()
-{
+/// @tags vr, stereo, uv
+/// ConvertUVToNormalizedScreenSpace maps to [-1,1] range
+[numthreads(1, 1, 1)] void TestConvertUVToNormalizedScreenSpace() {
 	// Center of left eye (stereo UV 0.25) -> x should be near 0 (center of that eye)
 	float2 result = Stereo::ConvertUVToNormalizedScreenSpace(float2(0.25, 0.5));
 	ASSERT(IsTrue, abs(result.x - 0.0) < kEps);
@@ -358,9 +374,10 @@ static const float kEps = 0.0001f;
 	ASSERT(IsTrue, abs(result.y - 1.0) < kEps);
 }
 
-/// @tags vr, stereo, uv
-/// ApplyVelocityToUV: correctly translates UV keeping stereoscopic boundaries intact and reports bounds
-[numthreads(1, 1, 1)] void TestApplyVelocityToUV() {
+	/// @tags vr, stereo, uv
+	/// ApplyVelocityToUV: correctly translates UV keeping stereoscopic boundaries intact and reports bounds
+	[numthreads(1, 1, 1)] void TestApplyVelocityToUV()
+{
 	float2 velocity = float2(0.1, 0.0);
 	bool oob;
 

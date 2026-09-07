@@ -54,6 +54,11 @@ void VR::SaveSettings(json& o_json)
 	}
 }
 
+json VR::GetDiagnostics()
+{
+	return stereoOpt.GetDiagnostics();
+}
+
 void VR::RestoreDefaultSettings()
 {
 	settings = {};

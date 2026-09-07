@@ -23,6 +23,7 @@
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
+#include "Features/VR/VRVariableRateShading.h"
 #include "Features/VolumetricLighting.h"
 
 #include <unordered_map>
@@ -229,6 +230,13 @@ namespace EffectExtensions
 	{
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
+			// Restores the coarse VRS pattern after a grass batch (see
+			// GrassExtensions::BSGrassShader_SetupGeometry) -- VRS ring state
+			// persists on the rasterizer across draws until changed here.
+			auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+			if (vrs->IsEnabled())
+				vrs->ApplyForRenderTarget(globals::d3d::context);
+
 			func(shader, pass, renderFlags);
 			ExternalEmittance::UpdatePermutation(pass);
 			globals::state->permutationData.EffectRadius = pass->geometry->worldBound.radius;
@@ -243,6 +251,11 @@ namespace SkyExtensions
 	{
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
+			// See BSEffectShader_SetupGeometry: restores the coarse VRS pattern after grass.
+			auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+			if (vrs->IsEnabled())
+				vrs->ApplyForRenderTarget(globals::d3d::context);
+
 			globals::state->UpdateSkyShaderPermutation(pass);
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)
@@ -279,6 +292,13 @@ namespace GrassExtensions
 	{
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
+			// Coarse VRS shading rate causes visible shimmering on grass's alpha-tested,
+			// wind-animated geometry; force full rate for this and subsequent draws until
+			// BSEffectShader/BSSkyShader/BSParticleShader restores it (see those hooks).
+			auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+			if (vrs->IsEnabled())
+				vrs->ForceFullRate(globals::d3d::context);
+
 			func(shader, pass, renderFlags);
 			LegacyGraphicsCompatibility::BindLegacyGrassPerGeometryToPixelShader();
 
@@ -417,6 +437,12 @@ namespace PostProcessingExtensions
 	{
 		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 		{
+			// See EffectExtensions::BSEffectShader_SetupGeometry: restores the coarse VRS
+			// pattern after grass.
+			auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+			if (vrs->IsEnabled())
+				vrs->ApplyForRenderTarget(globals::d3d::context);
+
 			func(This, Pass, RenderFlags);
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)

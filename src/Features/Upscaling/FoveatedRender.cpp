@@ -4,6 +4,7 @@
 #include "../../I18n/I18n.h"
 #include "../../Utils/Subrect.h"
 #include "../../Utils/UI.h"
+#include "../../Utils/VRUtils.h"
 #include "../FoveatedCommon.h"
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
@@ -157,6 +158,11 @@ FoveatedRender::DlssMode FoveatedRender::GetDlssMode() const
 FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 {
 	FoveationProfile profile;
+	// Default to the real per-eye lens center (shared with VRS) rather than a bare
+	// {0, 0} -- correct even while this profile itself is inactive, in case a
+	// future consumer reads centerOffsets without gating on `available` first.
+	profile.centerOffsets[0] = Util::GetEyeLensCenterOffset(0);
+	profile.centerOffsets[1] = Util::GetEyeLensCenterOffset(1);
 	if (!IsActive())
 		return profile;
 

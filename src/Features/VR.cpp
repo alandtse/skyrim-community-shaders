@@ -5,6 +5,7 @@
 #include "ScreenSpaceGI.h"
 #include "Upscaling.h"
 #include "VR/OpenVRDetection.h"
+#include "VR/VRVariableRateShading.h"
 
 #include "State.h"
 #include "Utils/D3D.h"
@@ -28,7 +29,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StereoBlendColorThreshold,
 	ReprojectDebugMode,
 	EnableSSRFoveation,
-	EnableSSRFoveationHardCutoff)
+	EnableSSRFoveationHardCutoff,
+	EnableVariableRateShading,
+	VrsRadiusScale,
+	VrsInnerRadius,
+	VrsMidRadius,
+	VrsDebugVisualize,
+	VrsDitherStrength)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
@@ -67,6 +74,10 @@ void VR::RestoreDefaultSettings()
 
 void VR::SetupResources()
 {
+	// Runs here, not on the first EarlyPrepass, so IsAvailable() is accurate
+	// before shadow maps first render (can be long after boot).
+	VRFeatures::VRVariableRateShading::GetSingleton()->Initialize();
+
 	CompileStereoBlendShaders();
 
 	auto renderer = globals::game::renderer;
@@ -181,6 +192,27 @@ void VR::EarlyPrepass()
 {
 	// Apply culling setting each prepass based on current interior/exterior state.
 	UpdateDepthBufferCulling();
+
+	// Runs regardless of the setting so IsAvailable() is accurate before the
+	// user ever toggles the checkbox.
+	auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+	vrs->Initialize();
+	vrs->SetEnabled(settings.EnableVariableRateShading);
+	if (settings.EnableVariableRateShading && vrs->IsAvailable()) {
+		// Real lens center (vrperfkit's approach), not Foveated DLSS's crop --
+		// that isn't always configured and doesn't describe lens geometry.
+		const float2 leftOffset = Util::GetEyeLensCenterOffset(0);
+		const float2 rightOffset = Util::GetEyeLensCenterOffset(1);
+		VRFeatures::FoveationProfile profile{};
+		profile.usingRealLensCenter = leftOffset.x != 0.0f || leftOffset.y != 0.0f || rightOffset.x != 0.0f || rightOffset.y != 0.0f;
+		profile.centerOffsets[0] = leftOffset;
+		profile.centerOffsets[1] = rightOffset;
+		vrs->SetFoveationProfile(profile);
+		vrs->SetTuning(settings.VrsRadiusScale, settings.VrsInnerRadius, settings.VrsMidRadius);
+		vrs->SetDebugVisualize(settings.VrsDebugVisualize);
+		vrs->SetDitherStrength(settings.VrsDitherStrength);
+		vrs->ApplyForRenderTarget(globals::d3d::context);
+	}
 }
 
 //=============================================================================

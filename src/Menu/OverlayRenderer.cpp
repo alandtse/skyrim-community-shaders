@@ -1,5 +1,6 @@
 #include "OverlayRenderer.h"
 #include "BackgroundBlur.h"
+#include "Features/VR/VRVariableRateShading.h"
 #include "HomePageRenderer.h"
 #include "ThemeManager.h"
 
@@ -502,6 +503,14 @@ void OverlayRenderer::FinalizeImGuiFrame()
 	}
 
 	ImGui::Render();
+
+	// UI text/icons are thin, high-frequency content -- coarse VRS shading rate
+	// (still active from the last 3D pass) pixelates them badly. Force full rate for
+	// the rest of this frame's compositing; EarlyPrepass reapplies the coarse pattern
+	// next frame.
+	if (auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton(); vrs->IsEnabled()) {
+		vrs->ForceFullRate(globals::d3d::context);
+	}
 
 	// Apply background blur behind ImGui windows before rendering them
 	BackgroundBlur::RenderBackgroundBlur();

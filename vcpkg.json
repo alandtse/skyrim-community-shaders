@@ -29,6 +29,7 @@
         },
         "magic-enum",
         "detours",
+        "nvapi",
         "nlohmann-json",
         "pystring",
         "renderdoc",

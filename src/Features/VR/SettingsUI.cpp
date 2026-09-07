@@ -4,6 +4,7 @@
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/VR/VRVariableRateShading.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
@@ -183,6 +184,119 @@ namespace
 						"Cheaper, but the transition edge may be visible. Default off (feathered)."));
 			}
 			ImGui::EndDisabled();
+			ImGui::EndDisabled();
+		}
+
+		if (ImGui::CollapsingHeader(T(TKEY("vrs_header"), "Variable Rate Shading (NVIDIA)"))) {
+			auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+			using enum VRFeatures::VRVariableRateShading::UnavailableReason;
+			switch (vrs->GetUnavailableReason()) {
+			case NotVR:
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+					T(TKEY("vrs_unavailable_not_vr"), "Not available: Variable Rate Shading is VR only."));
+				break;
+			case NvApiInitFailed:
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+					T(TKEY("vrs_unavailable_no_nvapi"), "Not available: requires an NVIDIA GPU (NVAPI failed to initialize)."));
+				break;
+			case HardwareUnsupported:
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+					T(TKEY("vrs_unavailable_hw"), "Not available: this NVIDIA GPU or driver does not support hardware VRS."));
+				break;
+			default:
+				break;
+			}
+			ImGui::BeginDisabled(!vrs->IsAvailable());
+			if (ImGui::Checkbox(T(TKEY("vrs_enable"), "Enable Variable Rate Shading"), &settings.EnableVariableRateShading)) {
+				vrs->SetEnabled(settings.EnableVariableRateShading);
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("vrs_enable_tooltip"),
+						"Shades the periphery at a reduced rate around each eye's real optical\n"
+						"center. Excludes grass and other alpha-tested geometry to avoid\n"
+						"shimmering. NVIDIA only."));
+			}
+			if (settings.EnableVariableRateShading && vrs->IsEnabled()) {
+				if (ImGui::SliderFloat(T(TKEY("vrs_radius_scale"), "Coverage Radius"), &settings.VrsRadiusScale, 0.3f, 2.0f, "%.2fx")) {
+					settings.ClampToValidRanges();
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s",
+						T(TKEY("vrs_radius_scale_tooltip"),
+							"Scales the full-quality region around each eye's optical center.\n"
+							">1x widens it, <1x narrows it further."));
+				}
+				if (ImGui::SliderFloat(T(TKEY("vrs_inner_radius"), "Inner Ring (1x1)"), &settings.VrsInnerRadius, 0.05f, 0.95f, "%.2f")) {
+					settings.ClampToValidRanges();
+				}
+				if (ImGui::SliderFloat(T(TKEY("vrs_mid_radius"), "Mid Ring (1x2)"), &settings.VrsMidRadius, settings.VrsInnerRadius + 0.01f, 1.0f, "%.2f")) {
+					settings.ClampToValidRanges();
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s",
+						T(TKEY("vrs_ring_tooltip"),
+							"Fraction of the coverage radius rendered at each rate: full quality\n"
+							"inside the inner ring, half rate out to the mid ring, quarter rate out\n"
+							"to the coverage radius, and 1/16th rate beyond it."));
+				}
+				if (ImGui::Checkbox(T(TKEY("vrs_visualize_regions"), "Visualize regions"), &settings.VrsDebugVisualize)) {
+					vrs->SetDebugVisualize(settings.VrsDebugVisualize);
+				}
+				if (ImGui::SliderFloat(T(TKEY("vrs_dither_strength"), "Periphery Dither"), &settings.VrsDitherStrength, 0.0f, 1.0f, "%.2f")) {
+					settings.ClampToValidRanges();
+					vrs->SetDitherStrength(settings.VrsDitherStrength);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s",
+						T(TKEY("vrs_dither_strength_tooltip"),
+							"Breaks up the hard-edged blockiness of the reduced-rate periphery\n"
+							"with a subtle dither, the same way dithering hides color-depth\n"
+							"banding. 0 disables."));
+				}
+				const auto region = vrs->GetRegionInfo();
+				ImGui::Spacing();
+				ImGui::TextDisabled("%s",
+					region.usingRealLensCenter ?
+						T(TKEY("vrs_region_real_lens"), "Region: centered on this headset's real per-eye lens center") :
+						T(TKEY("vrs_region_symmetric"), "Region: centered symmetrically (no per-eye lens data)"));
+				ImGui::Spacing();
+				constexpr float kVrsEyeBoxWidth = 90.0f;
+				constexpr float kVrsEyeBoxHeight = 100.0f;
+				constexpr float kVrsEyeGap = 12.0f;
+				const float uiScale = Util::GetUIScale();
+				const float eyeBoxWidth = kVrsEyeBoxWidth * uiScale;
+				const float eyeBoxHeight = kVrsEyeBoxHeight * uiScale;
+				const float eyeGap = kVrsEyeGap * uiScale;
+				ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+				ImVec2 canvasSize = { eyeBoxWidth * 2.0f + eyeGap, eyeBoxHeight };
+				ImGui::InvisibleButton("##vrs_region_diagram", canvasSize);
+				auto* dl = ImGui::GetWindowDrawList();
+				for (int eye = 0; eye < 2; ++eye) {
+					ImVec2 boxMin = { canvasPos.x + eye * (eyeBoxWidth + eyeGap), canvasPos.y };
+					ImVec2 boxMax = { boxMin.x + eyeBoxWidth, boxMin.y + eyeBoxHeight };
+					dl->AddRect(boxMin, boxMax, IM_COL32(120, 120, 120, 255));
+					ImVec2 boxCenter = { (boxMin.x + boxMax.x) * 0.5f, (boxMin.y + boxMax.y) * 0.5f };
+					ImVec2 ellipseCenter = {
+						boxCenter.x + region.centerOffsets[eye].x * eyeBoxWidth,
+						boxCenter.y + region.centerOffsets[eye].y * eyeBoxHeight
+					};
+					ImVec2 outerRadius = {
+						region.outerWidthFraction * eyeBoxWidth * 0.5f,
+						region.outerHeightFraction * eyeBoxHeight * 0.5f
+					};
+					ImVec2 midRadius = { outerRadius.x * region.midRadiusFactor, outerRadius.y * region.midRadiusFactor };
+					ImVec2 innerRadius = { outerRadius.x * region.innerRadiusFactor, outerRadius.y * region.innerRadiusFactor };
+					dl->AddEllipseFilled(ellipseCenter, outerRadius, IM_COL32(80, 160, 220, 60));
+					dl->AddEllipseFilled(ellipseCenter, midRadius, IM_COL32(80, 160, 220, 110));
+					dl->AddEllipseFilled(ellipseCenter, innerRadius, IM_COL32(80, 160, 220, 200));
+					dl->AddEllipse(ellipseCenter, outerRadius, IM_COL32(80, 160, 220, 255));
+				}
+				ImGui::Spacing();
+				ImGui::TextDisabled(
+					T(TKEY("vrs_region_extent"), "Full quality (1x1): %.0f%% of eye width x %.0f%% of eye height, centered per eye"),
+					region.outerWidthFraction * region.innerRadiusFactor * 100.0f, region.outerHeightFraction * region.innerRadiusFactor * 100.0f);
+			}
 			ImGui::EndDisabled();
 		}
 	}

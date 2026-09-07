@@ -1,5 +1,7 @@
 #pragma once
 #include "D3D.h"
+#include "Globals.h"
+#include "RE/B/BSOpenVR.h"
 #include "Utils/Input.h"
 #include <SimpleMath.h>
 #include <d3d11.h>
@@ -29,6 +31,36 @@ namespace Util
 		constexpr ImVec4 Secondary = ImVec4(0.0f, 0.5f, 1.0f, 1.0f);  // Blue
 		constexpr ImVec4 Both = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);       // Green
 		constexpr ImVec4 Default = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);    // White
+	}
+
+	/**
+	 * @brief Gets an eye's true optical/lens center as a signed delta from (0.5, 0.5).
+	 * @param a_eye 0 for left, 1 for right.
+	 * @return The offset in that eye's own normalized UV space, derived from the
+	 *         HMD's raw per-eye projection frustum (nonzero on canted-lens
+	 *         headsets); {0, 0} if unavailable. Shared by Foveated DLSS and VRS
+	 *         so both default to the same real eye geometry.
+	 */
+	inline float2 GetEyeLensCenterOffset(int a_eye)
+	{
+		if (!globals::game::isVR)
+			return { 0.0f, 0.0f };
+		auto* openvr = RE::BSOpenVR::GetSingleton();
+		if (!openvr || !openvr->vrSystem)
+			return { 0.0f, 0.0f };
+
+		float left, right, top, bottom;
+		openvr->vrSystem->GetProjectionRaw(a_eye == 0 ? vr::Eye_Left : vr::Eye_Right, &left, &right, &top, &bottom);
+
+		if ((left - right) == 0.0f || (top - bottom) == 0.0f)
+			return { 0.0f, 0.0f };
+
+		// Matches vrperfkit's OpenVrManager::CalculateProjectionCenters (minus its
+		// canted-angle correction term, which needs GetEyeToHeadTransform for both
+		// eyes and isn't available from a single eye's projection alone).
+		const float offsetX = 0.5f * (right + left) / (left - right);
+		const float offsetY = 0.5f * (bottom + top) / (top - bottom);
+		return { offsetX, offsetY };
 	}
 
 	inline ImVec4 GetControllerPrimaryColor() { return Colors::Primary; }

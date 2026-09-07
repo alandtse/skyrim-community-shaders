@@ -18,6 +18,7 @@
 #include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
+#include "VR/VRVariableRateShading.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cfloat>
@@ -2805,6 +2806,16 @@ void Upscaling::PerformUpscaling()
 	CS_GPU_PASS("Upscaling::PerformUpscaling");
 	Upscale();
 	UpscaleDepth();
+
+	// Runs immediately after the upscale step writes kMAIN at full
+	// resolution -- the same timing FoveatedRender's own debug tint uses
+	// (Modes.cpp's kMainUAV), and well before tonemap/UI compositing, so
+	// neither the desktop preview buffer nor menus are affected.
+	if (auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+		vrs->IsEnabled() && globals::game::isVR && !globals::state->IsPausedOrMenuOpen(globals::game::ui)) {
+		auto& mainRT = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		vrs->PostSceneProcess(globals::d3d::context, mainRT.texture, mainRT.UAV);
+	}
 
 	auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
 

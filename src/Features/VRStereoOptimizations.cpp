@@ -11,7 +11,6 @@
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
-#include "VR.h"
 
 #include <imgui.h>
 
@@ -425,7 +424,7 @@ void VRStereoOptimizations::DrawSettings()
 			Util::AddTooltip(T("feature.vr_stereo.repair_from_eye0_depth_tooltip", "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nDebug only: turning this off reintroduces the missing-geometry bug."));
 
 			ImGui::Checkbox(T("feature.vr_stereo.reclassify_after_repair", "Reclassify After Repair"), &settings.reclassifyAfterRepair);
-			Util::AddTooltip(T("feature.vr_stereo.reclassify_after_repair_tooltip", "Re-runs the pixel classification on the finished depth so Screen Space GI reprojection and Stereo Blend see the restored objects.\nDebug only; runs only when one of those is on."));
+			Util::AddTooltip(T("feature.vr_stereo.reclassify_after_repair_tooltip", "Re-runs the pixel classification on the finished depth so Screen Space GI reprojection sees the restored objects.\nDebug only; runs only when that is on."));
 
 			ImGui::Checkbox(T("feature.vr_stereo.classify_with_depth_history", "Classify With Depth History"), &settings.classifyWithDepthHistory);
 			Util::AddTooltip(T("feature.vr_stereo.classify_with_depth_history_tooltip", "Classifies from the nearer of the depth pre-pass and last frame's final depth, so surfaces the pre-pass skips, such as alpha-tested rocks and road edges, are no longer culled in the right eye.\nDebug only: turning this off reintroduces the missing-geometry bug."));
@@ -579,7 +578,6 @@ void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV,
 		context->Dispatch((fullWidth + 7) / 8, (fullHeight + 7) / 8, 1);
 	}
 
-	// Cleanup CS bindings
 	ID3D11ShaderResourceView* nullSRVs[3] = {};
 	ID3D11UnorderedAccessView* nullUAV = nullptr;
 	ID3D11Buffer* nullCB = nullptr;
@@ -591,12 +589,11 @@ void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV,
 
 void VRStereoOptimizations::ReclassifyFromFinalDepth()
 {
-	if (!settings.reclassifyAfterRepair || !mainDepthSRV || settings.debugDepthMap)
+	if (!settings.reclassifyAfterRepair || !classifiedThisFrame || !mainDepthSRV || settings.debugDepthMap)
 		return;
 
 	const auto& ssgi = globals::features::screenSpaceGI;
-	const bool lateConsumerActive = globals::features::vr.settings.EnableStereoBlend ||
-	                                (ssgi.loaded && ssgi.settings.UseStereoReproject);
+	const bool lateConsumerActive = ssgi.loaded && ssgi.settings.Enabled && ssgi.settings.UseStereoReproject;
 	if (!lateConsumerActive)
 		return;
 
@@ -736,20 +733,19 @@ void VRStereoOptimizations::DeactivateStencil()
 
 void VRStereoOptimizations::RepairCulledEye1()
 {
-	if (!stencilActive)
-		return;
-
-	// Order is load-bearing: DeactivateStencil must precede the depth fill so the
-	// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
-	// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
-	// these steps, or the stencil mask is lost — hence they live in one method.
-	// DispatchUnrepairableMask must read the initial modes, so it precedes
-	// ReclassifyFromFinalDepth, which overwrites them.
-	DeactivateStencil();
-	DispatchDepthScatter();
-	ExecuteDepthFillPass();
-	DispatchGBufferFill();
-	DispatchUnrepairableMask();
+	if (stencilActive) {
+		// Order is load-bearing: DeactivateStencil must precede the depth fill so the
+		// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
+		// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
+		// these steps, or the stencil mask is lost — hence they live in one method.
+		// DispatchUnrepairableMask reads the initial modes, so it precedes
+		// ReclassifyFromFinalDepth, which overwrites them.
+		DeactivateStencil();
+		DispatchDepthScatter();
+		ExecuteDepthFillPass();
+		DispatchGBufferFill();
+		DispatchUnrepairableMask();
+	}
 	ReclassifyFromFinalDepth();
 }
 

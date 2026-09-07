@@ -90,7 +90,7 @@ struct VRStereoOptimizations
 		/// depth the classification used (geometry the z-prepass omits, e.g. alpha-tested statics).
 		bool repairFromEye0Depth = true;
 		/// Re-run the classification on the final depth after the repair so later mode-texture
-		/// consumers (SSGI reprojection, stereo blend) see the restored geometry.
+		/// consumers (SSGI reprojection) see the restored geometry.
 		bool reclassifyAfterRepair = true;
 		/// Classify from the nearer of the prepass depth and the reprojected previous-frame
 		/// final depth, so z-prepass-omitted geometry (alpha-tested statics) is not culled in Eye 1.

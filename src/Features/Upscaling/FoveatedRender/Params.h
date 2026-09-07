@@ -22,7 +22,7 @@ namespace FoveatedRenderImpl
 
 		// Textures
 		ID3D11Resource* colorSrc;                // input color  (kMAIN)
-		ID3D11Resource* colorDst;                // output color (kMAIN, or PerfMode's testTexture when DLSSperf is active)
+		ID3D11Resource* colorDst;                // output color (kMAIN)
 		ID3D11UnorderedAccessView* colorDstUAV;  // UAV for stretch output target
 		ID3D11Resource* depthTexture;
 		ID3D11Resource* reactiveMask;

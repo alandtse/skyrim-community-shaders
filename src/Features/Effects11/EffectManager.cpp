@@ -344,10 +344,8 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	D3D11FullStateBackup stateBackup;
 	stateBackup.Save(context);
 
-	// Mirror into kMAIN once; skip under PerfMode or it discards the DLSS/FSR+RCAS output.
-	const bool perfModeDrivingThisFrame = globals::features::upscaling.perfMode.IsHookActive();
 	auto& kMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	if (!perfModeDrivingThisFrame && &a_input != &kMain && a_input.SRV && kMain.RTV) {
+	if (&a_input != &kMain && a_input.SRV && kMain.RTV) {
 		D3D11_TEXTURE2D_DESC srcDesc{}, dstDesc{};
 		if (a_input.texture && kMain.texture) {
 			a_input.texture->GetDesc(&srcDesc);
@@ -942,22 +940,11 @@ bool EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture,
 
 bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 {
-	// PerfMode's real DLSS/FSR+RCAS output lives only in its testTexture, not kMAIN.
-	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool usePerfModeSource = perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureSRV();
-
-	ID3D11Texture2D* sourceTexture;
-	ID3D11ShaderResourceView* sourceSRV;
-	if (usePerfModeSource) {
-		sourceTexture = perfMode.GetTestTexture();
-		sourceSRV = perfMode.GetTestTextureSRV();
-	} else {
-		auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-		if (!kMain.texture || !kMain.SRV)
-			return false;
-		sourceTexture = kMain.texture;
-		sourceSRV = kMain.SRV;
-	}
+	auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+	if (!kMain.texture || !kMain.SRV)
+		return false;
+	auto* sourceTexture = kMain.texture;
+	auto* sourceSRV = kMain.SRV;
 
 	D3D11_TEXTURE2D_DESC mainDesc{};
 	sourceTexture->GetDesc(&mainDesc);

@@ -120,7 +120,7 @@ bool FoveatedRender::IsActive() const
 	// (IsRuntimeSupported): otherwise foveation and its SSR consumer run under
 	// TAA/None and the route derefs unallocated upscaler resources — the crash
 	// seen under RenderDoc, whose DX12 swapchain disables DLSS.
-	if (!enabledAtBoot || !IsRuntimeSupported())
+	if (!enabledAtBoot || !IsRuntimeSupported() || globals::features::upscaling.vrSubmit.IsHookActive())
 		return false;
 	const auto method = globals::features::upscaling.GetUpscaleMethod();
 	if (method != Upscaling::UpscaleMethod::kDLSS && method != Upscaling::UpscaleMethod::kFSR)

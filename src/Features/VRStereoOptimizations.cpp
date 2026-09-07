@@ -11,7 +11,6 @@
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
-#include "VR.h"
 
 #include <imgui.h>
 
@@ -211,20 +210,9 @@ void VRStereoOptimizations::SetupResources()
 		texFinalDepthHistory->CreateSRV(historySRVDesc);
 	}
 
-	// Eye 1 unrepairable-strip feedback mask (same dims as texScatterDepth).
 	{
-		D3D11_TEXTURE2D_DESC maskDesc{};
-		maskDesc.Width = mainDesc.Width / 2;
-		maskDesc.Height = mainDesc.Height;
-		maskDesc.MipLevels = 1;
-		maskDesc.ArraySize = 1;
+		D3D11_TEXTURE2D_DESC maskDesc = texScatterDepth->desc;
 		maskDesc.Format = DXGI_FORMAT_R8_UINT;
-		maskDesc.SampleDesc.Count = 1;
-		maskDesc.SampleDesc.Quality = 0;
-		maskDesc.Usage = D3D11_USAGE_DEFAULT;
-		maskDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		maskDesc.CPUAccessFlags = 0;
-		maskDesc.MiscFlags = 0;
 
 		texUnrepairableMask = eastl::make_unique<Texture2D>(maskDesc, "VRStereoOpt::UnrepairableMask");
 		texUnrepairableMask->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
@@ -425,7 +413,7 @@ void VRStereoOptimizations::DrawSettings()
 			Util::AddTooltip(T("feature.vr_stereo.repair_from_eye0_depth_tooltip", "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nDebug only: turning this off reintroduces the missing-geometry bug."));
 
 			ImGui::Checkbox(T("feature.vr_stereo.reclassify_after_repair", "Reclassify After Repair"), &settings.reclassifyAfterRepair);
-			Util::AddTooltip(T("feature.vr_stereo.reclassify_after_repair_tooltip", "Re-runs the pixel classification on the finished depth so Screen Space GI reprojection and Stereo Blend see the restored objects.\nDebug only; runs only when one of those is on."));
+			Util::AddTooltip(T("feature.vr_stereo.reclassify_after_repair_tooltip", "Re-runs the pixel classification on the finished depth so Screen Space GI reprojection sees the restored objects.\nDebug only; runs only when that is on."));
 
 			ImGui::Checkbox(T("feature.vr_stereo.classify_with_depth_history", "Classify With Depth History"), &settings.classifyWithDepthHistory);
 			Util::AddTooltip(T("feature.vr_stereo.classify_with_depth_history_tooltip", "Classifies from the nearer of the depth pre-pass and last frame's final depth, so surfaces the pre-pass skips, such as alpha-tested rocks and road edges, are no longer culled in the right eye.\nDebug only: turning this off reintroduces the missing-geometry bug."));
@@ -472,10 +460,9 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.FullBlendDistance = settings.fullBlendDistance;
 	params.DirectionalOcclusionRatio = settings.directionalOcclusionRatio;
 	params.RepairFromEye0Depth = settings.repairFromEye0Depth ? 1u : 0u;
-	// The mask is only meaningful when history reprojection is available; both share the gate.
 	const bool historyAvailable = depthHistoryValid && settings.classifyWithDepthHistory;
 	params.DepthHistoryValid = historyAvailable ? 1u : 0u;
-	params.UseUnrepairableMask = historyAvailable ? 1u : 0u;
+	params.UseUnrepairableMask = historyAvailable && unrepairableMaskValid ? 1u : 0u;
 
 	paramsCB->Update(params);
 }
@@ -495,6 +482,7 @@ void VRStereoOptimizations::DispatchStencil()
 	CS_GPU_PASS("VRStereoOpt::Stencil");
 
 	UpdateConstantBuffer();
+	unrepairableMaskValid = false;
 	// Use the same depth source as the rest of the deferred pipeline.
 	// kMAIN.depthSRV is unpopulated at StartDeferred time (z-prepass has not written to it yet).
 	// GetCurrentSceneDepthSRV() returns TerrainBlending's blended depth when active, or
@@ -524,7 +512,7 @@ void VRStereoOptimizations::SnapshotFinalDepthHistory(bool a_previousFrameHadFin
 	if (!globals::game::isVR || !texFinalDepthHistory)
 		return;
 
-	if (!a_previousFrameHadFinalDepth) {
+	if (!a_previousFrameHadFinalDepth || !settings.classifyWithDepthHistory || !CanClassify()) {
 		depthHistoryValid = false;
 		return;
 	}
@@ -579,7 +567,6 @@ void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV,
 		context->Dispatch((fullWidth + 7) / 8, (fullHeight + 7) / 8, 1);
 	}
 
-	// Cleanup CS bindings
 	ID3D11ShaderResourceView* nullSRVs[3] = {};
 	ID3D11UnorderedAccessView* nullUAV = nullptr;
 	ID3D11Buffer* nullCB = nullptr;
@@ -591,12 +578,11 @@ void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV,
 
 void VRStereoOptimizations::ReclassifyFromFinalDepth()
 {
-	if (!settings.reclassifyAfterRepair || !mainDepthSRV || settings.debugDepthMap)
+	if (!settings.reclassifyAfterRepair || !classifiedThisFrame || !mainDepthSRV || settings.debugDepthMap)
 		return;
 
 	const auto& ssgi = globals::features::screenSpaceGI;
-	const bool lateConsumerActive = globals::features::vr.settings.EnableStereoBlend ||
-	                                (ssgi.loaded && ssgi.settings.UseStereoReproject);
+	const bool lateConsumerActive = ssgi.loaded && ssgi.settings.Enabled && ssgi.settings.UseStereoReproject;
 	if (!lateConsumerActive)
 		return;
 
@@ -736,26 +722,25 @@ void VRStereoOptimizations::DeactivateStencil()
 
 void VRStereoOptimizations::RepairCulledEye1()
 {
-	if (!stencilActive)
-		return;
-
-	// Order is load-bearing: DeactivateStencil must precede the depth fill so the
-	// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
-	// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
-	// these steps, or the stencil mask is lost — hence they live in one method.
-	// DispatchUnrepairableMask must read the initial modes, so it precedes
-	// ReclassifyFromFinalDepth, which overwrites them.
-	DeactivateStencil();
-	DispatchDepthScatter();
-	ExecuteDepthFillPass();
-	DispatchGBufferFill();
-	DispatchUnrepairableMask();
+	if (stencilActive) {
+		// Order is load-bearing: DeactivateStencil must precede the depth fill so the
+		// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
+		// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
+		// these steps, or the stencil mask is lost — hence they live in one method.
+		// DispatchUnrepairableMask reads the initial modes, so it precedes
+		// ReclassifyFromFinalDepth, which overwrites them.
+		DeactivateStencil();
+		DispatchDepthScatter();
+		ExecuteDepthFillPass();
+		DispatchGBufferFill();
+		DispatchUnrepairableMask();
+	}
 	ReclassifyFromFinalDepth();
 }
 
 void VRStereoOptimizations::ExecuteDepthFillPass()
 {
-	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS)
+	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS || !texScatterDepth || !paramsCB)
 		return;
 
 	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
@@ -811,8 +796,8 @@ void VRStereoOptimizations::DispatchDepthScatter()
 	auto context = globals::d3d::context;
 	RenderTargetUnbindScope rtScope(context);
 
-	const UINT farthest[4] = { kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty };
-	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), farthest);
+	const UINT scatterEmpty[4] = { kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty };
+	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), scatterEmpty);
 
 	auto cbPtr = paramsCB->CB();
 	ID3D11ShaderResourceView* srv = mainDepthSRV.get();
@@ -905,6 +890,7 @@ void VRStereoOptimizations::DispatchUnrepairableMask()
 	const uint32_t eyeWidth = static_cast<uint32_t>(frameDim.x) / 2;
 	const uint32_t height = static_cast<uint32_t>(frameDim.y);
 	context->Dispatch((eyeWidth + 7) / 8, (height + 7) / 8, 1);
+	unrepairableMaskValid = true;
 
 	ID3D11ShaderResourceView* nullSRVs[2] = {};
 	ID3D11UnorderedAccessView* nullUAV = nullptr;

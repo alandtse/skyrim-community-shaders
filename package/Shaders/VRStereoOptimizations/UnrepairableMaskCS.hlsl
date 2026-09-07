@@ -1,8 +1,7 @@
 // VR Stereo Optimizations - Unrepairable Mask Compute Shader
 //
-// Marks Eye 1 pixels that were stencil-culled as MODE_MAIN but received no Eye 0 depth
-// (scatter empty): the repair cannot restore them, so next frame's classification must
-// keep that strip natively shaded. Dispatched over the Eye 1 half width like DepthScatterCS.
+// Marks culled Eye 1 pixels that received no Eye 0 depth, so next frame's classification
+// shades that strip natively. Dispatched over the Eye 1 half width like DepthScatterCS.
 
 #include "VRStereoOptimizations/cbuffers.hlsli"
 
@@ -15,6 +14,6 @@ RWTexture2D<uint> MaskRW : register(u0);      // 1 = culled with nothing to repa
 	if (dtid.x >= eyeWidth || dtid.y >= uint(FrameDim.y))
 		return;
 
-	uint2 sbs = dtid + uint2(uint(FrameDim.x) / 2, 0);
+	uint2 sbs = dtid + uint2(eyeWidth, 0);
 	MaskRW[dtid] = (ModeTexture[sbs] == MODE_MAIN && ScatterDepth[dtid] == SCATTER_DEPTH_EMPTY) ? 1u : 0u;
 }

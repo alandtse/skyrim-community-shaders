@@ -184,10 +184,10 @@ namespace Util
 	 *
 	 * The caller does NOT own the returned pointer.
 	 *
-	 * Prepass depth until Deferred::DeferredPasses copies the finished opaque depth; that
-	 * final depth afterwards.
-	 * @param prefer16bit When true requests the prepass-time Terrain Blending R16_UNORM
-	 *        texture; after Deferred::DeferredPasses both values return the engine copy.
+	 * Returns prepass depth until Deferred::DeferredPasses copies the finished opaque
+	 * depth, and that final depth for the rest of the frame.
+	 * @param prefer16bit When true, returns the Terrain Blending R16_UNORM texture during
+	 *        the prepass phase; ignored once the final depth is available.
 	 * @return The depth SRV, or nullptr if unavailable.
 	 */
 	ID3D11ShaderResourceView* GetCurrentSceneDepthSRV(bool prefer16bit = false);

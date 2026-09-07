@@ -90,7 +90,7 @@ struct VRStereoOptimizations
 		/// depth the classification used (geometry the z-prepass omits, e.g. alpha-tested statics).
 		bool repairFromEye0Depth = true;
 		/// Re-run the classification on the final depth after the repair so later mode-texture
-		/// consumers (SSGI reprojection, stereo blend) see the restored geometry.
+		/// consumers (SSGI reprojection) see the restored geometry.
 		bool reclassifyAfterRepair = true;
 		/// Classify from the nearer of the prepass depth and the reprojected previous-frame
 		/// final depth, so z-prepass-omitted geometry (alpha-tested statics) is not culled in Eye 1.
@@ -201,17 +201,13 @@ struct VRStereoOptimizations
 		       !settings.debugSkipMerge &&
 		       gBufferFillSupported &&
 		       stencilCS &&
-		       stencilHistoryCS &&
 		       stencilWriteVS &&
 		       stencilWritePS &&
 		       depthFillPS &&
 		       depthScatterCS &&
 		       gBufferFillCS &&
-		       unrepairableMaskCS &&
 		       texPerPixelMode &&
 		       texScatterDepth &&
-		       texFinalDepthHistory &&
-		       texUnrepairableMask &&
 		       mainDepthSRV &&
 		       paramsCB &&
 		       stencilWriteDSS &&
@@ -332,6 +328,8 @@ private:
 	bool classifiedThisFrame = false;
 	/// True while texFinalDepthHistory holds the previous frame's post-geometry depth.
 	bool depthHistoryValid = false;
+	/// True while texUnrepairableMask describes the previous frame's Eye 1 cull.
+	bool unrepairableMaskValid = false;
 
 	// GBufferFillCS does typed UAV loads on the G-buffer formats (R10G10B10A2,
 	// R11G11B10, R16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads

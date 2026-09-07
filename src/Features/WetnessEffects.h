@@ -66,37 +66,31 @@ public:
 		uint EnableCharacterRainSpots = true;
 		float CharacterSpotDensity = 1.0f;
 		float CharacterSpotRadius = 0.75f;
-		float CharacterSpotLifetime = 3.0f;
-		float CharacterSpotInterval = 4.0f;
 		float CharacterSpotStrength = 1.0f;
-		float CharacterSpotDarkening = 0.15f;
 		float CharacterSpotRoughness = 0.1f;
-		float CharacterSpotRange = 900.0f;
-		float CharacterSpotVerticalCoverage = 0.45f;
 		float CharacterSpotNormalStrength = 0.75f;
 		uint CharacterSpotDebug = 0u;
-		float CharacterDropTravel = 12.0f;
-		float CharacterDropTrailLength = 12.0f;
-		float CharacterDropTrailStrength = 0.8f;
-		float CharacterDropPause = 0.35f;
-		float CharacterStaticBeadStrength = 1.0f;
-		float CharacterImpactStrength = 1.0f;
-		float CharacterFlowStrength = 1.0f;
-		float CharacterFlowDistortion = 0.65f;
 		float CharacterCoatIntensity = 5.0f;
 		float CharacterWetSheen = 0.55f;
 		float CharacterRainActivityMultiplier = 4.0f;
+		// Used by CPU wetness decay; retained here to preserve the mirrored settings layout.
 		float CharacterDryTime = 20.0f;
 		uint EnableWeaponRainDrops = true;
-		float WeaponSpotDensity = 1.0f;
-		float WeaponSpotRadius = 0.6f;
-		float WeaponSpotStrength = 1.0f;
-		float WeaponWetSheen = 0.55f;
-		float WeaponCoatIntensity = 4.0f;
-		float WeaponSpotRoughness = 0.1f;
-		float pad0 = 0.0f;
 	};
-	static_assert(sizeof(Settings) == 240);
+
+	/** @brief Stable debug-mode ordering shared by the character-rain UI and frame upload. */
+	enum class CharacterDebugMode : std::uint32_t
+	{
+		Shading,
+		Combined,
+		Settled,
+		Impacts,
+		Flow,
+		Surfaces,
+		Weapons,
+		Count
+	};
+	static_assert(sizeof(Settings) == 160);
 
 	struct alignas(16) PerFrame
 	{
@@ -108,11 +102,10 @@ public:
 		Settings settings;
 		float CharacterImpactIntensity;
 		float CharacterRetainedWetness;
-		float CharacterShowcaseCoverage;
-		float CharacterStatePadding;
+		float2 CharacterStatePadding;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	static_assert(sizeof(PerFrame) == 336);
+	static_assert(sizeof(PerFrame) == 256);
 
 	struct DebugSettings
 	{
@@ -219,7 +212,7 @@ public:
 	{
 		const bool characterEffectsEnabled = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
 		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || settings.CharacterSpotDebug != 0u;
-		return loaded && (characterShowcaseEnabled || (characterEffectsEnabled && characterWaterVisible));
+		return loaded && characterEffectsEnabled && characterWaterVisible;
 	}
 
 private:
@@ -227,10 +220,8 @@ private:
 	void DrawCharacterRainSettings();
 	void RestoreCharacterRainDefaults();
 	void UpdateCharacterRainData(PerFrame& a_data, bool a_updateState) const;
-	void ApplyCharacterShowcase(PerFrame& a_data) const;
 	void DrawWeatherAnalysis() const;
 
-	bool characterShowcaseEnabled = false;
 	mutable float characterSurfaceWetness = 0.0f;
 	mutable std::uint32_t lastCharacterWetnessUpdateFrame = UINT32_MAX;
 	bool splashesOfStormsLoaded = false;

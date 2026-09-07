@@ -2,22 +2,26 @@
 #define __CHARACTER_RAIN_LIGHTING_HLSLI__
 
 #include "Common/LightingEval.hlsli"
+#include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
 
 namespace CharacterRainSpots
 {
-	static const float InverseLn2 = 1.44269504089f;
+	static const float SpotAbsorptionStrength = 0.0375f;
+	static const float WeaponCoatIntensityScale = 0.8f;
+	static const float MaximumNormalGradient = 2.0f;
+	static const float CharacterNormalVertexBlend = 0.75f;
+	static const float DropHeightScale = 0.5f;
+	static const float MinimumWaterRoughness = 0.08f;
+	static const float MaximumWaterRoughness = 0.6f;
+	static const float CoverageAbsorptionWeight = 0.35f;
+	static const float HeightAbsorptionWeight = 0.65f;
+	static const float SkinAbsorptionScale = 0.35f;
 
 	/** @brief Converts artistic coat intensity into bounded optical coverage. */
 	float GetCoatWeight(float coverage, float intensity)
 	{
-		return 1.0f - exp2(-InverseLn2 * saturate(coverage) * max(intensity, 0.0f));
-	}
-
-	/** @brief Gives covered water cores their own deferred roughness without strengthening filtered borders. */
-	float GetCoatDominance(float coverage, float intensity)
-	{
-		return GetCoatWeight(coverage, intensity);
+		return 1.0f - exp(-saturate(coverage) * max(intensity, 0.0f));
 	}
 
 	/** @brief Returns a water highlight independent of the underlying material's specular masks. */
@@ -52,7 +56,7 @@ namespace CharacterRainSpots
 	}
 
 	/** @brief Builds the bead normal in world units independently of mesh UV scale or seams. */
-	float3 GetSurfaceNormal(float dropHeight, float3 surfaceWorldPosition, float3 baseSurfaceNormal)
+	float3 CalculateWorldNormalFromHeight(float dropHeight, float3 surfaceWorldPosition, float3 baseSurfaceNormal)
 	{
 		float3 surfaceDx = ddx(surfaceWorldPosition);
 		float3 surfaceDy = ddy(surfaceWorldPosition);
@@ -60,10 +64,10 @@ namespace CharacterRainSpots
 		float3 tangentBasisX = cross(surfaceDy, baseSurfaceNormal);
 		float3 tangentBasisY = cross(baseSurfaceNormal, surfaceDx);
 		float determinant = dot(surfaceDx, tangentBasisX);
-		if (abs(determinant) <= 1e-8f)
+		if (abs(determinant) <= EPSILON_DIVISION)
 			return baseSurfaceNormal;
 		float3 normalGradient = (dropHeightGradient.x * tangentBasisX + dropHeightGradient.y * tangentBasisY) / determinant;
-		normalGradient *= min(1.0f, 2.0f * rsqrt(max(dot(normalGradient, normalGradient), 1e-8f)));
+		normalGradient *= min(1.0f, MaximumNormalGradient * rsqrt(max(dot(normalGradient, normalGradient), EPSILON_LENGTH_SQ)));
 		return normalize(baseSurfaceNormal - normalGradient);
 	}
 }

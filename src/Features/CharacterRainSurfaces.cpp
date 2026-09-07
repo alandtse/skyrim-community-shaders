@@ -16,6 +16,7 @@ namespace CharacterRainSurfaces
 		constexpr auto HeldWeaponDescriptor = static_cast<std::uint32_t>(State::ExtraShaderDescriptors::IsHeldWeapon);
 		// Lifecycle events can precede the actor graph update, so refresh across a few frames.
 		constexpr std::uint8_t kGeometryRefreshPasses = 3;
+		constexpr float kFullyOpaqueAlphaThreshold = 0.999f;
 		const RE::BSFixedString CharacterRainSurfaceTag = "OpenShadersCharacterRainSurface";
 
 		enum SurfaceFlag : std::int32_t
@@ -24,8 +25,8 @@ namespace CharacterRainSurfaces
 			HeldWeapon = 1 << 1
 		};
 
-		std::mutex pendingActorsLock;
-		std::unordered_map<RE::FormID, std::uint8_t> pendingActors;
+		std::mutex pendingActorRefreshLock;
+		std::unordered_map<RE::FormID, std::uint8_t> pendingActorRefreshes;
 
 		void SetSurfaceFlags(RE::BSGeometry* a_geometry, std::int32_t a_flags)
 		{
@@ -99,12 +100,12 @@ namespace CharacterRainSurfaces
 			if (!a_formID)
 				return;
 
-			const std::scoped_lock lock(pendingActorsLock);
-			auto& pendingPasses = pendingActors[a_formID];
+			const std::scoped_lock lock(pendingActorRefreshLock);
+			auto& pendingPasses = pendingActorRefreshes[a_formID];
 			pendingPasses = std::max(pendingPasses, a_refreshPasses);
 		}
 
-		bool IsOpaqueSurface(const RE::BSRenderPass* a_pass)
+		bool IsCharacterRainSurfaceCompatible(const RE::BSRenderPass* a_pass)
 		{
 			if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty)
 				return false;
@@ -112,7 +113,7 @@ namespace CharacterRainSurfaces
 			const auto* lightingProperty = a_pass->shaderProperty->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ?
 			                                   static_cast<const RE::BSLightingShaderProperty*>(a_pass->shaderProperty) :
 			                                   nullptr;
-			if (!lightingProperty || !lightingProperty->material || lightingProperty->alpha < 0.999f ||
+			if (!lightingProperty || !lightingProperty->material || lightingProperty->alpha < kFullyOpaqueAlphaThreshold ||
 				lightingProperty->material->GetFeature() == RE::BSShaderMaterial::Feature::kHairTint ||
 				lightingProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kHairTint) ||
 				lightingProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kRefraction,
@@ -131,7 +132,7 @@ namespace CharacterRainSurfaces
 				return;
 
 			const std::int32_t surfaceFlags = GetSurfaceFlags(a_pass->geometry);
-			if (!(surfaceFlags & Character) || !IsOpaqueSurface(a_pass))
+			if (!(surfaceFlags & Character) || !IsCharacterRainSurfaceCompatible(a_pass))
 				return;
 
 			descriptor |= CharacterSurfaceDescriptor;
@@ -196,8 +197,8 @@ namespace CharacterRainSurfaces
 	void QueueLoadedActors()
 	{
 		{
-			const std::scoped_lock lock(pendingActorsLock);
-			pendingActors.clear();
+			const std::scoped_lock lock(pendingActorRefreshLock);
+			pendingActorRefreshes.clear();
 		}
 
 		if (auto* player = globals::game::player)
@@ -215,8 +216,8 @@ namespace CharacterRainSurfaces
 	{
 		std::unordered_map<RE::FormID, std::uint8_t> actorsToRefresh;
 		{
-			const std::scoped_lock lock(pendingActorsLock);
-			actorsToRefresh.swap(pendingActors);
+			const std::scoped_lock lock(pendingActorRefreshLock);
+			actorsToRefresh.swap(pendingActorRefreshes);
 		}
 
 		for (const auto& [formID, remainingPasses] : actorsToRefresh) {

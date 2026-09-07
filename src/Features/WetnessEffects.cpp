@@ -44,34 +44,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableCharacterRainSpots,
 	CharacterSpotDensity,
 	CharacterSpotRadius,
-	CharacterSpotLifetime,
-	CharacterSpotInterval,
 	CharacterSpotStrength,
-	CharacterSpotDarkening,
 	CharacterSpotRoughness,
-	CharacterSpotRange,
-	CharacterSpotVerticalCoverage,
 	CharacterSpotNormalStrength,
 	CharacterSpotDebug,
-	CharacterDropTravel,
-	CharacterDropTrailLength,
-	CharacterDropTrailStrength,
-	CharacterDropPause,
-	CharacterStaticBeadStrength,
-	CharacterImpactStrength,
-	CharacterFlowStrength,
-	CharacterFlowDistortion,
 	CharacterCoatIntensity,
 	CharacterWetSheen,
 	CharacterRainActivityMultiplier,
 	CharacterDryTime,
-	EnableWeaponRainDrops,
-	WeaponSpotDensity,
-	WeaponSpotRadius,
-	WeaponSpotStrength,
-	WeaponWetSheen,
-	WeaponCoatIntensity,
-	WeaponSpotRoughness)
+	EnableWeaponRainDrops)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -82,6 +63,31 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessOverride,
 	PuddleWetnessOverride,
 	RainOverride)
+
+namespace
+{
+	struct CharacterRainSettingLimits
+	{
+		static constexpr float kMinimumDensity = 0.0f;
+		static constexpr float kMaximumDensity = 1.0f;
+		static constexpr float kMinimumRadius = 0.2f;
+		static constexpr float kMaximumRadius = 3.0f;
+		static constexpr float kMinimumStrength = 0.0f;
+		static constexpr float kMaximumStrength = 1.0f;
+		static constexpr float kMinimumRoughness = 0.08f;
+		static constexpr float kMaximumRoughness = 0.6f;
+		static constexpr float kMinimumNormalStrength = 0.0f;
+		static constexpr float kMaximumNormalStrength = 1.0f;
+		static constexpr float kMinimumCoatIntensity = 0.0f;
+		static constexpr float kMaximumCoatIntensity = 8.0f;
+		static constexpr float kMinimumWetSheen = 0.0f;
+		static constexpr float kMaximumWetSheen = 1.0f;
+		static constexpr float kMinimumActivity = 0.25f;
+		static constexpr float kMaximumActivity = 8.0f;
+		static constexpr float kMinimumDryTime = 2.0f;
+		static constexpr float kMaximumDryTime = 60.0f;
+	};
+}
 
 // Climate preset data - defines regional weather characteristics
 // Precipitation rates calculated from actual shader mechanics: grid size, interval, and raindrop chance
@@ -788,10 +794,12 @@ void WetnessEffects::DrawCharacterRainSettings()
 
 	const bool characterEffectsDisabled = !settings.EnableWetnessEffects || !settings.EnableCharacterRainSpots;
 	ImGui::BeginDisabled(characterEffectsDisabled);
-	ImGui::SliderFloat(T(TKEY("character_rain_activity"), "Drop Activity"), &settings.CharacterRainActivityMultiplier, 0.25f, 8.0f, "%.2fx");
+	ImGui::SliderFloat(T(TKEY("character_rain_activity"), "Drop Activity"), &settings.CharacterRainActivityMultiplier,
+		CharacterRainSettingLimits::kMinimumActivity, CharacterRainSettingLimits::kMaximumActivity, "%.2fx");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("character_rain_activity_tooltip"), "Saved multiplier for character-drop density and arrival rate. Reduce it for low wetness or raise it for saturated surfaces and showcase captures."));
-	ImGui::SliderFloat(T(TKEY("character_dry_time"), "Character Dry Time"), &settings.CharacterDryTime, 2.0f, 60.0f, "%.0f sec");
+		ImGui::TextUnformatted(T(TKEY("character_rain_activity_tooltip"), "Multiplier for character-drop density and arrival rate. Reduce it for low wetness or raise it for saturated surfaces."));
+	ImGui::SliderFloat(T(TKEY("character_dry_time"), "Character Dry Time"), &settings.CharacterDryTime,
+		CharacterRainSettingLimits::kMinimumDryTime, CharacterRainSettingLimits::kMaximumDryTime, "%.0f sec");
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("character_dry_time_tooltip"), "How long broad retained character sheen takes to fade after global weather wetness falls. Cover immediately suppresses localized beads, impacts, and rivulets; shelter does not start a separate per-character dry timer."));
 	ImGui::EndDisabled();
@@ -800,23 +808,12 @@ void WetnessEffects::DrawCharacterRainSettings()
 	Util::DrawSectionHeader(T(TKEY("character_drops_trails"), "Drops & Trails"), false, false);
 
 	ImGui::BeginDisabled(characterEffectsDisabled);
-	ImGui::SliderFloat(T(TKEY("character_static_beads"), "Tiny Settled Beads"), &settings.CharacterStaticBeadStrength, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_impact_drops"), "Fresh Arriving Drops"), &settings.CharacterImpactStrength, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_flowing_water"), "Flowing Rivulets"), &settings.CharacterFlowStrength, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_spot_density"), "Drop Density"), &settings.CharacterSpotDensity, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_spot_radius"), "Drop Size"), &settings.CharacterSpotRadius, 0.2f, 3.0f, "%.2f units");
-	ImGui::SliderFloat(T(TKEY("character_spot_lifetime"), "Drop Lifetime"), &settings.CharacterSpotLifetime, 0.5f, 12.0f, "%.1f sec");
-	ImGui::SliderFloat(T(TKEY("character_drop_pause"), "Bead Pause Before Sliding"), &settings.CharacterDropPause, 0.0f, 2.0f, "%.2f sec");
-	ImGui::SliderFloat(T(TKEY("character_drop_travel"), "Slide Distance"), &settings.CharacterDropTravel, 0.0f, 16.0f, "%.1f units");
-	ImGui::SliderFloat(T(TKEY("character_drop_trail_length"), "Trail Length"), &settings.CharacterDropTrailLength, 0.0f, 16.0f, "%.1f units");
-	ImGui::SliderFloat(T(TKEY("character_drop_trail_strength"), "Trail Strength"), &settings.CharacterDropTrailStrength, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_spot_interval"), "Drop Interval"), &settings.CharacterSpotInterval, 0.5f, 20.0f, "%.1f sec");
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("character_spot_interval_tooltip"), "Time between impacts in each surface cell; automatically kept longer than the drop lifetime so paths never reseed while visible."));
-	ImGui::SliderFloat(T(TKEY("character_spot_strength"), "Drop & Trail Strength"), &settings.CharacterSpotStrength, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_flow_distortion"), "Flow Distortion"), &settings.CharacterFlowDistortion, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_spot_range"), "Drop Draw Distance"), &settings.CharacterSpotRange, 128.0f, 2000.0f, "%.0f units");
-	ImGui::SliderFloat(T(TKEY("character_spot_vertical"), "Vertical Surface Coverage"), &settings.CharacterSpotVerticalCoverage, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("character_spot_density"), "Drop Density"), &settings.CharacterSpotDensity,
+		CharacterRainSettingLimits::kMinimumDensity, CharacterRainSettingLimits::kMaximumDensity, "%.2f");
+	ImGui::SliderFloat(T(TKEY("character_spot_radius"), "Drop Size"), &settings.CharacterSpotRadius,
+		CharacterRainSettingLimits::kMinimumRadius, CharacterRainSettingLimits::kMaximumRadius, "%.2f units");
+	ImGui::SliderFloat(T(TKEY("character_spot_strength"), "Drop & Trail Strength"), &settings.CharacterSpotStrength,
+		CharacterRainSettingLimits::kMinimumStrength, CharacterRainSettingLimits::kMaximumStrength, "%.2f");
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
@@ -827,15 +824,18 @@ void WetnessEffects::DrawCharacterRainSettings()
 		ImGui::TextUnformatted(T(TKEY("hair_wetness_tooltip"), "Controls the existing uniform rain-wetness response on character hair. It is separate from model-attached drops and trails."));
 	ImGui::EndDisabled();
 	ImGui::BeginDisabled(characterEffectsDisabled);
-	ImGui::SliderFloat(T(TKEY("character_coat_intensity"), "Droplet Coat / Highlight Intensity"), &settings.CharacterCoatIntensity, 0.0f, 8.0f, "%.2fx");
+	ImGui::SliderFloat(T(TKEY("character_coat_intensity"), "Droplet Coat / Highlight Intensity"), &settings.CharacterCoatIntensity,
+		CharacterRainSettingLimits::kMinimumCoatIntensity, CharacterRainSettingLimits::kMaximumCoatIntensity, "%.2fx");
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("character_coat_intensity_tooltip"), "Controls the independent water-reflection strength on skin, clothing and armor. Dynamic Cubemaps supplies environmental reflections; direct lights and the ambient fallback work without it."));
-	ImGui::SliderFloat(T(TKEY("character_wet_sheen"), "Character Surface Wet Sheen"), &settings.CharacterWetSheen, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("character_wet_sheen"), "Character Surface Wet Sheen"), &settings.CharacterWetSheen,
+		CharacterRainSettingLimits::kMinimumWetSheen, CharacterRainSettingLimits::kMaximumWetSheen, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("character_wet_sheen_tooltip"), "Adds a clear wet sheen to eligible skin, clothing and armor from retained surface water; localized beads and rivulets remain stronger."));
-	ImGui::SliderFloat(T(TKEY("character_spot_darkening"), "Water Darkening"), &settings.CharacterSpotDarkening, 0.0f, 0.6f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_spot_roughness"), "Water Roughness"), &settings.CharacterSpotRoughness, 0.08f, 0.6f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("character_spot_normal"), "Droplet Normal Strength"), &settings.CharacterSpotNormalStrength, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("character_spot_roughness"), "Water Roughness"), &settings.CharacterSpotRoughness,
+		CharacterRainSettingLimits::kMinimumRoughness, CharacterRainSettingLimits::kMaximumRoughness, "%.2f");
+	ImGui::SliderFloat(T(TKEY("character_spot_normal"), "Droplet Normal Strength"), &settings.CharacterSpotNormalStrength,
+		CharacterRainSettingLimits::kMinimumNormalStrength, CharacterRainSettingLimits::kMaximumNormalStrength, "%.2f");
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
@@ -847,26 +847,13 @@ void WetnessEffects::DrawCharacterRainSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("weapon_rain_drops_tooltip"), "Adds model-attached droplets and a thin wet sheen to equipped weapons. Weapon droplets never slide or form vertical trails, so bows, staves and drawn weapons remain stable at any orientation."));
 	ImGui::EndDisabled();
-	ImGui::BeginDisabled(characterEffectsDisabled || !settings.EnableWeaponRainDrops);
-	ImGui::SliderFloat(T(TKEY("weapon_drop_density"), "Weapon Drop Density"), &settings.WeaponSpotDensity, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("weapon_drop_size"), "Weapon Drop Size"), &settings.WeaponSpotRadius, 0.2f, 2.0f, "%.2f units");
-	ImGui::SliderFloat(T(TKEY("weapon_drop_strength"), "Weapon Drop Strength"), &settings.WeaponSpotStrength, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("weapon_wet_sheen"), "Weapon Wet Sheen"), &settings.WeaponWetSheen, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("weapon_coat_intensity"), "Weapon Water Highlights"), &settings.WeaponCoatIntensity, 0.0f, 8.0f, "%.2fx");
-	ImGui::SliderFloat(T(TKEY("weapon_water_roughness"), "Weapon Water Roughness"), &settings.WeaponSpotRoughness, 0.05f, 0.6f, "%.2f");
-	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_debug_showcase"), "Debug & Showcase"), false, false);
+	Util::DrawSectionHeader(T(TKEY("character_debug"), "Debug"), false, false);
 	if (ImGui::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
 		RestoreCharacterRainDefaults();
-	ImGui::Checkbox(T(TKEY("character_showcase"), "Showcase Drops on Everyone (Debug)"), &characterShowcaseEnabled);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("character_showcase_tooltip"), "Temporarily forces frequent, strongly reflective water on nearby compatible opaque character surfaces and equipped weapons. Ignores weather and the normal wetness/drop toggles, but still respects Skylighting cover. Leaves Hair Wetness, puddles, weather and airborne rain unchanged. Session-only: turning this off restores your normal character-drop settings."));
-	if (characterShowcaseEnabled)
-		ImGui::TextWrapped("%s", T(TKEY("character_showcase_active"), "SHOWCASE ACTIVE: full surface coverage, frequent impacts, flowing trails, and strong coat reflections within 2000 units. Drop Activity controls the showcase rate and remains saved for normal weather. Water-layer debug masks are temporarily off."));
 
-	ImGui::BeginDisabled(characterEffectsDisabled || characterShowcaseEnabled);
+	ImGui::BeginDisabled(characterEffectsDisabled);
 	const char* debugModes[] = {
 		T(TKEY("character_debug_shading"), "Water Shading"),
 		T(TKEY("character_debug_combined"), "Combined Coverage"),
@@ -876,6 +863,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 		T(TKEY("character_debug_surfaces"), "Eligible Character Surfaces"),
 		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
 	};
+	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
 	int debugMode = static_cast<int>(std::min<uint>(settings.CharacterSpotDebug, static_cast<uint>(std::size(debugModes) - 1)));
 	if (ImGui::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &debugMode, debugModes, static_cast<int>(std::size(debugModes))))
 		settings.CharacterSpotDebug = static_cast<uint>(debugMode);
@@ -889,35 +877,15 @@ void WetnessEffects::RestoreCharacterRainDefaults()
 	settings.EnableCharacterRainSpots = defaults.EnableCharacterRainSpots;
 	settings.CharacterSpotDensity = defaults.CharacterSpotDensity;
 	settings.CharacterSpotRadius = defaults.CharacterSpotRadius;
-	settings.CharacterSpotLifetime = defaults.CharacterSpotLifetime;
-	settings.CharacterSpotInterval = defaults.CharacterSpotInterval;
 	settings.CharacterSpotStrength = defaults.CharacterSpotStrength;
-	settings.CharacterSpotDarkening = defaults.CharacterSpotDarkening;
 	settings.CharacterSpotRoughness = defaults.CharacterSpotRoughness;
-	settings.CharacterSpotRange = defaults.CharacterSpotRange;
-	settings.CharacterSpotVerticalCoverage = defaults.CharacterSpotVerticalCoverage;
 	settings.CharacterSpotNormalStrength = defaults.CharacterSpotNormalStrength;
 	settings.CharacterSpotDebug = defaults.CharacterSpotDebug;
-	settings.CharacterDropTravel = defaults.CharacterDropTravel;
-	settings.CharacterDropTrailLength = defaults.CharacterDropTrailLength;
-	settings.CharacterDropTrailStrength = defaults.CharacterDropTrailStrength;
-	settings.CharacterDropPause = defaults.CharacterDropPause;
-	settings.CharacterStaticBeadStrength = defaults.CharacterStaticBeadStrength;
-	settings.CharacterImpactStrength = defaults.CharacterImpactStrength;
-	settings.CharacterFlowStrength = defaults.CharacterFlowStrength;
-	settings.CharacterFlowDistortion = defaults.CharacterFlowDistortion;
 	settings.CharacterCoatIntensity = defaults.CharacterCoatIntensity;
 	settings.CharacterWetSheen = defaults.CharacterWetSheen;
 	settings.CharacterRainActivityMultiplier = defaults.CharacterRainActivityMultiplier;
 	settings.CharacterDryTime = defaults.CharacterDryTime;
 	settings.EnableWeaponRainDrops = defaults.EnableWeaponRainDrops;
-	settings.WeaponSpotDensity = defaults.WeaponSpotDensity;
-	settings.WeaponSpotRadius = defaults.WeaponSpotRadius;
-	settings.WeaponSpotStrength = defaults.WeaponSpotStrength;
-	settings.WeaponWetSheen = defaults.WeaponWetSheen;
-	settings.WeaponCoatIntensity = defaults.WeaponCoatIntensity;
-	settings.WeaponSpotRoughness = defaults.WeaponSpotRoughness;
-	characterShowcaseEnabled = false;
 }
 
 static float linearstep(float edge0, float edge1, float x)
@@ -1156,56 +1124,38 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData(bool a_advanceFrame
 
 void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data, bool a_updateState) const
 {
+	static constexpr auto kMaximumCharacterRainDebugMode =
+		static_cast<std::uint32_t>(CharacterDebugMode::Count) - 1u;
+	static constexpr float kMaximumCharacterFrameDeltaSeconds = 0.25f;
+
 	struct SettingRange
 	{
 		float Settings::* member;
 		float minimum;
 		float maximum;
 	};
-	static constexpr std::array<SettingRange, 28> ranges{ { { &Settings::CharacterSpotDensity, 0.0f, 1.0f },
-		{ &Settings::CharacterSpotRadius, 0.2f, 3.0f },
-		{ &Settings::CharacterSpotLifetime, 0.5f, 12.0f },
-		{ &Settings::CharacterSpotInterval, 0.5f, 20.0f },
-		{ &Settings::CharacterSpotStrength, 0.0f, 1.0f },
-		{ &Settings::CharacterSpotDarkening, 0.0f, 0.6f },
-		{ &Settings::CharacterSpotRoughness, 0.08f, 0.6f },
-		{ &Settings::CharacterSpotRange, 128.0f, 2000.0f },
-		{ &Settings::CharacterSpotVerticalCoverage, 0.0f, 1.0f },
-		{ &Settings::CharacterSpotNormalStrength, 0.0f, 1.0f },
-		{ &Settings::CharacterDropTravel, 0.0f, 16.0f },
-		{ &Settings::CharacterDropTrailLength, 0.0f, 16.0f },
-		{ &Settings::CharacterDropTrailStrength, 0.0f, 1.0f },
-		{ &Settings::CharacterDropPause, 0.0f, 2.0f },
-		{ &Settings::CharacterStaticBeadStrength, 0.0f, 1.0f },
-		{ &Settings::CharacterImpactStrength, 0.0f, 1.0f },
-		{ &Settings::CharacterFlowStrength, 0.0f, 1.0f },
-		{ &Settings::CharacterFlowDistortion, 0.0f, 1.0f },
-		{ &Settings::CharacterCoatIntensity, 0.0f, 8.0f },
-		{ &Settings::CharacterWetSheen, 0.0f, 1.0f },
-		{ &Settings::CharacterRainActivityMultiplier, 0.25f, 8.0f },
-		{ &Settings::CharacterDryTime, 2.0f, 60.0f },
-		{ &Settings::WeaponSpotDensity, 0.0f, 1.0f },
-		{ &Settings::WeaponSpotRadius, 0.2f, 2.0f },
-		{ &Settings::WeaponSpotStrength, 0.0f, 1.0f },
-		{ &Settings::WeaponWetSheen, 0.0f, 1.0f },
-		{ &Settings::WeaponCoatIntensity, 0.0f, 8.0f },
-		{ &Settings::WeaponSpotRoughness, 0.05f, 0.6f } } };
+	static constexpr std::array<SettingRange, 9> characterRainSettingRanges{ {
+		{ &Settings::CharacterSpotDensity, CharacterRainSettingLimits::kMinimumDensity, CharacterRainSettingLimits::kMaximumDensity },
+		{ &Settings::CharacterSpotRadius, CharacterRainSettingLimits::kMinimumRadius, CharacterRainSettingLimits::kMaximumRadius },
+		{ &Settings::CharacterSpotStrength, CharacterRainSettingLimits::kMinimumStrength, CharacterRainSettingLimits::kMaximumStrength },
+		{ &Settings::CharacterSpotRoughness, CharacterRainSettingLimits::kMinimumRoughness, CharacterRainSettingLimits::kMaximumRoughness },
+		{ &Settings::CharacterSpotNormalStrength, CharacterRainSettingLimits::kMinimumNormalStrength, CharacterRainSettingLimits::kMaximumNormalStrength },
+		{ &Settings::CharacterCoatIntensity, CharacterRainSettingLimits::kMinimumCoatIntensity, CharacterRainSettingLimits::kMaximumCoatIntensity },
+		{ &Settings::CharacterWetSheen, CharacterRainSettingLimits::kMinimumWetSheen, CharacterRainSettingLimits::kMaximumWetSheen },
+		{ &Settings::CharacterRainActivityMultiplier, CharacterRainSettingLimits::kMinimumActivity, CharacterRainSettingLimits::kMaximumActivity },
+		{ &Settings::CharacterDryTime, CharacterRainSettingLimits::kMinimumDryTime, CharacterRainSettingLimits::kMaximumDryTime },
+	} };
 	const Settings defaults{};
-	for (const auto& range : ranges) {
+	for (const auto& range : characterRainSettingRanges) {
 		auto& value = a_data.settings.*range.member;
 		value = std::clamp(std::isfinite(value) ? value : defaults.*range.member, range.minimum, range.maximum);
 	}
-	const bool forced = characterShowcaseEnabled;
-	a_data.settings.EnableCharacterRainSpots = characterShowcaseEnabled ||
-	                                           (settings.EnableWetnessEffects && settings.EnableCharacterRainSpots);
+	a_data.settings.EnableCharacterRainSpots = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
 	a_data.settings.EnableWeaponRainDrops = a_data.settings.EnableCharacterRainSpots &&
-	                                        (characterShowcaseEnabled || settings.EnableWeaponRainDrops);
-	a_data.settings.CharacterSpotDebug = a_data.settings.EnableCharacterRainSpots ? std::min(settings.CharacterSpotDebug, 6u) : 0u;
-	if (characterShowcaseEnabled)
-		ApplyCharacterShowcase(a_data);
-	a_data.settings.CharacterSpotInterval = std::max(a_data.settings.CharacterSpotInterval, a_data.settings.CharacterSpotLifetime * 1.1f);
-	a_data.settings.CharacterDropPause = std::min(a_data.settings.CharacterDropPause, a_data.settings.CharacterSpotLifetime * 0.5f);
-
+	                                        settings.EnableWeaponRainDrops;
+	a_data.settings.CharacterSpotDebug = a_data.settings.EnableCharacterRainSpots ?
+	                                         std::min(settings.CharacterSpotDebug, kMaximumCharacterRainDebugMode) :
+	                                         0u;
 	float weatherIntensity = std::sqrt(std::clamp(a_data.Wetness, 0.0f, 1.0f));
 	weatherIntensity = std::isfinite(weatherIntensity) ? std::clamp(weatherIntensity, 0.0f, 1.0f) : 0.0f;
 
@@ -1219,51 +1169,14 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data, bool a_updateStat
 	} else if (updateState && weatherIntensity >= characterSurfaceWetness) {
 		characterSurfaceWetness = weatherIntensity;
 	} else if (updateState && (!globals::game::ui || !globals::game::ui->GameIsPaused())) {
-		const float deltaSeconds = std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, 0.25f);
+		const float deltaSeconds = std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, kMaximumCharacterFrameDeltaSeconds);
 		const float dryRate = 1.0f / a_data.settings.CharacterDryTime;
 		characterSurfaceWetness = std::max(weatherIntensity, characterSurfaceWetness - deltaSeconds * dryRate);
 	}
 
-	// The forced showcase changes only the uploaded copy, so disabling it restores the weather-driven state.
-	const float impactIntensity = forced ? 1.0f : weatherIntensity;
-	const float retainedWetness = forced ? 1.0f : characterSurfaceWetness;
-	a_data.CharacterImpactIntensity = impactIntensity;
-	a_data.CharacterRetainedWetness = retainedWetness;
-	a_data.CharacterShowcaseCoverage = forced ? 1.0f : 0.0f;
-	a_data.CharacterStatePadding = 0.0f;
-}
-
-void WetnessEffects::ApplyCharacterShowcase(PerFrame& a_data) const
-{
-	const Settings defaults{};
-	auto& showcase = a_data.settings;
-	const float rate = showcase.CharacterRainActivityMultiplier;
-	// Only the frame copy is overridden, so ending the showcase restores the user's exact settings.
-	showcase.CharacterSpotDensity = 1.0f;
-	showcase.CharacterSpotLifetime = std::max(0.5f, defaults.CharacterSpotLifetime / rate);
-	showcase.CharacterSpotInterval = defaults.CharacterSpotInterval / rate;
-	showcase.CharacterSpotStrength = 1.0f;
-	showcase.CharacterSpotRange = 2000.0f;
-	showcase.CharacterSpotVerticalCoverage = 1.0f;
-	showcase.CharacterSpotDarkening = 0.0f;
-	showcase.CharacterSpotRoughness = std::min(showcase.CharacterSpotRoughness, defaults.CharacterSpotRoughness);
-	showcase.CharacterSpotNormalStrength = std::max(showcase.CharacterSpotNormalStrength, defaults.CharacterSpotNormalStrength);
-	showcase.CharacterCoatIntensity = std::max(showcase.CharacterCoatIntensity, defaults.CharacterCoatIntensity);
-	showcase.CharacterWetSheen = std::max(showcase.CharacterWetSheen, 0.65f);
-	showcase.CharacterRainActivityMultiplier = 1.0f;
-	showcase.CharacterStaticBeadStrength = 1.0f;
-	showcase.CharacterImpactStrength = 1.0f;
-	showcase.CharacterFlowStrength = 1.0f;
-	showcase.CharacterDropTravel = std::max(showcase.CharacterDropTravel, defaults.CharacterDropTravel);
-	showcase.CharacterDropTrailLength = std::max(showcase.CharacterDropTrailLength, defaults.CharacterDropTrailLength);
-	showcase.CharacterDropTrailStrength = std::max(showcase.CharacterDropTrailStrength, defaults.CharacterDropTrailStrength);
-	showcase.CharacterDropPause = defaults.CharacterDropPause / rate;
-	showcase.CharacterSpotDebug = 0;
-	showcase.EnableWeaponRainDrops = true;
-	showcase.WeaponSpotDensity = 1.0f;
-	showcase.WeaponSpotStrength = 1.0f;
-	showcase.WeaponWetSheen = std::max(showcase.WeaponWetSheen, defaults.WeaponWetSheen);
-	showcase.WeaponCoatIntensity = std::max(showcase.WeaponCoatIntensity, defaults.WeaponCoatIntensity);
+	a_data.CharacterImpactIntensity = weatherIntensity;
+	a_data.CharacterRetainedWetness = characterSurfaceWetness;
+	a_data.CharacterStatePadding = {};
 }
 
 void WetnessEffects::Prepass()
@@ -1305,7 +1218,6 @@ void WetnessEffects::SaveSettings(json& o_json)
 void WetnessEffects::RestoreDefaultSettings()
 {
 	settings = {};
-	characterShowcaseEnabled = false;
 	characterSurfaceWetness = 0.0f;
 	lastCharacterWetnessUpdateFrame = UINT32_MAX;
 	climatePreset = defaultPreset;

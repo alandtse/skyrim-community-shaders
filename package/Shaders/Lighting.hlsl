@@ -2176,7 +2176,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	[branch] if (evaluateCharacterDrops)
 	{
 		characterDrop = CharacterRainSpots::Evaluate(input.ModelPosition.xyz,
-			input.WorldPosition.xyz, vertexNormal.xyz, characterRainSkyVisibility, inWorld, heldWeapon, eyeIndex);
+			input.WorldPosition.xyz, vertexNormal.xyz, characterRainSkyVisibility, heldWeapon, eyeIndex);
 	}
 	float characterSpotMask = characterDrop.x;
 #		endif
@@ -2287,23 +2287,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	[branch] if (characterRainSurface)
 	{
 		// Keep derivative-based drop normals outside the per-pixel coverage branch.
-		float3 characterDropBaseNormal = normalize(lerp(worldNormal.xyz, vertexNormal.xyz, 0.75f));
-		float configuredRadius = heldWeapon ? SharedData::wetnessEffectsSettings.WeaponSpotRadius :
-		                                      SharedData::wetnessEffectsSettings.CharacterSpotRadius;
-		float characterDropHeight = characterDrop.y * configuredRadius * 0.5f *
+		float3 characterDropBaseNormal = normalize(lerp(worldNormal.xyz, vertexNormal.xyz,
+			CharacterRainSpots::CharacterNormalVertexBlend));
+		float configuredRadius = SharedData::wetnessEffectsSettings.CharacterSpotRadius *
+		                         (heldWeapon ? CharacterRainSpots::WeaponRadiusScale : 1.0f);
+		float characterDropHeight = characterDrop.y * configuredRadius * CharacterRainSpots::DropHeightScale *
 		                            SharedData::wetnessEffectsSettings.CharacterSpotNormalStrength;
-		characterDropNormal = CharacterRainSpots::GetSurfaceNormal(characterDropHeight,
+		characterDropNormal = CharacterRainSpots::CalculateWorldNormalFromHeight(characterDropHeight,
 			input.WorldPosition.xyz, characterDropBaseNormal);
-		characterSpotRoughness = heldWeapon ? SharedData::wetnessEffectsSettings.WeaponSpotRoughness :
-		                                      SharedData::wetnessEffectsSettings.CharacterSpotRoughness;
-		characterSpotRoughness = clamp(characterSpotRoughness, 0.05f, 0.6f);
-		characterCoatIntensity = heldWeapon ? SharedData::wetnessEffectsSettings.WeaponCoatIntensity :
-		                                      SharedData::wetnessEffectsSettings.CharacterCoatIntensity;
+		characterSpotRoughness = SharedData::wetnessEffectsSettings.CharacterSpotRoughness;
+		characterSpotRoughness = clamp(characterSpotRoughness,
+			CharacterRainSpots::MinimumWaterRoughness, CharacterRainSpots::MaximumWaterRoughness);
+		characterCoatIntensity = SharedData::wetnessEffectsSettings.CharacterCoatIntensity *
+		                         (heldWeapon ? CharacterRainSpots::WeaponCoatIntensityScale : 1.0f);
 		float characterRetainedWetness = SharedData::wetnessEffectsSettings.CharacterRetainedWetness;
-		float characterSheenMask = heldWeapon ?
-		                               (SharedData::wetnessEffectsSettings.EnableWeaponRainDrops ?
-											   saturate(characterRetainedWetness * SharedData::wetnessEffectsSettings.WeaponWetSheen) :
-											   0.0f) :
+		float characterSheenMask = heldWeapon && !SharedData::wetnessEffectsSettings.EnableWeaponRainDrops ?
+		                               0.0f :
 		                               saturate(characterRetainedWetness * SharedData::wetnessEffectsSettings.CharacterWetSheen);
 		characterCoatMask = max(characterSpotMask, characterSheenMask);
 	}
@@ -2312,10 +2311,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	{
 		if (characterSpotMask > 0.0f)
 			characterSpotSurfaceNormal = characterDropNormal;
-		float spotAbsorption = SharedData::wetnessEffectsSettings.CharacterSpotDarkening * 0.25f *
-		                       saturate(max(characterDrop.z, characterDrop.x * 0.35f + characterDrop.y * 0.65f));
+		float spotAbsorption = CharacterRainSpots::SpotAbsorptionStrength *
+		                       saturate(max(characterDrop.z,
+								   characterDrop.x * CharacterRainSpots::CoverageAbsorptionWeight +
+									   characterDrop.y * CharacterRainSpots::HeightAbsorptionWeight));
 #			if defined(SKIN)
-		spotAbsorption *= 0.35f;
+		spotAbsorption *= CharacterRainSpots::SkinAbsorptionScale;
 #			endif
 		material.BaseColor *= 1.0f - spotAbsorption;
 	}
@@ -3346,7 +3347,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// One deferred lobe approximates the coat; filtered edges retain the underlying material response.
 	[branch] if (characterCoatMask > 0.0f)
 	{
-		float characterReflectionWeight = CharacterRainSpots::GetCoatDominance(characterCoatMask, characterCoatIntensity);
+		float characterReflectionWeight = CharacterRainSpots::GetCoatWeight(characterCoatMask, characterCoatIntensity);
 		material.Roughness = lerp(material.Roughness, min(material.Roughness, characterSpotRoughness), characterReflectionWeight);
 		screenSpaceNormal = normalize(lerp(screenSpaceNormal,
 			FrameBuffer::WorldToView(characterSpotSurfaceNormal, false, eyeIndex), characterReflectionWeight));
@@ -3382,8 +3383,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(CHARACTER_RAIN_SURFACE)
 	if (SharedData::wetnessEffectsSettings.CharacterSpotDebug && characterRainSurface && inWorld) {
-		float characterDebugMask = SharedData::wetnessEffectsSettings.CharacterSpotDebug == 5u ? 1.0f :
-		                                                                                         (SharedData::wetnessEffectsSettings.CharacterSpotDebug == 6u ? float(heldWeapon) : characterSpotMask);
+		float characterDebugMask = SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::SurfaceDebugMode ? 1.0f :
+		                                                                                                                           (SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::WeaponDebugMode ? float(heldWeapon) : characterSpotMask);
 		psout.Diffuse.xyz = characterDebugMask.xxx;
 #		if defined(DEFERRED)
 		psout.Specular.xyz = 0.0f;

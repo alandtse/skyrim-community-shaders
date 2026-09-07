@@ -144,6 +144,52 @@ namespace
 
 	constexpr int kFilterColumnCount = 5;
 
+	bool BeginEditorMenuBar()
+	{
+		auto& context = *ImGui::GetCurrentContext();
+		auto* viewport = static_cast<ImGuiViewportP*>(ImGui::GetMainViewport());
+		ImGui::SetCurrentViewport(nullptr, viewport);
+		const auto& style = ImGui::GetStyle();
+		const float border = style.WindowBorderSize;
+		const float safeAreaY = std::max(style.DisplaySafeAreaPadding.y - style.FramePadding.y, 0.0f);
+		const float height = ImGui::GetFrameHeight() + safeAreaY + border * 2.0f;
+		context.NextWindowData.MenuBarOffsetMinVal = ImVec2(
+			std::max({ style.WindowPadding.x, style.ItemSpacing.x, style.DisplaySafeAreaPadding.x }) + border,
+			safeAreaY + border * 2.0f);
+
+		bool visible;
+		{
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+			const SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(2); });
+			visible = ImGui::BeginViewportSideBar("##MainMenuBar", viewport, ImGuiDir_Up, height,
+				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar);
+		}
+		context.NextWindowData.MenuBarOffsetMinVal = ImVec2(0.0f, 0.0f);
+		if (!visible) {
+			ImGui::End();
+			return false;
+		}
+
+		auto* window = ImGui::GetCurrentWindow();
+		window->Flags &= ~ImGuiWindowFlags_NoSavedSettings;
+		window->DC.MenuBarOffset.y = safeAreaY + border;
+		ImGui::BeginMenuBar();
+		const ImRect outer = window->Rect();
+		ImRect inner = outer;
+		inner.Expand(-border);
+		if (border > 0.0f) {
+			const ImU32 color = ImGui::GetColorU32(ImGuiCol_Border);
+			auto* drawList = window->DrawList;
+			drawList->AddRectFilled(outer.Min, ImVec2(outer.Max.x, inner.Min.y), color);
+			drawList->AddRectFilled(ImVec2(outer.Min.x, inner.Max.y), outer.Max, color);
+			drawList->AddRectFilled(ImVec2(outer.Min.x, inner.Min.y), ImVec2(inner.Min.x, inner.Max.y), color);
+			drawList->AddRectFilled(ImVec2(inner.Max.x, inner.Min.y), ImVec2(outer.Max.x, inner.Max.y), color);
+		}
+		ImGui::PushClipRect(inner.Min, inner.Max, true);
+		return true;
+	}
+
 	// The editor can draw before globals are cached, so both fall back to the singleton.
 	RE::Calendar* GetCalendar()
 	{
@@ -987,14 +1033,9 @@ void EditorWindow::RenderUI()
 		}
 	}
 
-	if (ImGui::BeginMainMenuBar()) {
-		// Tighten bottom clip rect to prevent content bleeding over the bottom border
-		{
-			auto* window = ImGui::GetCurrentWindowRead();
-			float borderInset = std::ceil(window->WindowBorderSize * 0.5f);
-			ImGui::PushClipRect(window->ClipRect.Min,
-				ImVec2(window->ClipRect.Max.x, window->ClipRect.Max.y - borderInset), true);
-		}
+	float menuBarHeight = 0.0f;
+	if (BeginEditorMenuBar()) {
+		menuBarHeight = ImGui::GetWindowSize().y;
 
 		if (ImGui::BeginMenu(T(TKEY("file"), "File"))) {
 			if (ImGui::MenuItem(T(TKEY("save_all_open_widgets"), "Save All Open Widgets"), "Ctrl+S")) {
@@ -1187,18 +1228,18 @@ void EditorWindow::RenderUI()
 		const float cursorY = ImGui::GetCursorScreenPos().y;
 		const float closeButtonSize = ImGui::GetFrameHeight();
 		const float& itemSpacing = ImGui::GetStyle().ItemSpacing.x;
-		const float sliderWidth = kMenuBarSliderWidth * scale;
+		const float sliderWidth = std::floor(kMenuBarSliderWidth * scale);
+		const float closeButtonSpacing = std::round(ThemeManager::Constants::BUTTON_SPACING * scale);
+		const float frameBorderOutset = std::max(0.0f, std::ceil((ImGui::GetStyle().FrameBorderSize - 1.0f) * 0.5f));
 
 		// Measure right-side elements to compute positions right-to-left
-		constexpr float kCloseButtonInset = 3.0f;
-		float rightCursor = clipRight - kCloseButtonInset * scale;
+		constexpr float kCloseButtonRightSpacingAdjustment = 2.0f;
+		float rightCursor = clipRight - closeButtonSpacing - frameBorderOutset + std::round(kCloseButtonRightSpacingAdjustment * scale);
 
-		// X button
+		// Time slider and close button
 		rightCursor -= closeButtonSize;
 		const float xButtonX = rightCursor;
-
-		// Time slider
-		rightCursor -= itemSpacing + sliderWidth;
+		rightCursor -= closeButtonSpacing + frameBorderOutset * 2.0f + sliderWidth;
 		const float sliderX = rightCursor;
 
 		// Period text
@@ -1346,22 +1387,11 @@ void EditorWindow::RenderUI()
 
 		// Close button
 		ImGui::SetCursorScreenPos(ImVec2(xButtonX, cursorY));
-		if (Util::ErrorButton("X", ImVec2(closeButtonSize, closeButtonSize)))
+		if (Util::ErrorTextButton("X", ImVec2(closeButtonSize, closeButtonSize)))
 			open = false;
 		Util::AddTooltip(T(TKEY("close_cs_editor"), "Close OS Editor (Esc)"));
 
-		ImGui::PopClipRect();  // End bottom-border clip rect
-
-		// Redraw the menu bar border on top of all content so elements appear behind it
-		{
-			auto* window = ImGui::GetCurrentWindowRead();
-			const float border = ImGui::GetStyle().WindowBorderSize;
-			if (window && border > 0.0f) {
-				ImU32 borderCol = ImGui::GetColorU32(ImGuiCol_Border);
-				window->DrawList->AddRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y), borderCol, 0.0f, 0, border);
-			}
-		}
-
+		ImGui::PopClipRect();
 		ImGui::EndMainMenuBar();
 	}
 
@@ -1372,7 +1402,6 @@ void EditorWindow::RenderUI()
 	auto height = ImGui::GetIO().DisplaySize.y;
 	const float scale = Util::GetUIScale();
 	const float pad = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * scale;
-	const float menuBarHeight = ImGui::GetFrameHeight();
 	const float availableWidth = width - pad * 3.0f;  // left pad + gap + right pad
 	const float availableHeight = (height - menuBarHeight - pad * 2.0f) * 0.85f;
 	const auto layoutCond = resetLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;

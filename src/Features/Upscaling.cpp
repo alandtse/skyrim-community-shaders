@@ -330,7 +330,7 @@ void Upscaling::DrawPerfModeToggle()
 	if (methodSupportsPerf)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::vrRenderScale);
 	if (vrSubmit.IsHookActive())
-		ImGui::TextWrapped("VR upscaling: %s", vrSubmit.GetStatus().c_str());
+		ImGui::TextWrapped(T(TKEY("vr_submit_status"), "VR upscaling: %s"), vrSubmit.GetStatus().c_str());
 }
 
 // FoveatedRender: foveated subrect DLSS, VR-only, opt-in. Enable lives at the top level
@@ -1863,9 +1863,6 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 
 	auto context = globals::d3d::context;
 
-	// Drive output dims from the per-eye intermediate desc, not state->screenSize.
-	// Under PerfMode the state value is polluted to renderRes while the intermediates
-	// were allocated at displayRes via EnsureVRIntermediateTextures' size bridge.
 	if (!vrIntermediateColorOut[0]) {
 		return;
 	}
@@ -1980,6 +1977,8 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 	// Delete or create resources as necessary
 	CheckResources(upscaleMethod);
+	if (vrSubmit.ShouldUseMenuTAA())
+		upscaleMethod = UpscaleMethod::kTAA;
 
 	// Cache original TAA values for UI
 	projectionPosScaleX = a_viewport->projectionPosScaleX;
@@ -2016,8 +2015,6 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 			a_viewport->projectionPosScaleY = 2.0f * jitter.y / static_cast<int>(vrSubmit.GetRenderEyeHeight());
 		} else {
-			// Boot qualityMode under PerfMode so projection stays coherent
-			// with the engine RTs sized at install.
 			const uint32_t qm = globals::features::upscaling.vrSubmit.IsHookActive() ? bootSnapshot.Boot(&Settings::qualityMode) : settings.qualityMode;
 			float resolutionScaleBase = 1.0f / GetQualityModeRatio(qm);
 
@@ -3184,7 +3181,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		}
 	}
 
-	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);
+	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA || upscaling.vrSubmit.ShouldUseMenuTAA());
 
 	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
 	// When HDR Display is not loaded, ISHDR writes to vanilla kFRAMEBUFFER (SDR path)

@@ -488,8 +488,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_d
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 
-	// state->screenSize is polluted to renderRes under PerfMode's hook -- mirror
-	// CreateFSRResources' dlssperfActive check or the upscale target size is wrong.
+	// Submit output dimensions must match the display size used to create FSR contexts.
 	auto& vrSubmit = upscaling.vrSubmit;
 	const bool dlssperfActive = vrSubmit.IsHookActive();
 	const auto displaySize = dlssperfActive ? vrSubmit.GetDisplayScreenSize() : screenSize;

@@ -362,7 +362,7 @@ void FoveatedRender::DrawSettings()
 		if (isFSR || submitStage)
 			ImGui::EndDisabled();
 		if (submitStage) {
-			ImGui::TextWrapped("Render scaling reconstructs each eye's selected region independently. All DLSS presets are supported.");
+			ImGui::TextWrapped("%s", T(TKEY("foveated_submit_desc"), "Render scaling reconstructs each eye's selected region independently. All DLSS presets are supported."));
 		} else if (isFSR) {
 			ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_fsr_desc"), "Not used by FSR -- applies only when DLSS is the selected upscaler."));
 		} else {

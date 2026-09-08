@@ -40,6 +40,8 @@ public:
 	const TemporalParameters* GetDispatchParameters() const { return dispatching ? &temporal : nullptr; }
 	/** @brief Whether reconstruction can consume projection jitter this frame. */
 	bool CanJitter() const;
+	/** @brief Whether the reduced-resolution menu should use the engine's TAA path. */
+	bool ShouldUseMenuTAA() const;
 	/** @brief Returns the latest presentation result and successful stereo-pair count. */
 	std::string GetStatus() const;
 	/** @brief Returns the latched output width per eye. */

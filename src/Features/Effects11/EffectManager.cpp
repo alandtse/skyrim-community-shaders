@@ -377,8 +377,6 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		if (currentEyeIndex >= 0) {
 			if (!RefreshEyeSourceTexture(currentEyeIndex))
 				return false;
-			// No-op unless the source resolution actually changed (e.g. PerfMode's DisplayRes
-			// testTexture vs. kMAIN's renderRes, or a quality-mode change mid-session).
 			textureManager.EnsureSize(currentMainWidth, currentMainHeight);
 			if (currentMainWidth != inputCropTargetsWidth || currentMainHeight != inputCropTargetsHeight) {
 				inputCropTargets.clear();

@@ -581,8 +581,7 @@ struct BSShaderRenderTargets_Create
 		// can diff "active at boot" vs "selected".
 		globals::features::upscaling.bootSnapshot.LatchIfNeeded(globals::features::upscaling.settings);
 
-		// PerfMode: install the BSOpenVR render-target-size hook before the engine creates its render
-		// targets — the one place BSOpenVR is available and we can still influence RT allocation.
+		// The submit resolution plan must be installed before the engine allocates its render targets.
 		if (globals::features::upscaling.ShouldEngagePerfMode())
 			globals::features::upscaling.vrSubmit.InstallRenderTargetSizeHook();
 

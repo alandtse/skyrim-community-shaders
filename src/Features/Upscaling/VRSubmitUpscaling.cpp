@@ -208,7 +208,13 @@ void VRSubmitUpscaling::Fail(std::string_view reason)
 
 bool VRSubmitUpscaling::CanJitter() const
 {
-	return active && !failed && globals::state && !globals::state->IsPausedOrMenuOpen(globals::game::ui);
+	return active && !failed && globals::state && !ShouldUseMenuTAA();
+}
+
+bool VRSubmitUpscaling::ShouldUseMenuTAA() const
+{
+	return active && globals::state &&
+	       (globals::state->IsPausedOrMenuOpen(globals::game::ui) || globals::state->IsFullScreenMenuOpen());
 }
 
 bool VRSubmitUpscaling::EnsureResources()
@@ -267,8 +273,9 @@ void VRSubmitUpscaling::CaptureInputs()
 		return;
 	captured = attempted = pairReady = false;
 	submittedSource = nullptr;
-	if (!state->worldRenderedThisFrame || state->IsPausedOrMenuOpen(globals::game::ui)) {
-		SetStatus("Upscaling paused: no active world frame");
+	if (!state->worldRenderedThisFrame || ShouldUseMenuTAA()) {
+		Invalidate();
+		SetStatus(ShouldUseMenuTAA() ? "Menu: engine TAA at render resolution" : "Upscaling paused: no active world frame");
 		return;
 	}
 	auto& upscaling = globals::features::upscaling;

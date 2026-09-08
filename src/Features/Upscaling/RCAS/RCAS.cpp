@@ -44,8 +44,7 @@ bool RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 
 	auto context = globals::d3d::context;
 
-	// Derived from outputUAV, not state->screenSize -- under PerfMode that's polluted to
-	// render res while sharpening targets are display res, silently under-dispatching.
+	// Submit-stage sharpening targets can exceed the engine's render dimensions.
 	D3D11_TEXTURE2D_DESC outputDesc{};
 	if (!Util::GetTexture2DDesc(outputUAV, outputDesc)) {
 		logger::warn("[RCAS] Could not resolve output texture dimensions");

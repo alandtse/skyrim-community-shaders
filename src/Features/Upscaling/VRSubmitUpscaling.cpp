@@ -135,6 +135,8 @@ void VRSubmitUpscaling::InstallRenderTargetSizeHook()
 	upscaling.bootSnapshot.LatchIfNeeded(upscaling.settings);
 	stl::write_vfunc<0x12, RenderTargetSizeHook>(RE::VTABLE_BSOpenVR[0]);
 	active = true;
+	stl::write_vfunc<0x2A, MenuUIHook>(RE::VTABLE_BSShaderAccumulator[0]);
+	stl::detour_thunk<MenuViewportHook>(REL::RelocationID(75455, 77240));
 	logger::info("[VRSubmit] Latched per-eye render {}x{} -> output {}x{}", plan.renderWidth, plan.renderHeight, plan.outputWidth, plan.outputHeight);
 }
 
@@ -175,6 +177,17 @@ void VRSubmitUpscaling::SetupResources()
 	encodeBuffer.reset();
 	colorBuffer.reset();
 	renderThread = 0;
+	menuReady = false;
+	menuUnavailable = false;
+	menuCycle = UINT64_MAX;
+	menuResolvedCycle = UINT64_MAX;
+	menuResolvedSource = nullptr;
+	menuColor.reset();
+	menuDepth.reset();
+	menuReference.reset();
+	menuResolved.reset();
+	menuMismatch.reset();
+	SetupMenuResources();
 	failed = false;
 	SetStatus("Waiting for world inputs");
 }
@@ -215,6 +228,247 @@ bool VRSubmitUpscaling::ShouldUseMenuTAA() const
 {
 	return active && globals::state &&
 	       (globals::state->IsPausedOrMenuOpen(globals::game::ui) || globals::state->IsFullScreenMenuOpen());
+}
+
+bool VRSubmitUpscaling::WantsNativeMenuUI() const
+{
+	auto* ui = globals::game::ui;
+	return ShouldUseMenuTAA() && ui &&
+	       (ui->IsMenuOpen(RE::JournalMenu::MENU_NAME) || ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME) ||
+			   ui->IsMenuOpen(RE::MapMenu::MENU_NAME) || ui->IsMenuOpen(RE::MagicMenu::MENU_NAME));
+}
+
+void VRSubmitUpscaling::SetupMenuResources()
+{
+	try {
+		if (!menuColor || !menuDepth) {
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = plan.outputWidth * 2;
+			desc.Height = plan.outputHeight;
+			desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+			auto color = std::make_unique<Texture2D>(desc, "Upscaling::NativeMenuColor");
+			D3D11_RENDER_TARGET_VIEW_DESC rtv{};
+			rtv.Format = desc.Format;
+			rtv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+			color->CreateRTV(rtv);
+			D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+			srv.Format = desc.Format;
+			srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srv.Texture2D.MipLevels = 1;
+			color->CreateSRV(srv);
+			desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+			auto depth = std::make_unique<Texture2D>(desc, "Upscaling::NativeMenuDepth");
+			D3D11_DEPTH_STENCIL_VIEW_DESC dsv{};
+			dsv.Format = desc.Format;
+			dsv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+			depth->CreateDSV(dsv);
+			menuColor = std::move(color);
+			menuDepth = std::move(depth);
+		}
+		if (!menuSampler) {
+			D3D11_SAMPLER_DESC desc{};
+			desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+			desc.AddressU = desc.AddressV = desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+			desc.MaxLOD = D3D11_FLOAT32_MAX;
+			winrt::check_hresult(globals::d3d::device->CreateSamplerState(&desc, menuSampler.put()));
+			Util::SetResourceName(menuSampler.get(), "Upscaling::NativeMenuSampler");
+		}
+		menuCopyVS.Get(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0", "main", "Upscaling::NativeMenuCopy VS");
+		menuCopyPS.Get(L"Data/Shaders/Upscaling/PerfMode/MenuBGBlitPS.hlsl", { { "PSHADER", "" } }, "ps_5_0", "main", "Upscaling::NativeMenuCopy PS");
+		if (!menuReference)
+			menuReference = MakeTexture(plan.renderWidth * 2, plan.renderHeight, DXGI_FORMAT_R8G8B8A8_UNORM, "Upscaling::MenuReference");
+		if (!menuResolved)
+			menuResolved = MakeTexture(plan.outputWidth * 2, plan.outputHeight, DXGI_FORMAT_R8G8B8A8_UNORM, "Upscaling::MenuResolved");
+		if (!menuMismatch)
+			menuMismatch = MakeTexture(1, 1, DXGI_FORMAT_R32_UINT, "Upscaling::MenuMismatch");
+		menuValidateCS.Get(L"Data/Shaders/Upscaling/NativeMenuCS.hlsl", { { "VALIDATE_MENU", "" } }, "cs_5_0", "main", "Upscaling::MenuValidate CS");
+		menuResolveCS.Get(L"Data/Shaders/Upscaling/NativeMenuCS.hlsl", {}, "cs_5_0", "main", "Upscaling::MenuResolve CS");
+	} catch (const std::exception& error) {
+		menuColor.reset();
+		menuDepth.reset();
+		logger::warn("[VRSubmit] Native menu resources unavailable: {}", error.what());
+	}
+}
+
+void VRSubmitUpscaling::CopyMenuColor(ID3D11ShaderResourceView* source, ID3D11RenderTargetView* destination,
+	uint32_t width, uint32_t height)
+{
+	CS_GPU_PASS("Upscaling::NativeMenuCopy");
+	ContextScope scope(context.get(), isolatedState.get());
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(menuCopyVS.get(), nullptr, 0);
+	context->PSSetShader(menuCopyPS.get(), nullptr, 0);
+	context->PSSetShaderResources(0, 1, &source);
+	auto sampler = menuSampler.get();
+	context->PSSetSamplers(0, 1, &sampler);
+	context->OMSetRenderTargets(1, &destination, nullptr);
+	const D3D11_VIEWPORT viewport{ 0, 0, float(width), float(height), 0, 1 };
+	context->RSSetViewports(1, &viewport);
+	context->Draw(3, 0);
+}
+
+bool VRSubmitUpscaling::DrawNativeMenuUI(RE::BSGraphics::BSShaderAccumulator* accumulator, uint32_t flags)
+{
+	if (GetCurrentThreadId() != renderThread || menuDrawing || !WantsNativeMenuUI() || accumulator->GetRuntimeData().renderMode != 24)
+		return false;
+	std::unique_lock lock(mutex, std::try_to_lock);
+	if (!lock || failed || menuUnavailable || shaderResetPending || !globals::game::shadowState ||
+		!menuColor || !menuDepth || !menuCopyVS || !menuCopyPS || !menuSampler ||
+		!menuReference || !menuResolved || !menuMismatch || !menuValidateCS || !menuResolveCS)
+		return false;
+	auto& shadow = globals::game::shadowState->GetVRRuntimeData();
+	if (shadow.renderTargets[0] != RE::RENDER_TARGETS::kMENUBG ||
+		shadow.depthStencil != uint32_t(RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN))
+		return false;
+	for (uint32_t index = 1; index < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++index) {
+		if (shadow.renderTargets[index] != RE::RENDER_TARGETS::kNONE)
+			return false;
+	}
+	auto& target = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMENUBG];
+	auto& depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	D3D11_TEXTURE2D_DESC desc{};
+	if (!target.texture || !target.SRV || !target.RTV)
+		return false;
+	target.texture->GetDesc(&desc);
+	if (desc.Width != plan.renderWidth * 2 || desc.Height != plan.renderHeight ||
+		desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM || desc.SampleDesc.Count != 1 || desc.ArraySize != 1)
+		return false;
+	CS_GPU_PASS("Upscaling::NativeMenuUI");
+	menuReady = false;
+	// A pending color clear must not seed the native target with the previous menu image.
+	if (shadow.setRenderTargetMode[0] == RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR) {
+		const float transparent[4]{};
+		context->ClearRenderTargetView(menuColor->rtv.get(), transparent);
+	} else {
+		CopyMenuColor(target.SRV, menuColor->rtv.get(), plan.outputWidth * 2, plan.outputHeight);
+	}
+	{
+		ContextScope scope(context.get(), isolatedState.get());
+		context->CopyResource(menuResolved->resource.get(), menuColor->resource.get());
+	}
+	context->ClearDepthStencilView(menuDepth->dsv.get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+	const auto savedTarget = target;
+	const auto savedDepth = depth;
+	const auto savedViewport = shadow.viewPort;
+	D3D11_RECT savedScissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+	UINT scissorCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	context->RSGetScissorRects(&scissorCount, savedScissors);
+	const auto restore = [&]() {
+		menuDrawing = false;
+		target = savedTarget;
+		depth = savedDepth;
+		shadow.viewPort = savedViewport;
+		context->RSSetScissorRects(scissorCount, savedScissors);
+		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET,
+			RE::BSGraphics::ShaderFlags::DIRTY_VIEWPORT);
+	};
+	target.texture = menuColor->resource.get();
+	target.textureCopy = savedTarget.textureCopy ? menuResolved->resource.get() : nullptr;
+	target.SRVCopy = savedTarget.SRVCopy ? menuResolved->srv.get() : nullptr;
+	target.RTV = menuColor->rtv.get();
+	target.SRV = menuColor->srv.get();
+	target.UAV = nullptr;
+	depth.texture = menuDepth->resource.get();
+	for (auto& view : depth.views)
+		if (view)
+			view = menuDepth->dsv.get();
+	for (auto& view : depth.readOnlyViews)
+		if (view)
+			view = menuDepth->dsv.get();
+	shadow.viewPort = { 0, 0, float(plan.outputWidth * 2), float(plan.outputHeight), 0, 1 };
+	D3D11_RECT scaledScissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+	for (UINT index = 0; index < scissorCount; ++index) {
+		const auto& rect = savedScissors[index];
+		scaledScissors[index] = { LONG(double(rect.left) * plan.outputWidth / plan.renderWidth),
+			LONG(double(rect.top) * plan.outputHeight / plan.renderHeight),
+			LONG(double(rect.right) * plan.outputWidth / plan.renderWidth),
+			LONG(double(rect.bottom) * plan.outputHeight / plan.renderHeight) };
+	}
+	context->RSSetScissorRects(scissorCount, scaledScissors);
+	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET,
+		RE::BSGraphics::ShaderFlags::DIRTY_VIEWPORT);
+	try {
+		menuDrawing = true;
+		MenuUIHook::func(accumulator, flags);
+	} catch (...) {
+		restore();
+		throw;
+	}
+	restore();
+	CopyMenuColor(menuColor->srv.get(), savedTarget.RTV, plan.renderWidth * 2, plan.renderHeight);
+	{
+		ContextScope scope(context.get(), isolatedState.get());
+		context->CopyResource(menuReference->resource.get(), savedTarget.texture);
+	}
+	menuCycle = cycle.load();
+	menuResolvedCycle = UINT64_MAX;
+	menuReady = true;
+	return true;
+}
+
+void VRSubmitUpscaling::MenuUIHook::thunk(RE::BSGraphics::BSShaderAccumulator* accumulator, uint32_t flags)
+{
+	auto& owner = globals::features::upscaling.vrSubmit;
+	if (!owner.DrawNativeMenuUI(accumulator, flags))
+		func(accumulator, flags);
+}
+
+void VRSubmitUpscaling::MenuViewportHook::thunk(RE::BSGraphics::Renderer* renderer, uint32_t width, uint32_t height, bool matchTarget)
+{
+	auto& owner = globals::features::upscaling.vrSubmit;
+	if (GetCurrentThreadId() == owner.renderThread && owner.menuDrawing &&
+		globals::game::shadowState->GetVRRuntimeData().renderTargets[0] == RE::RENDER_TARGETS::kMENUBG) {
+		width = owner.plan.outputWidth * 2;
+		height = owner.plan.outputHeight;
+		matchTarget = true;
+	}
+	func(renderer, width, height, matchTarget);
+}
+
+bool VRSubmitUpscaling::ResolveNativeMenu(ID3D11Texture2D* source)
+{
+	if (!menuReady || menuCycle != cycle || !WantsNativeMenuUI() || shaderResetPending)
+		return false;
+	if (menuResolvedCycle == menuCycle)
+		return menuResolvedSource == source;
+	auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
+	ID3D11ShaderResourceView* sourceSRV = nullptr;
+	for (const auto index : { RE::RENDER_TARGETS::kMENUBG, RE::RENDER_TARGETS::kTOTAL, RE::RENDER_TARGETS::kFRAMEBUFFER }) {
+		if (targets[index].texture == source)
+			sourceSRV = targets[index].SRV;
+	}
+	if (!sourceSRV)
+		return false;
+	D3D11_SHADER_RESOURCE_VIEW_DESC sourceDesc{};
+	sourceSRV->GetDesc(&sourceDesc);
+	if (sourceDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM)
+		return false;
+	CS_GPU_PASS("Upscaling::NativeMenuResolve");
+	ContextScope scope(context.get(), isolatedState.get());
+	const UINT zero[4]{};
+	context->ClearUnorderedAccessViewUint(menuMismatch->uav.get(), zero);
+	ID3D11ShaderResourceView* inputs[] = { sourceSRV, menuReference->srv.get(), menuColor->srv.get() };
+	context->CSSetShaderResources(0, 3, inputs);
+	auto mismatch = menuMismatch->uav.get();
+	context->CSSetUnorderedAccessViews(0, 1, &mismatch, nullptr);
+	context->CSSetShader(menuValidateCS.get(), nullptr, 0);
+	context->Dispatch((plan.renderWidth * 2 + 7) / 8, (plan.renderHeight + 7) / 8, 1);
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	auto mismatchSRV = menuMismatch->srv.get();
+	context->CSSetShaderResources(3, 1, &mismatchSRV);
+	auto destination = menuResolved->uav.get();
+	auto sampler = menuSampler.get();
+	context->CSSetSamplers(0, 1, &sampler);
+	context->CSSetUnorderedAccessViews(0, 1, &destination, nullptr);
+	context->CSSetShader(menuResolveCS.get(), nullptr, 0);
+	context->Dispatch((plan.outputWidth * 2 + 7) / 8, (plan.outputHeight + 7) / 8, 1);
+	menuResolvedCycle = menuCycle;
+	menuResolvedSource = source;
+	return SUCCEEDED(globals::d3d::device->GetDeviceRemovedReason());
 }
 
 bool VRSubmitUpscaling::EnsureResources()
@@ -262,6 +516,13 @@ void VRSubmitUpscaling::CaptureInputs()
 		for (auto& shader : encodeShaders)
 			shader.Reset();
 		colorShader.Reset();
+		menuCopyVS.Reset();
+		menuCopyPS.Reset();
+		menuValidateCS.Reset();
+		menuResolveCS.Reset();
+		menuReady = false;
+		menuUnavailable = false;
+		SetupMenuResources();
 		ClearFoveationResources();
 		failed = false;
 	}
@@ -487,6 +748,26 @@ vr::EVRCompositorError VRSubmitUpscaling::SubmitHook::thunk(vr::IVRCompositor* s
 	if (!lock)
 		return func(self, eye, texture, bounds, flags);
 	auto& upscaling = globals::features::upscaling;
+	if (owner.WantsNativeMenuUI()) {
+		winrt::com_ptr<ID3D11Texture2D> menuSource;
+		if (texture->eType == vr::TextureType_DirectX && flags == vr::Submit_Default &&
+			(texture->eColorSpace == vr::ColorSpace_Auto || texture->eColorSpace == vr::ColorSpace_Gamma || texture->eColorSpace == vr::ColorSpace_Linear) &&
+			SUCCEEDED(static_cast<IUnknown*>(texture->handle)->QueryInterface(menuSource.put())) &&
+			owner.ValidateSource(menuSource.get(), eye, bounds) && owner.ResolveNativeMenu(menuSource.get())) {
+			vr::Texture_t replacement = *texture;
+			replacement.handle = owner.menuResolved->resource.get();
+			owner.SetStatus("Menu: full-resolution UI presentation with composition fallback");
+			const auto result = func(self, eye, &replacement, bounds, flags);
+			if (result != vr::VRCompositorError_None) {
+				owner.menuUnavailable = true;
+				owner.menuReady = false;
+				owner.SetStatus("Menu: compositor rejected native output; using engine output until reset");
+			}
+			return result;
+		}
+		owner.SetStatus("Menu: native UI pass unavailable; using engine TAA output");
+		return func(self, eye, texture, bounds, flags);
+	}
 	if (!owner.captured)
 		return func(self, eye, texture, bounds, flags);
 	// Desktop Present advances frameCount before OpenVR may consume this cycle's inputs.

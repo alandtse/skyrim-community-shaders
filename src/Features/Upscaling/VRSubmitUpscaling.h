@@ -112,6 +112,23 @@ private:
 	sl::Constants cameraConstants[2];
 	vr::EColorSpace sourceColorSpace = vr::ColorSpace_Auto;
 	std::atomic_bool shaderResetPending = false;
+	std::unique_ptr<Texture2D> menuColor, menuDepth;
+	std::unique_ptr<Texture2D> menuReference, menuResolved, menuMismatch;
+	Util::LazyShader<ID3D11ComputeShader> menuValidateCS, menuResolveCS;
+	Util::LazyShader<ID3D11VertexShader> menuCopyVS;
+	Util::LazyShader<ID3D11PixelShader> menuCopyPS;
+	winrt::com_ptr<ID3D11SamplerState> menuSampler;
+	uint64_t menuCycle = UINT64_MAX;
+	uint64_t menuResolvedCycle = UINT64_MAX;
+	ID3D11Texture2D* menuResolvedSource = nullptr;
+	bool menuReady = false;
+	bool menuDrawing = false, menuUnavailable = false;
+
+	bool WantsNativeMenuUI() const;
+	void SetupMenuResources();
+	void CopyMenuColor(ID3D11ShaderResourceView* source, ID3D11RenderTargetView* destination, uint32_t width, uint32_t height);
+	bool DrawNativeMenuUI(RE::BSGraphics::BSShaderAccumulator* accumulator, uint32_t flags);
+	bool ResolveNativeMenu(ID3D11Texture2D* source);
 
 	void Invalidate();
 	void SetStatus(std::string_view message);
@@ -131,6 +148,16 @@ private:
 	struct RenderTargetSizeHook
 	{
 		static void thunk(RE::BSOpenVR* self, uint32_t* width, uint32_t* height);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct MenuUIHook
+	{
+		static void thunk(RE::BSGraphics::BSShaderAccumulator* accumulator, uint32_t flags);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct MenuViewportHook
+	{
+		static void thunk(RE::BSGraphics::Renderer* renderer, uint32_t width, uint32_t height, bool matchTarget);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 	struct SubmitHook

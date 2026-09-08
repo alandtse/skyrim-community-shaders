@@ -119,6 +119,14 @@ cbuffer PerGeometry : register(b2)
 #	ifdef GRASS_OPTIMIZATIONS
 // Two per instance: [0] = origin.xyz + isComplex, [1] = windCur, windPrev, fade, packed flags.
 StructuredBuffer<float4> InstanceExtras : register(t2);
+
+// GRASS_OPTIMIZATIONS draws each eye separately (its survivor lists are already split into
+// per-eye halves by the culling CS), so it signals the eye per draw instead of via SV_InstanceID parity.
+cbuffer GrassOptimizationsEyeCB : register(b7)
+{
+	uint CurrentEyeIndex;
+	float3 _padEye;
+}
 #	else
 cbuffer cb7 : register(b7)
 {
@@ -207,8 +215,8 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	[branch] if (collisionFlag > 0.5)
 	{
 		// Captured instances already include the cell origin; do not apply World a second time.
-		const float3 collisionPos = msPosition.xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-		const float3 collisionCentre = input.InstanceData1.xyz + e0.xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+		const float3 collisionPos = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
+		const float3 collisionCentre = input.InstanceData1.xyz + e0.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
 		float3 displacement, previousDisplacement;
 		GrassCollision::GetDisplacedPosition(input, collisionPos, collisionCentre, displacement, previousDisplacement);
 		msPosition.xyz += displacement;
@@ -220,9 +228,11 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 
 	const float vertexTerm = WindVector.z * (0.5 * (input.Color.w * input.Color.w));
 	msPosition.xyz += float3(WindVector.xy, 0) * (e1.x * vertexTerm);
-	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[0], float4(eyeRel, 1.0));
+	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
+	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[CurrentEyeIndex], float4(eyeRel, 1.0));
+#		if !defined(VR)
 	vsout.HPosition = projSpacePosition;
+#		endif  // !VR
 
 #		if defined(RENDER_DEPTH)
 	vsout.Fade = e1.z;
@@ -234,7 +244,7 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	vsout.DirLightAngle = saturate(dot(DirLightDirection.xyz, instanceNormal));
 #			endif
 	vsout.WorldPosition = eyeRel;
-	vsout.PreviousWorldPosition = previousMsPosition.xyz - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
+	vsout.PreviousWorldPosition = previousMsPosition.xyz - FrameBuffer::CameraPreviousPosAdjust[CurrentEyeIndex].xyz;
 	vsout.IsFar = isFarFlag;
 	vsout.LodTier = lodTier;
 #			ifdef GRASS_LIGHTING
@@ -242,6 +252,13 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	vsout.VertexNormal.w = input.Color.w;
 #			endif
 #		endif
+
+#		if defined(VR)
+	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, CurrentEyeIndex);
+	vsout.HPosition = VRout.VRPosition;
+	vsout.ClipDistance.x = VRout.ClipDistance;
+	vsout.CullDistance.x = VRout.CullDistance;
+#		endif  // VR
 
 	return vsout;
 }

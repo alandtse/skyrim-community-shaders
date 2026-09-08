@@ -64,6 +64,11 @@ struct PendingCapture
 // Since instance count is the second uint32_t in the args, leading padding is needed so the instance count is at offset 16 as required by the raw UAV.
 inline constexpr uint32_t argsByteOffset = 12;
 inline constexpr uint32_t instanceCountOffset = argsByteOffset + sizeof(uint32_t);  // 16
+// On VR the args buffer holds two back-to-back 32-byte blocks (one per eye), each laid out exactly
+// like the single-eye block above; eye 1's fields sit at kArgsBlockStride bytes past eye 0's.
+inline constexpr uint32_t kArgsBlockStride = 32;
+inline constexpr uint32_t ArgsByteOffsetForEye(uint32_t eye) { return argsByteOffset + eye * kArgsBlockStride; }
+inline constexpr uint32_t InstanceCountOffsetForEye(uint32_t eye) { return instanceCountOffset + eye * kArgsBlockStride; }
 
 /** @brief Contains the instance data, GPU buffers and per-frame cull results for each grass type. */
 struct GrassBucket

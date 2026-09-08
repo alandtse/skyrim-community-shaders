@@ -16,6 +16,7 @@ public:
 	virtual inline std::string GetShortName() override { return "GrassOptimizations"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "GRASS_OPTIMIZATIONS"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kFoliage; }
+	virtual bool SupportsVR() override { return true; }
 
 	/** @brief Returns true only for the Grass shader type. */
 	bool HasShaderDefine(RE::BSShader::Type shaderType) override;
@@ -75,7 +76,11 @@ public:
 
 	struct alignas(16) CullParamsCB
 	{
-		float frustumPlanes[6][4];
+		// [0..5] = eye 0's planes; [6..11] = eye 1's (VR only -- duplicated from eye 0 otherwise).
+		float frustumPlanes[12][4];
+
+		uint32_t eyeCount;
+		float pad1[3];
 
 		float minPixelSize;
 		float fullDetailPixelSize;
@@ -127,9 +132,19 @@ public:
 		uint32_t sliceTableOffset;
 		uint32_t sliceCount;
 		float farLODEnabled;
-		float pad;
+		// Per-eye slot capacity of the output Compacted/Extras buffers (== GrassBucket::capacityInstances
+		// or LODBin::capacityInstances), so the CS can offset eye 1's writes into the second half on VR.
+		uint32_t outputCapacityPerEye;
 	};
 	STATIC_ASSERT_ALIGNAS_16(CullBucketCB);
+
+	// Mirrors RunGrass.hlsl's GrassOptimizationsEyeCB.
+	struct alignas(16) EyeIndexCB
+	{
+		uint32_t eyeIndex;
+		float pad[3];
+	};
+	STATIC_ASSERT_ALIGNAS_16(EyeIndexCB);
 
 	/** @brief The six frustum planes transposed to a structure of arrays, with two padding slots to fit optimized SSE/AVX instructions  */
 	struct FrustumSoA
@@ -143,6 +158,9 @@ public:
 	/** @brief AABB vs frustum, corners passed as SIMD vectors (xyz in lanes 0-2). */
 	static bool AabbVisible(const FrustumSoA& f, __m128 lo, __m128 hi);
 
+	/** @brief AABB vs any of the given frustums (VR tests both eyes; a slice visible in either eye must not be dropped). */
+	static bool AnyFrustumVisible(const FrustumSoA* frustums, uint32_t frustumCount, __m128 lo, __m128 hi);
+
 	/** @brief Derives world-space frustum planes from the camera frustum and transform. */
 	void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform);
 
@@ -152,8 +170,8 @@ public:
 	/** @brief Merges this bucket's slices into runs of contiguous buffer ranges that share a cell, for the per-bucket slice table. */
 	void MergeSlicesIntoRuns(GrassBucket& b);
 
-	/** @brief Appends this bucket's visible slice runs to sliceTableCPU and records the window in the bucket. */
-	void CullBucketSlices(GrassBucket& b, const FrustumSoA& frustumSoA, __m128 camPosV);
+	/** @brief Appends this bucket's visible slice runs to sliceTableCPU and records the window in the bucket. frustumSoAs holds frustumCount entries (2 on VR, one per eye; 1 otherwise). */
+	void CullBucketSlices(GrassBucket& b, const FrustumSoA* frustumSoAs, uint32_t frustumCount, __m128 camPosV);
 
 	/** @brief Fills the per-bucket cull constant buffer, uploads the slice table and issues the cull dispatches. */
 	void UploadCullState(ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t visibleBuckets);
@@ -177,6 +195,7 @@ public:
 	bool cullCSFailed = false;
 
 	std::unique_ptr<ConstantBuffer> cullParamsCB;
+	std::unique_ptr<ConstantBuffer> eyeIndexCB;
 	// Slotted per-bucket constants bound via CSSetConstantBuffers1: one 256-byte slot per visible
 	// bucket, one map fills them all, recreated when the bucket count outgrows it.
 	std::unique_ptr<ConstantBuffer> cullBucketCB;
@@ -298,7 +317,8 @@ public:
 			std::uint8_t patch[] = { 0x4C, 0x89, 0xF2 };  // mov rdx, r14
 			REL::safe_write(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x660, 0x648), patch, sizeof(patch));
 			stl::write_thunk_call<DrawInstanceTriShape>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x663, 0x64B));
-			trampoline.write_branch<5>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x668, 0x650), REL::RelocationID(100847, 107637).address() + REL::Relocate(0x759, 0x73A));
+			// Branch target is the post-loop register-restore epilogue.
+			trampoline.write_branch<5>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x668, 0x650), REL::RelocationID(100847, 107637).address() + REL::Relocate(0x759, 0x73A, 0x76F));
 
 			// Skip mapping the vanilla dynamic fade buffer.
 			if (REL::Module::IsAE()) {
@@ -307,7 +327,8 @@ public:
 					REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x595, 0x595, 0x6A2),
 					REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x6C6, 0x6C6, 0x7D6));
 			} else {
-				REL::safe_write(REL::RelocationID(99996, 106685).address() + 0x54D, REL::NOP5);
+				// VR's compiled function has an extra per-frame buffer-cache check SE doesn't have.
+				REL::safe_write(REL::RelocationID(99996, 106685).address() + REL::Relocate(0x54D, 0x54D, 0x563), REL::NOP5);
 			}
 
 			logger::info("[GRASS OPTIMIZATIONS] Installed hooks");

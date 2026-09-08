@@ -4,6 +4,7 @@
 #include <cmath>
 #include <format>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <numbers>
 #include <ranges>
 #include <unordered_map>
@@ -357,13 +358,17 @@ namespace
 
 void FeatureListRenderer::RenderFeatureList(
 	float footerHeight,
+	Menu::SidebarState& sidebar,
 	size_t& selectedMenu,
 	std::string& featureSearch,
 	std::string& pendingFeatureSelection,
 	const std::function<void()>& drawGeneralSettings,
 	const std::function<void()>& drawAdvancedSettings)
 {
-	ImGui::BeginChild("Menus Table", ImVec2(0, -footerHeight));
+	if (!ImGui::BeginChild("Menus Table", ImVec2(0, -footerHeight))) {
+		ImGui::EndChild();
+		return;
+	}
 
 	auto menuList = BuildMenuList(drawGeneralSettings, drawAdvancedSettings);
 	static std::string selectedMenuId = "Home";
@@ -377,22 +382,48 @@ void FeatureListRenderer::RenderFeatureList(
 
 	HandlePendingFeatureSelection(pendingFeatureSelection, menuList, selectedMenu);
 
-	// Determine if left panel should be visible based on auto-hide settings
-	bool leftPanelVisible = ShouldShowLeftPanel();
-
-	// Create the table with appropriate number of columns based on visibility
-	int numColumns = leftPanelVisible ? 2 : 1;
-	if (ImGui::BeginTable("Menus Table", numColumns, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
-		if (leftPanelVisible) {
-			ImGui::TableSetupColumn("##ListOfMenus", 0, 2);
-			ImGui::TableSetupColumn("##MenuConfig", 0, 8);
+	const bool leftPanelVisible = ShouldShowLeftPanel() && sidebar.visible;
+	const float step = ImGui::GetIO().DeltaTime / ThemeManager::Constants::SIDEBAR_SLIDE_DURATION;
+	sidebar.progress = std::clamp(sidebar.progress + (leftPanelVisible ? step : -step), 0.0f, 1.0f);
+	const float easedProgress = sidebar.progress * sidebar.progress * (3.0f - 2.0f * sidebar.progress);
+	const ImVec2 available = ImGui::GetContentRegionAvail();
+	const bool windowResized = sidebar.availableWidth > 0.0f && sidebar.availableWidth != available.x;
+	const float contentWidth = windowResized ? sidebar.widthRatio * available.x : sidebar.contentWidth;
+	const float slideWidth = sidebar.width + contentWidth - sidebar.contentWidth;
+	const float slideOffset = std::floor(slideWidth * (1.0f - easedProgress));
+	if (auto* savedLayout = ImGui::TableSettingsFindByID(ImGui::GetID("Menus Table"));
+		savedLayout && savedLayout->ColumnsCount == 2 && savedLayout->GetColumnSettings()[0].IsStretch) {
+		auto* columns = savedLayout->GetColumnSettings();
+		const float totalWeight = columns[0].WidthOrWeight + columns[1].WidthOrWeight;
+		const float widthRatio = totalWeight > 0.0f ? columns[0].WidthOrWeight / totalWeight : ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO;
+		// Saved stretch weights must become pixel widths before restoring the fixed sidebar column.
+		columns[0].WidthOrWeight = available.x * widthRatio;
+		columns[0].IsStretch = false;
+		savedLayout->RefScale = ImGui::GetFontSize();
+	}
+	const ImVec2 origin = ImGui::GetCursorScreenPos();
+	const ImVec2 tableOrigin(origin.x - slideOffset, origin.y);
+	ImGui::SetCursorScreenPos(tableOrigin);
+	if (ImGui::BeginTable("Menus Table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable,
+			ImVec2(available.x + slideOffset, 0.0f))) {
+		ImGui::TableSetupColumn("##ListOfMenus", ImGuiTableColumnFlags_WidthFixed,
+			available.x * ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO);
+		ImGui::TableSetupColumn("##MenuConfig", ImGuiTableColumnFlags_WidthStretch);
+		if (windowResized)
+			ImGui::TableSetColumnWidth(0, contentWidth);
+		if (sidebar.progress > 0.0f) {
 			RenderLeftColumn(menuList, selectedMenu, featureSearch);
-			RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
 		} else {
-			// When left panel is hidden, right column takes full width
-			ImGui::TableSetupColumn("##MenuConfig", 0, 1);
-			RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
+			ImGui::TableNextColumn();
 		}
+		ImGui::TableNextColumn();
+		const float columnWidth = ImGui::GetCurrentTable()->Columns[0].WidthRequest;
+		if (!windowResized && columnWidth != sidebar.contentWidth)
+			sidebar.widthRatio = columnWidth / available.x;
+		sidebar.contentWidth = columnWidth;
+		sidebar.availableWidth = available.x;
+		sidebar.width = ImGui::GetCursorScreenPos().x - tableOrigin.x;
+		RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
 
 		ImGui::EndTable();
 	}
@@ -539,8 +570,6 @@ void FeatureListRenderer::RenderRightColumn(
 	size_t selectedMenu,
 	std::string& pendingFeatureSelection)
 {
-	ImGui::TableNextColumn();
-
 	if (selectedMenu < menuList.size()) {
 		std::visit(DrawMenuVisitor{ pendingFeatureSelection }, menuList[selectedMenu]);
 	} else {

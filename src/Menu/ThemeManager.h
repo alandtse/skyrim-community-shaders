@@ -178,6 +178,7 @@ public:
 		// Header rendering constants
 		static constexpr float HEADER_BASE_TEXT_SCALE = 1.7f;
 		static constexpr float HEADER_BASE_ICON_MULTIPLIER = 1.85f;
+		static constexpr float SIDEBAR_ICON_SIZE_MULTIPLIER = 1.6f;
 		static constexpr float HEADER_FALLBACK_TEXT_SCALE = 1.5f;
 		static constexpr float DOCKED_ICON_SIZE_MULTIPLIER = 1.5f;
 		static constexpr float DOCKED_ICON_SPACING = 8.0f;
@@ -205,6 +206,7 @@ public:
 		static constexpr float AUTOHIDE_ACTIVATION_ZONE_WIDTH = 50.0f;  // Width of hover zone at left edge (px)
 		static constexpr float AUTOHIDE_EXPAND_DELAY = 0.25f;           // Delay before expanding panel (seconds)
 		static constexpr float AUTOHIDE_PANEL_WIDTH_RATIO = 0.2f;       // Ratio of window width for panel (2/10)
+		static constexpr float SIDEBAR_SLIDE_DURATION = 0.15f;
 
 		// Scene settings panel constants (multipliers of ImGui::GetFontSize())
 		static constexpr float SCENE_TOD_PARAM_COL_EM = 5.0f;            // Parameter column width (TOD table)

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <functional>
 #include <imgui.h>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -362,12 +363,18 @@ namespace Util
 	/** @brief Draws an animated disclosure chevron inside the supplied rectangle. */
 	void DrawDisclosureChevron(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float progress);
 
-	/** @brief Renders a flyout menu item over a theme-rounded hover highlight. */
+	using IconDrawCallback = void (*)(ImDrawList*, const ImVec2&, const ImVec2&, ImU32);
+
+	/** @brief Draws a filled five-point star inside the supplied rectangle. */
+	void DrawStarIcon(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, ImU32 color);
+
+	/** @brief Renders a flyout action or toggle with an optional custom selection icon. */
 	bool FlyoutMenuItem(
 		const char* label,
-		bool selected = false,
+		std::optional<bool> selected = std::nullopt,
 		bool enabled = true,
-		float checkmarkLeftOffset = 0.0f);
+		float checkmarkLeftOffset = 0.0f,
+		IconDrawCallback selectedIcon = nullptr);
 
 	/** @brief ImGui::Begin() wrappers that replace native title-bar button highlights with rounded ones. */
 	bool BeginWithRoundedClose(const char* name, bool* p_open, ImGuiWindowFlags flags = 0);
@@ -529,14 +536,8 @@ namespace Util
 			const FeatureConstraints::SettingId& settingId, const char* format = "%d");
 	}
 
-	/**
-	 * Draws a custom styled collapsible category header with lines extending from both sides
-	 * @param categoryName The name of the category to display
-	 * @param isExpanded Reference to the expansion state
-	 * @param categoryCount Number of features in the category
-	 * @return true if the expansion state was toggled
-	 */
-	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount);
+	/** @brief Returns the existing icon for a feature's category, or null if none is assigned. */
+	ID3D11ShaderResourceView* GetCategoryIcon(std::string_view category);
 
 	/**
 	 * Draws a custom styled section header with lines extending from both sides
@@ -546,7 +547,7 @@ namespace Util
 	 * @param isExpanded Reference to the expansion state (only used if collapsible)
 	 * @return true if the expansion state was toggled (only relevant if collapsible)
 	 */
-	bool DrawSectionHeader(const char* sectionName, bool useWhiteText = false, bool isCollapsible = true, bool* isExpanded = nullptr);
+	bool DrawSectionHeader(const char* sectionName, bool useWhiteText = false, bool isCollapsible = true, bool* isExpanded = nullptr, IconDrawCallback icon = nullptr);
 
 	/**
 	 * Configuration for color-coded value display with flexible thresholds and colors.

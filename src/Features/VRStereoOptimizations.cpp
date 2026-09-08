@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "ScreenSpaceGI.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
@@ -23,6 +24,36 @@ NLOHMANN_JSON_SERIALIZE_ENUM(VRStereoOptimizations::StereoMode, {
 // SETTINGS MANAGEMENT
 //=============================================================================
 
+namespace
+{
+	// D3D11 silently drops an SRV/UAV bind of a texture that is still bound as a render target.
+	struct RenderTargetUnbindScope
+	{
+		explicit RenderTargetUnbindScope(ID3D11DeviceContext* a_context) :
+			context(a_context)
+		{
+			context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, &dsv);
+			context->OMSetRenderTargets(0, nullptr, nullptr);
+		}
+		~RenderTargetUnbindScope()
+		{
+			context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
+			for (auto* rtv : rtvs) {
+				if (rtv)
+					rtv->Release();
+			}
+			if (dsv)
+				dsv->Release();
+		}
+		RenderTargetUnbindScope(const RenderTargetUnbindScope&) = delete;
+		RenderTargetUnbindScope& operator=(const RenderTargetUnbindScope&) = delete;
+
+		ID3D11DeviceContext* context;
+		ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+		ID3D11DepthStencilView* dsv = nullptr;
+	};
+}
+
 void VRStereoOptimizations::SaveSettings(json& o_json)
 {
 	o_json["StereoMode"] = settings.stereoMode;
@@ -37,6 +68,9 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["DebugSkipMerge"] = settings.debugSkipMerge;
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
 	o_json["DirectionalOcclusionRatio"] = settings.directionalOcclusionRatio;
+	o_json["RepairFromEye0Depth"] = settings.repairFromEye0Depth;
+	o_json["ReclassifyAfterRepair"] = settings.reclassifyAfterRepair;
+	o_json["ClassifyWithDepthHistory"] = settings.classifyWithDepthHistory;
 }
 
 void VRStereoOptimizations::LoadSettings(json& o_json)
@@ -66,6 +100,9 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 	if (!o_json.contains("DirectionalOcclusionRatio") && o_json.contains("ForwardOcclusionScale"))
 		logger::info("[VR] ForwardOcclusionScale is obsolete; resetting DirectionalOcclusionRatio to default {}", settings.directionalOcclusionRatio);
 	loadClampedFloat("DirectionalOcclusionRatio", settings.directionalOcclusionRatio, 0.0f, 1.0f);
+	loadBool("RepairFromEye0Depth", settings.repairFromEye0Depth);
+	loadBool("ReclassifyAfterRepair", settings.reclassifyAfterRepair);
+	loadBool("ClassifyWithDepthHistory", settings.classifyWithDepthHistory);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
@@ -130,6 +167,65 @@ void VRStereoOptimizations::SetupResources()
 			.Format = DXGI_FORMAT_R8_UINT,
 			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 } });
+	}
+
+	{
+		auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		D3D11_TEXTURE2D_DESC depthDesc;
+		mainDepth.texture->GetDesc(&depthDesc);
+		D3D11_SHADER_RESOURCE_VIEW_DESC depthSRVDesc;
+		mainDepth.depthSRV->GetDesc(&depthSRVDesc);
+
+		depthDesc.Width /= 2;
+		depthDesc.Format = DXGI_FORMAT_R32_UINT;
+		depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		depthDesc.MiscFlags = 0;
+		texScatterDepth = eastl::make_unique<Texture2D>(depthDesc, "VRStereoOpt::ScatterDepth");
+		texScatterDepth->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
+			.Format = DXGI_FORMAT_R32_UINT,
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
+		texScatterDepth->CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC{
+			.Format = DXGI_FORMAT_R32_UINT,
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = 0 } });
+
+		DX::ThrowIfFailed(device->CreateShaderResourceView(mainDepth.texture, &depthSRVDesc, mainDepthSRV.put()));
+		Util::SetResourceName(mainDepthSRV.get(), "VRStereoOpt::MainDepth SRV");
+	}
+
+	// Previous-frame final depth snapshot: must stay CopyResource-compatible with the
+	// kPOST_ZPREPASS_COPY texture (identical format and size).
+	{
+		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		D3D11_TEXTURE2D_DESC historyDesc;
+		zPrepassCopy.texture->GetDesc(&historyDesc);
+		D3D11_SHADER_RESOURCE_VIEW_DESC historySRVDesc;
+		zPrepassCopy.depthSRV->GetDesc(&historySRVDesc);
+
+		historyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		historyDesc.MiscFlags = 0;
+		historyDesc.CPUAccessFlags = 0;
+		texFinalDepthHistory = eastl::make_unique<Texture2D>(historyDesc, "VRStereoOpt::FinalDepthHistory");
+		texFinalDepthHistory->CreateSRV(historySRVDesc);
+	}
+
+	{
+		D3D11_TEXTURE2D_DESC maskDesc = texScatterDepth->desc;
+		maskDesc.Format = DXGI_FORMAT_R8_UINT;
+
+		texUnrepairableMask = eastl::make_unique<Texture2D>(maskDesc, "VRStereoOpt::UnrepairableMask");
+		texUnrepairableMask->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
+			.Format = DXGI_FORMAT_R8_UINT,
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
+		texUnrepairableMask->CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC{
+			.Format = DXGI_FORMAT_R8_UINT,
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = 0 } });
+
+		const UINT maskClear[4] = { 0, 0, 0, 0 };
+		globals::d3d::context->ClearUnorderedAccessViewUint(texUnrepairableMask->uav.get(), maskClear);
 	}
 
 	// Depth-stencil state for stencil write pass:
@@ -220,6 +316,15 @@ void VRStereoOptimizations::CompileShaders()
 			logger::error("[VRStereoOptimizations] Failed to compile StencilCS (DEBUG_DEPTH_MAP)");
 	}
 
+	{
+		auto historyDefines = csDefines;
+		historyDefines.push_back({ "CLASSIFY_WITH_HISTORY", nullptr });
+		if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\StencilCS.hlsl", historyDefines, "cs_5_0"))
+			stencilHistoryCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
+		else
+			logger::error("[VRStereoOptimizations] Failed to compile StencilCS (CLASSIFY_WITH_HISTORY)");
+	}
+
 	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\StencilWriteVS.hlsl", vspsDefines, "vs_5_0"))
 		stencilWriteVS.attach(reinterpret_cast<ID3D11VertexShader*>(ptr));
 	else
@@ -235,10 +340,20 @@ void VRStereoOptimizations::CompileShaders()
 	else
 		logger::error("[VRStereoOptimizations] Failed to compile DepthFillPS");
 
+	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\DepthScatterCS.hlsl", csDefines, "cs_5_0"))
+		depthScatterCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
+	else
+		logger::error("[VRStereoOptimizations] Failed to compile DepthScatterCS");
+
 	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\GBufferFillCS.hlsl", csDefines, "cs_5_0"))
 		gBufferFillCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
 	else
 		logger::error("[VRStereoOptimizations] Failed to compile GBufferFillCS");
+
+	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\UnrepairableMaskCS.hlsl", csDefines, "cs_5_0"))
+		unrepairableMaskCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
+	else
+		logger::error("[VRStereoOptimizations] Failed to compile UnrepairableMaskCS");
 }
 
 void VRStereoOptimizations::ClearShaderCache()
@@ -246,9 +361,12 @@ void VRStereoOptimizations::ClearShaderCache()
 	stencilCS = nullptr;
 	gBufferFillCS = nullptr;
 	stencilDebugDepthMapCS = nullptr;
+	stencilHistoryCS = nullptr;
+	unrepairableMaskCS = nullptr;
 	stencilWriteVS = nullptr;
 	stencilWritePS = nullptr;
 	depthFillPS = nullptr;
+	depthScatterCS = nullptr;
 	dssCache.clear();
 
 	// Framework clears caches without a follow-up SetupResources; without an immediate
@@ -261,6 +379,7 @@ void VRStereoOptimizations::Reset()
 {
 	stencilActive = false;
 	stencilSwapCount = 0;
+	depthHistoryValid = false;
 }
 
 //=============================================================================
@@ -289,6 +408,15 @@ void VRStereoOptimizations::DrawSettings()
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
 			ImGui::SliderFloat(T("feature.vr_stereo.full_blend_distance", "Full Blend Distance"), &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
 			Util::AddTooltip(T("feature.vr_stereo.full_blend_distance_tooltip", "Geometry closer than this distance (game units) is excluded from culling and rendered natively in both eyes. 0 = disabled."));
+
+			ImGui::Checkbox(T("feature.vr_stereo.repair_from_eye0_depth", "Repair From Left Eye Depth"), &settings.repairFromEye0Depth);
+			Util::AddTooltip(T("feature.vr_stereo.repair_from_eye0_depth_tooltip", "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nDebug only: turning this off reintroduces the missing-geometry bug."));
+
+			ImGui::Checkbox(T("feature.vr_stereo.reclassify_after_repair", "Reclassify After Repair"), &settings.reclassifyAfterRepair);
+			Util::AddTooltip(T("feature.vr_stereo.reclassify_after_repair_tooltip", "Re-runs the pixel classification on the finished depth so Screen Space GI reprojection sees the restored objects.\nDebug only; runs only when that is on."));
+
+			ImGui::Checkbox(T("feature.vr_stereo.classify_with_depth_history", "Classify With Depth History"), &settings.classifyWithDepthHistory);
+			Util::AddTooltip(T("feature.vr_stereo.classify_with_depth_history_tooltip", "Classifies from the nearer of the depth pre-pass and last frame's final depth, so surfaces the pre-pass skips, such as alpha-tested rocks and road edges, are no longer culled in the right eye.\nDebug only: turning this off reintroduces the missing-geometry bug."));
 
 			ImGui::Checkbox(T("feature.vr_stereo.skip_pixel_reprojection", "Skip Pixel Reprojection"), &settings.debugSkipMerge);
 			ImGui::Text(T("feature.vr_stereo.stencil_swaps_this_frame", "Stencil swaps this frame: %u"), stencilSwapCount);
@@ -331,6 +459,10 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.MinEdgeDistance = settings.minEdgeDistance;
 	params.FullBlendDistance = settings.fullBlendDistance;
 	params.DirectionalOcclusionRatio = settings.directionalOcclusionRatio;
+	params.RepairFromEye0Depth = settings.repairFromEye0Depth ? 1u : 0u;
+	const bool historyAvailable = depthHistoryValid && settings.classifyWithDepthHistory;
+	params.DepthHistoryValid = historyAvailable ? 1u : 0u;
+	params.UseUnrepairableMask = historyAvailable && unrepairableMaskValid ? 1u : 0u;
 
 	paramsCB->Update(params);
 }
@@ -349,10 +481,8 @@ void VRStereoOptimizations::DispatchStencil()
 	ZoneScoped;
 	CS_GPU_PASS("VRStereoOpt::Stencil");
 
-	auto context = globals::d3d::context;
-
 	UpdateConstantBuffer();
-	auto cbPtr = paramsCB->CB();
+	unrepairableMaskValid = false;
 	// Use the same depth source as the rest of the deferred pipeline.
 	// kMAIN.depthSRV is unpopulated at StartDeferred time (z-prepass has not written to it yet).
 	// GetCurrentSceneDepthSRV() returns TerrainBlending's blended depth when active, or
@@ -363,40 +493,7 @@ void VRStereoOptimizations::DispatchStencil()
 		return;
 	}
 
-	{
-		CS_GPU_PASS("StereoOpt::ModeClassify");
-
-		{
-			CS_GPU_PASS("StereoOpt::ModeClassifyBind");
-
-			ID3D11ShaderResourceView* srvs[1]{ depthSRV };
-			ID3D11UnorderedAccessView* uavs[1]{ texPerPixelMode->uav.get() };
-
-			context->CSSetConstantBuffers(1, 1, &cbPtr);
-			context->CSSetShaderResources(0, 1, srvs);
-			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-			auto* activeStencilCS = (settings.debugDepthMap && stencilDebugDepthMapCS) ? stencilDebugDepthMapCS.get() : stencilCS.get();
-			context->CSSetShader(activeStencilCS, nullptr, 0);
-		}
-
-		{
-			CS_GPU_PASS("StereoOpt::ModeClassifyDispatch");
-
-			uint32_t fullWidth = texPerPixelMode->desc.Width;
-			uint32_t fullHeight = texPerPixelMode->desc.Height;
-			context->Dispatch((fullWidth + 7) / 8, (fullHeight + 7) / 8, 1);
-		}
-
-		// Cleanup CS bindings
-		ID3D11ShaderResourceView* nullSRV = nullptr;
-		ID3D11UnorderedAccessView* nullUAV = nullptr;
-		ID3D11Buffer* nullCB = nullptr;
-		context->CSSetShaderResources(0, 1, &nullSRV);
-		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
-		context->CSSetConstantBuffers(1, 1, &nullCB);
-		context->CSSetShader(nullptr, nullptr, 0);
-	}
-
+	DispatchClassify(depthSRV, true);
 	classifiedThisFrame = true;
 
 	// Only stereoMode being on culls Eye 1; other consumers just read the mode texture above.
@@ -408,6 +505,92 @@ void VRStereoOptimizations::DispatchStencil()
 	} else {
 		stencilActive = false;
 	}
+}
+
+void VRStereoOptimizations::SnapshotFinalDepthHistory(bool a_previousFrameHadFinalDepth)
+{
+	if (!globals::game::isVR || !texFinalDepthHistory)
+		return;
+
+	if (!a_previousFrameHadFinalDepth || !settings.classifyWithDepthHistory || !CanClassify()) {
+		depthHistoryValid = false;
+		return;
+	}
+
+	CS_GPU_PASS("VRStereoOpt::DepthHistorySnapshot");
+
+	auto context = globals::d3d::context;
+	auto& depthCopy = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	context->CopyResource(texFinalDepthHistory->resource.get(), depthCopy.texture);
+	depthHistoryValid = true;
+}
+
+void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV, bool useHistory)
+{
+	CS_GPU_PASS("StereoOpt::ModeClassify");
+
+	auto context = globals::d3d::context;
+	auto cbPtr = paramsCB->CB();
+
+	// Graceful degradation: the history permutation needs its own shader and both feedback
+	// textures; without them classify from the depth alone, exactly like ReclassifyFromFinalDepth.
+	const bool useHistoryShader = useHistory && !settings.debugDepthMap &&
+	                              stencilHistoryCS && texFinalDepthHistory && texUnrepairableMask;
+	const uint32_t srvCount = useHistoryShader ? 3 : 1;
+
+	{
+		CS_GPU_PASS("StereoOpt::ModeClassifyBind");
+
+		ID3D11ShaderResourceView* srvs[3]{ depthSRV, nullptr, nullptr };
+		if (useHistoryShader) {
+			srvs[1] = texFinalDepthHistory->srv.get();
+			srvs[2] = texUnrepairableMask->srv.get();
+		}
+		ID3D11UnorderedAccessView* uavs[1]{ texPerPixelMode->uav.get() };
+
+		context->CSSetConstantBuffers(1, 1, &cbPtr);
+		context->CSSetShaderResources(0, srvCount, srvs);
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		auto* activeStencilCS = stencilCS.get();
+		if (settings.debugDepthMap && stencilDebugDepthMapCS)
+			activeStencilCS = stencilDebugDepthMapCS.get();
+		else if (useHistoryShader)
+			activeStencilCS = stencilHistoryCS.get();
+		context->CSSetShader(activeStencilCS, nullptr, 0);
+	}
+
+	{
+		CS_GPU_PASS("StereoOpt::ModeClassifyDispatch");
+
+		uint32_t fullWidth = texPerPixelMode->desc.Width;
+		uint32_t fullHeight = texPerPixelMode->desc.Height;
+		context->Dispatch((fullWidth + 7) / 8, (fullHeight + 7) / 8, 1);
+	}
+
+	ID3D11ShaderResourceView* nullSRVs[3] = {};
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	ID3D11Buffer* nullCB = nullptr;
+	context->CSSetShaderResources(0, srvCount, nullSRVs);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	context->CSSetConstantBuffers(1, 1, &nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void VRStereoOptimizations::ReclassifyFromFinalDepth()
+{
+	if (!settings.reclassifyAfterRepair || !classifiedThisFrame || !mainDepthSRV || settings.debugDepthMap)
+		return;
+
+	const auto& ssgi = globals::features::screenSpaceGI;
+	const bool lateConsumerActive = ssgi.loaded && ssgi.settings.Enabled && ssgi.settings.UseStereoReproject;
+	if (!lateConsumerActive)
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("VRStereoOpt::Reclassify");
+
+	RenderTargetUnbindScope rtScope(globals::d3d::context);
+	DispatchClassify(mainDepthSRV.get(), false);
 }
 
 void VRStereoOptimizations::SetEye1Viewport()
@@ -539,21 +722,25 @@ void VRStereoOptimizations::DeactivateStencil()
 
 void VRStereoOptimizations::RepairCulledEye1()
 {
-	if (!stencilActive)
-		return;
-
-	// Order is load-bearing: DeactivateStencil must precede the depth fill so the
-	// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
-	// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
-	// these steps, or the stencil mask is lost — hence they live in one method.
-	DeactivateStencil();
-	ExecuteDepthFillPass();
-	DispatchGBufferFill();
+	if (stencilActive) {
+		// Order is load-bearing: DeactivateStencil must precede the depth fill so the
+		// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
+		// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
+		// these steps, or the stencil mask is lost — hence they live in one method.
+		// DispatchUnrepairableMask reads the initial modes, so it precedes
+		// ReclassifyFromFinalDepth, which overwrites them.
+		DeactivateStencil();
+		DispatchDepthScatter();
+		ExecuteDepthFillPass();
+		DispatchGBufferFill();
+		DispatchUnrepairableMask();
+	}
+	ReclassifyFromFinalDepth();
 }
 
 void VRStereoOptimizations::ExecuteDepthFillPass()
 {
-	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS)
+	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS || !texScatterDepth || !paramsCB)
 		return;
 
 	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
@@ -581,23 +768,61 @@ void VRStereoOptimizations::ExecuteDepthFillPass()
 	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
 	context->PSSetShader(depthFillPS.get(), nullptr, 0);
 	context->GSSetShader(nullptr, nullptr, 0);
-	context->PSSetShaderResources(0, 1, &depthSRV);
+	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texScatterDepth->srv.get() };
+	context->PSSetShaderResources(0, 2, srvs);
+
+	auto cbPtr = paramsCB->CB();
+	context->PSSetConstantBuffers(1, 1, &cbPtr);
 
 	context->IASetInputLayout(nullptr);
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	context->Draw(3, 0);
 
-	// Pipeline state restored by `scope` dtor.
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	context->PSSetShaderResources(1, 1, &nullSRV);
+
+	// Remaining pipeline state restored by `scope` dtor.
+}
+
+void VRStereoOptimizations::DispatchDepthScatter()
+{
+	if (!depthScatterCS || !texScatterDepth || !mainDepthSRV || !paramsCB)
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("VRStereoOpt::DepthScatter");
+
+	auto context = globals::d3d::context;
+	RenderTargetUnbindScope rtScope(context);
+
+	const UINT scatterEmpty[4] = { kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty };
+	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), scatterEmpty);
+
+	auto cbPtr = paramsCB->CB();
+	ID3D11ShaderResourceView* srv = mainDepthSRV.get();
+	ID3D11UnorderedAccessView* uav = texScatterDepth->uav.get();
+	context->CSSetConstantBuffers(1, 1, &cbPtr);
+	context->CSSetShaderResources(0, 1, &srv);
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+	context->CSSetShader(depthScatterCS.get(), nullptr, 0);
+
+	const uint32_t eyeWidth = static_cast<uint32_t>(frameDim.x) / 2;
+	const uint32_t height = static_cast<uint32_t>(frameDim.y);
+	context->Dispatch((eyeWidth + 7) / 8, (height + 7) / 8, 1);
+
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	ID3D11Buffer* nullCB = nullptr;
+	context->CSSetShaderResources(0, 1, &nullSRV);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	context->CSSetConstantBuffers(1, 1, &nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 void VRStereoOptimizations::DispatchGBufferFill()
 {
-	if (!gBufferFillCS || !texPerPixelMode || !paramsCB)
-		return;
-
-	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
-	if (!depthSRV)
+	if (!gBufferFillCS || !texPerPixelMode || !paramsCB || !mainDepthSRV)
 		return;
 
 	ZoneScoped;
@@ -607,18 +832,13 @@ void VRStereoOptimizations::DispatchGBufferFill()
 	auto renderer = globals::game::renderer;
 	auto& rt = renderer->GetRuntimeData().renderTargets;
 
-	// The deferred MRT set is bound as RTVs at this point; UAV binds on the same
-	// textures would be dropped by the runtime. Unbind render targets first.
-	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
-	ID3D11DepthStencilView* savedDSV = nullptr;
-	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
-	context->OMSetRenderTargets(0, nullptr, nullptr);
+	RenderTargetUnbindScope rtScope(context);
 
 	// paramsCB already uploaded this frame by DispatchStencil (settings/resolution are
 	// frame-constant); no re-upload needed.
 	auto cbPtr = paramsCB->CB();
 
-	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texPerPixelMode->srv.get() };
+	ID3D11ShaderResourceView* srvs[2]{ mainDepthSRV.get(), texPerPixelMode->srv.get() };
 	ID3D11UnorderedAccessView* uavs[8]{
 		rt[RE::RENDER_TARGETS::kMAIN].UAV,
 		rt[RE::RENDER_TARGETS::kMOTION_VECTOR].UAV,
@@ -646,12 +866,37 @@ void VRStereoOptimizations::DispatchGBufferFill()
 	context->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 	context->CSSetConstantBuffers(1, 1, &nullCB);
 	context->CSSetShader(nullptr, nullptr, 0);
+}
 
-	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
-	for (auto& rtv : savedRTVs) {
-		if (rtv)
-			rtv->Release();
-	}
-	if (savedDSV)
-		savedDSV->Release();
+void VRStereoOptimizations::DispatchUnrepairableMask()
+{
+	if (!unrepairableMaskCS || !texUnrepairableMask || !texPerPixelMode || !texScatterDepth || !paramsCB)
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("VRStereoOpt::UnrepairableMask");
+
+	auto context = globals::d3d::context;
+	RenderTargetUnbindScope rtScope(context);
+
+	auto cbPtr = paramsCB->CB();
+	ID3D11ShaderResourceView* srvs[2]{ texPerPixelMode->srv.get(), texScatterDepth->srv.get() };
+	ID3D11UnorderedAccessView* uav = texUnrepairableMask->uav.get();
+	context->CSSetConstantBuffers(1, 1, &cbPtr);
+	context->CSSetShaderResources(0, 2, srvs);
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+	context->CSSetShader(unrepairableMaskCS.get(), nullptr, 0);
+
+	const uint32_t eyeWidth = static_cast<uint32_t>(frameDim.x) / 2;
+	const uint32_t height = static_cast<uint32_t>(frameDim.y);
+	context->Dispatch((eyeWidth + 7) / 8, (height + 7) / 8, 1);
+	unrepairableMaskValid = true;
+
+	ID3D11ShaderResourceView* nullSRVs[2] = {};
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	ID3D11Buffer* nullCB = nullptr;
+	context->CSSetShaderResources(0, 2, nullSRVs);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	context->CSSetConstantBuffers(1, 1, &nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
 }

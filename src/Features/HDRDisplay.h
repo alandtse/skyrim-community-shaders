@@ -190,6 +190,10 @@ public:
 	Texture2D* uiTexture = nullptr;            // Separate UI render target for proper compositing
 	Texture2D* cleanSceneCapture = nullptr;    // Pre-blur copy of hdrTexture for clean captures
 	uint cleanSceneCaptureFrame = UINT32_MAX;  // frameCount when cleanSceneCapture was last refreshed
+	/** @brief Engine scene redraw count used to distinguish retained HDR contents from a new frame. */
+	uint64_t sceneGeneration = 0;
+	/** @brief Vanilla UI redraw count used to invalidate the menu blur's retained UI copy. */
+	uint64_t uiGeneration = 0;
 
 	ID3D11ComputeShader* hdrOutputCS = nullptr;
 	/** @brief Returns the HDR output compute shader, compiling it on first use. */

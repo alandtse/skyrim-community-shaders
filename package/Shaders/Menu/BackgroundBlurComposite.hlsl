@@ -1,46 +1,28 @@
 // Composite Blur Pass Shader with Rounded Rectangle Mask
 // Part of the BackgroundBlur system - applies blurred texture with rounded corners
 
-#include "Common/BlurDither.hlsli"
+#include "Menu/BackgroundBlur.hlsli"
 
-cbuffer WindowBuffer : register(b1)
-{
-	float4 WindowRect;    // x = minX, y = minY, z = maxX, w = maxY (in pixels)
-	float4 WindowParams;  // x = cornerRadius, y = screenWidth, z = screenHeight, w = fullscreen (1.0 = skip SDF)
-};
-
-SamplerState LinearSampler : register(s0);
-Texture2D InputTexture : register(t0);
-
-static const float DOWNSAMPLE_FACTOR = 8.0f;
 static const float CLIP_EPSILON = 0.001f;
 
-struct VS_OUTPUT
+float4 SampleBicubic(float2 uv)
 {
-	float4 Position: SV_POSITION;
-	float2 TexCoord: TEXCOORD0;
-};
-
-VS_OUTPUT VS_Main(uint vertexID : SV_VertexID)
-{
-	VS_OUTPUT output;
-	output.TexCoord = float2((vertexID << 1) & 2, vertexID & 2);
-	output.Position = float4(output.TexCoord * 2.0f - 1.0f, 0.0f, 1.0f);
-	output.Position.y = -output.Position.y;
-	return output;
-}
-
-// Soft sampling with blurred dithering - takes 4 samples with jittered offsets
-// and averages them to smooth out the noise while still breaking up blocky pixels
-float4 SampleWithSoftening(float2 uv, float2 pixelPos, float2 texelSize)
-{
-	float4 result = 0;
-	[unroll] for (int i = 0; i < BlurDither::kSampleCount; i++)
-	{
-		result += InputTexture.Sample(LinearSampler, uv + BlurDither::GetOffset(pixelPos, i) * texelSize);
-	}
-
-	return result / (float)BlurDither::kSampleCount;
+	float2 pixel = uv * BlurTextureSize.xy - 0.5f;
+	float2 base = floor(pixel);
+	float2 f = pixel - base;
+	float2 f2 = f * f;
+	float2 f3 = f2 * f;
+	float2 w0 = (1.0f - 3.0f * f + 3.0f * f2 - f3) / 6.0f;
+	float2 w1 = (4.0f - 6.0f * f2 + 3.0f * f3) / 6.0f;
+	float2 w2 = (1.0f + 3.0f * f + 3.0f * f2 - 3.0f * f3) / 6.0f;
+	float2 w3 = f3 / 6.0f;
+	float2 g0 = w0 + w1;
+	float2 g1 = w2 + w3;
+	float2 p0 = (base - 0.5f + w1 / g0) * BlurTextureSize.zw;
+	float2 p1 = (base + 1.5f + w3 / g1) * BlurTextureSize.zw;
+	return lerp(
+		lerp(InputTexture.SampleLevel(LinearSampler, p0, 0), InputTexture.SampleLevel(LinearSampler, float2(p1.x, p0.y), 0), g1.x),
+		lerp(InputTexture.SampleLevel(LinearSampler, float2(p0.x, p1.y), 0), InputTexture.SampleLevel(LinearSampler, p1, 0), g1.x), g1.y);
 }
 
 // Compute signed distance to a rounded rectangle
@@ -88,16 +70,18 @@ float4 PS_Main(VS_OUTPUT input) :
 		}
 	}
 
-	float2 blurTexelSize = DOWNSAMPLE_FACTOR / float2(WindowParams.y, WindowParams.z);
+	float4 blurColor = SampleBicubic(input.TexCoord);
 
-	// Sample with soft dithering to hide blocky pixels from the downsampled blur
-	float4 blurColor = SampleWithSoftening(input.TexCoord, pixelPos, blurTexelSize);
-
-	// Apply rounded corner mask to alpha
-	// The blur strength is applied via blend state, so just use the rounded mask here
 	blurColor.a = alpha;
 
 	return blurColor;
+}
+
+float4 PS_Layer(VS_OUTPUT input) : SV_TARGET
+{
+	float2 pixelPos = input.TexCoord * WindowParams.yz;
+	clip(-RoundedRectSDF(pixelPos, WindowRect.xy, WindowRect.zw, WindowParams.x) - CLIP_EPSILON);
+	return SampleBicubic(input.TexCoord);
 }
 
 // Clear shader entry point - outputs transparent black inside rounded rect only

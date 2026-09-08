@@ -235,6 +235,11 @@ void Deferred::EarlyPrepasses()
 {
 	CS_GPU_PASS("Deferred::EarlyPrepass");
 
+	if (globals::game::isVR)
+		globals::features::vr.stereoOpt.SnapshotFinalDepthHistory(sceneDepthFinal);
+
+	sceneDepthFinal = false;
+
 	auto shaderCache = globals::shaderCache;
 
 	if (!shaderCache->IsEnabled())
@@ -274,6 +279,7 @@ void Deferred::PrepassPasses()
 
 void Deferred::StartDeferred()
 {
+	sceneDepthFinal = false;
 	if (!globals::state->inWorld)
 		return;
 	globals::state->UpdateSharedData(true, false);
@@ -383,6 +389,11 @@ void Deferred::DeferredPasses()
 	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	auto finalDepthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	// Water samples this texture for edge fade and refraction; a partial or
+	// dynamic-resolution-sized copy here left it stale and caused hard water intersections.
+	context->CopyResource(finalDepthCopy.texture, depth.texture);
+	sceneDepthFinal = true;
 	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 
 	auto motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
@@ -797,17 +808,6 @@ void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk(RE::BSShaderAccumula
 	func(This, RenderFlags);
 
 	deferred->EndDeferred();
-
-	// Copy depth from before water
-	auto renderer = globals::game::renderer;
-	auto context = globals::d3d::context;
-
-	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-	auto depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-
-	context->CopyResource(depthCopy.texture, depth.texture);
-
-	// After this point, water starts rendering
 };
 
 void Deferred::Hooks::BSCubeMapCamera_RenderCubemap::thunk(RE::NiAVObject* camera, int a2, bool a3, bool a4, bool a5)

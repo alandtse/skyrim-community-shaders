@@ -902,7 +902,8 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "ScreenSpaceShadows/ScreenSpaceShadows.hlsli"
 #	endif
 
-#	if defined(TREE_ANIM)
+#	if defined(TREE_ANIM) && defined(WETNESS_EFFECTS)
+#		define SIMPLE_TREE_WETNESS
 #		undef WETNESS_EFFECTS
 #	endif
 
@@ -2239,6 +2240,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// sharply without this floor.
 	static const float wetnessMinPuddleRoughness = 0.05;
 	waterRoughnessSpecular = max(saturate(1.0 - wetnessGlossinessSpecular), wetnessMinPuddleRoughness);
+#	endif
+
+#	if defined(SIMPLE_TREE_WETNESS)
+	static const float treeWetRoughnessScale = 0.85;
+	static const float treeWetMinRoughness = 0.04;
+	static const float treeWetAlbedoScale = 0.90;
+	const float treeWetness = (inWorld || inReflection) ?
+	                              saturate(SharedData::wetnessEffectsSettings.Wetness * SharedData::wetnessEffectsSettings.MaxRainWetness) :
+	                              0.0;
+	material.Roughness = lerp(material.Roughness, max(material.Roughness * treeWetRoughnessScale, treeWetMinRoughness), treeWetness);
+	material.BaseColor *= lerp(1.0, treeWetAlbedoScale, treeWetness);
+#		if !defined(TRUE_PBR) && defined(SPECULAR)
+	static const float treeWetGlossinessIncrease = 0.05;
+	static const float treeWetShininessScale = 1.10;
+	material.Glossiness = saturate(material.Glossiness + treeWetGlossinessIncrease * treeWetness);
+	material.Shininess *= lerp(1.0, treeWetShininessScale, treeWetness);
+#		endif
 #	endif
 
 	float llDirLightMult = SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear && (inWorld || inReflection) && !SharedData::InInterior ? SharedData::linearLightingSettings.dirLightMult : 1.0f;

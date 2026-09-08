@@ -194,7 +194,7 @@ void ABTestingManager::DrawSettingsUI()
 				"Workflow: Configure your test settings, then enable A/B testing.\n"
 				"- Variant B (TEST) = Your current settings when you enable testing\n"
 				"- Variant A (USER) = Your previously saved user configuration\n"
-				"Testing starts with Variant B, then swaps every N seconds.\n"
+				"The initial Variant B interval is an unmeasured warm-up, then testing begins with Variant A.\n"
 				"Set to 0 to disable and restore TEST settings."));
 	}
 }
@@ -286,7 +286,10 @@ void ABTestingManager::DrawOverlayUI()
 	remaining = std::max(0.0f, remaining);
 
 	// Show current variant and time
-	const char* variantLabel = usingTestConfig ? T(TKEY("variant_b_test"), "Variant B (TEST)") : T(TKEY("variant_a_user"), "Variant A (USER)");
+	const char* variantLabel = aggregator.IsWarmingUp() ?
+	                               T(TKEY("variant_b_warmup"), "Variant B (TEST) warm-up") :
+	                           usingTestConfig ? T(TKEY("variant_b_test"), "Variant B (TEST)") :
+	                                             T(TKEY("variant_a_user"), "Variant A (USER)");
 	ImGui::Text("%s", fmt::format(fmt::runtime(T(TKEY("variant_time_left_fmt"), "{} : {:.1f}s left")),
 						  variantLabel, remaining)
 						  .c_str());

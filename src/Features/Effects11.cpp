@@ -132,6 +132,60 @@ namespace
 		PresetManager::GetSingleton().Rescan();
 	}
 
+	json QueryGetSettingValue(const Feature*, const json& args)
+	{
+		const std::string key = args.value("key", std::string{});
+		const std::string category = args.value("category", std::string{});
+		auto& settingManager = SettingManager::GetSingleton();
+		const auto* info = settingManager.GetSettingInfo(key, category);
+		if (!info) {
+			return json{ { "error", "unknown setting" } };
+		}
+
+		json result;
+		switch (info->type) {
+		case SettingType::Bool:
+			result["value"] = settingManager.GetValue<bool>(info->id, true);
+			break;
+		case SettingType::Float:
+			result["value"] = settingManager.GetValue<float>(info->id, true);
+			break;
+		default:
+			return json{ { "error", "setting type not supported by this query" } };
+		}
+		return result;
+	}
+
+	void CommandSetBoolSetting(Feature*, const json& args)
+	{
+		const std::string key = args.value("key", std::string{});
+		const std::string category = args.value("category", std::string{});
+		const bool value = args.value("value", false);
+		auto& settingManager = SettingManager::GetSingleton();
+		const uint32_t id = settingManager.GetSettingID(key, category);
+		if (id == 0xFFFFFFFF) {
+			logger::warn("[Effects11] setBoolSetting: no setting matches {}.{}", category, key);
+			return;
+		}
+		settingManager.SetValue<bool>(id, value);
+	}
+
+	void CommandSaveAndApply(Feature*, const json&)
+	{
+		auto& settingManager = SettingManager::GetSingleton();
+		auto& effectManager = EffectManager::GetSingleton();
+		settingManager.Save();
+		effectManager.Save();
+		settingManager.Load();
+		effectManager.Apply();
+	}
+
+	void CommandLoadAndApply(Feature*, const json&)
+	{
+		SettingManager::GetSingleton().Load();
+		EffectManager::GetSingleton().Apply();
+	}
+
 	void CommandSelectPresetLocation(Feature*, const json& args)
 	{
 		const std::string root = args.value("root", std::string{});
@@ -187,6 +241,18 @@ void Effects11::RegisterUxActions()
 	FEATURE_COMMAND("selectPresetLocation",
 		"Selects a discovered ENB preset location and hot-swaps to it -- the same code path as picking it from the dropdown (reloads settings, reapplies effects, no restart). Params: root (string, must match a listPresetLocations root value).",
 		CommandSelectPresetLocation);
+	FEATURE_QUERY("getSettingValue",
+		"Reads a single ini-backed setting's live value (bool or float only). Params: key (string), category (string, e.g. 'GLOBAL').",
+		QueryGetSettingValue);
+	FEATURE_COMMAND("setBoolSetting",
+		"Sets a bool ini-backed setting's value, the same code path as clicking its checkbox -- does not persist until saveAndApply/save runs. Params: key (string), category (string, e.g. 'GLOBAL'), value (bool).",
+		CommandSetBoolSetting);
+	FEATURE_COMMAND("saveAndApply",
+		"Saves all Effects11 settings and effect ini files to disk, then reloads and recompiles shaders -- the same code path as clicking Save & Apply. Params: none.",
+		CommandSaveAndApply);
+	FEATURE_COMMAND("loadAndApply",
+		"Reloads all Effects11 settings from disk and reapplies effects -- the same code path as clicking Load & Apply. Params: none.",
+		CommandLoadAndApply);
 	FEATURE_QUERY("getWeatherState",
 		"Snapshot of Effects11's per-frame weather/location state: raw and location-overridden "
 		"(effective, per WeatherManager's _locationweather.ini) weather form IDs, transition, "

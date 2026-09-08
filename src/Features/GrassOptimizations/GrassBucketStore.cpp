@@ -1,6 +1,5 @@
 #include "GrassBucketStore.h"
 
-
 void GrassBucketStore::SetupResources()
 {
 	{
@@ -94,7 +93,7 @@ bool GrassBucketStore::ClaimQueueSlot(RE::BSMultiStreamInstanceTriShape* shape, 
 	auto& lastQueued = it->second->lastQueuedFrame;
 	uint32_t prev = lastQueued.load(std::memory_order_relaxed);
 	if (prev == frame)
-		return false; 
+		return false;
 	return lastQueued.compare_exchange_strong(prev, frame, std::memory_order_relaxed);
 }
 
@@ -779,7 +778,7 @@ bool GrassBucketStore::CreateBucketArgsBuffer(GrassBucket& b, ID3D11Device* devi
 	}
 	Util::SetResourceName(b.argsBuf, "GrassOptimizations::ArgsBuf");
 
-	// Windows on to the instance count, with the shader's address 0 mapping to it, so clearing the view resets the count without disturbing indexCount. 
+	// Windows on to the instance count, with the shader's address 0 mapping to it, so clearing the view resets the count without disturbing indexCount.
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
 	uav.Format = DXGI_FORMAT_R32_TYPELESS;
 	uav.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
@@ -812,7 +811,7 @@ void GrassBucketStore::UpdateCoarseBounds(GrassBucket& b)
 		mx = { 0.0f, 0.0f, 0.0f };
 	}
 
-	// Generously pad to prevent instances on the screen edge from being visibly culled. 
+	// Generously pad to prevent instances on the screen edge from being visibly culled.
 	const float pad = b.modelRadius + 128.0f;
 	mn.x -= pad;
 	mn.y -= pad;

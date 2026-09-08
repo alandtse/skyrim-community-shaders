@@ -248,7 +248,7 @@ void GrassOptimizations::UpdateGrass()
 	auto* ctx = globals::d3d::context;
 
 	if (!GetCullCS() || !ctx1 || !cullParamsCB) {
-		// Without a cull dispatch, the args buffers are never written. Skip drawing grass this frame to avoid drawing stale data. 
+		// Without a cull dispatch, the args buffers are never written. Skip drawing grass this frame to avoid drawing stale data.
 		for (auto& [key, b] : bucketStore.buckets)
 			b.ResetCullState();
 		bucketStore.DiscardPending();
@@ -398,8 +398,7 @@ void GrassOptimizations::MergeSlicesIntoRuns(GrassBucket& b)
 	const uint32_t sliceCount = (uint32_t)b.slices.size();
 
 	for (uint32_t first = 0; first < sliceCount;) {
-		if (b.slices[first].bufferOffset == UINT32_MAX || b.slices[first].count == 0)
-		{
+		if (b.slices[first].bufferOffset == UINT32_MAX || b.slices[first].count == 0) {
 			++first;
 			continue;
 		}

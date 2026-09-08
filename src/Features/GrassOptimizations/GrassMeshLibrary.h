@@ -46,7 +46,7 @@ public:
 
 	/** @brief Removes no longer valid shapes from the lookup caches to prevent IDs and LOD meshes from being associated with the wrong shape. */
 	void ForgetShape(RE::BSMultiStreamInstanceTriShape* shape);
-		
+
 private:
 	/** @brief Loads one tier's .nif into an entry, once. */
 	static void LoadLODMesh(LODMesh& entry, const std::string& stem, LODTier tier);

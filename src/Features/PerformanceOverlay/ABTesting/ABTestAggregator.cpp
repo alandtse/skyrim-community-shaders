@@ -11,21 +11,27 @@ void ABTestAggregator::OnABSwitch(ABVariant variant)
 	// End the current interval if it exists
 	if (currentInterval) {
 		currentInterval->endTime = now;
-		intervals.push_back(std::move(*currentInterval));
+		if (!currentInterval->warmup) {
+			intervals.push_back(std::move(*currentInterval));
+		}
 	}
 
-	// Start a new interval
-	currentInterval = std::make_unique<ABInterval>(variant, std::vector<std::vector<DrawCallRow>>{}, now, now);
+	const bool warmup = initialBWarmupPending && variant == ABVariant::B;
+	if (variant == ABVariant::A)
+		initialBWarmupPending = false;
 
-	// Record test start time on first switch
-	if (intervals.empty()) {
+	// Start a new interval
+	currentInterval = std::make_unique<ABInterval>(variant, std::vector<std::vector<DrawCallRow>>{}, now, now, warmup);
+
+	// Measured duration starts after the initial B warm-up interval.
+	if (!warmup && intervals.empty()) {
 		testStartTime = now;
 	}
 }
 
 void ABTestAggregator::OnFrame(const std::vector<DrawCallRow>& rows)
 {
-	if (!currentInterval)
+	if (!currentInterval || currentInterval->warmup)
 		return;
 
 	// Find the Total row to check for outliers and shader compilation
@@ -71,7 +77,9 @@ void ABTestAggregator::OnTestEnd()
 
 	if (currentInterval) {
 		currentInterval->endTime = now;
-		intervals.push_back(std::move(*currentInterval));
+		if (!currentInterval->warmup) {
+			intervals.push_back(std::move(*currentInterval));
+		}
 		currentInterval.reset();
 	}
 }
@@ -85,6 +93,7 @@ void ABTestAggregator::Clear()
 	hasSettingsB = false;
 	settingsA.clear();
 	settingsB.clear();
+	initialBWarmupPending = true;
 }
 
 static float mean(const std::vector<float>& v)

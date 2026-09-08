@@ -55,30 +55,6 @@ namespace CharacterRainSurfaces
 			           0;
 		}
 
-		void TagGeometryTree(RE::NiAVObject* a_root, std::int32_t a_flags)
-		{
-			Util::ForEachGeometry(a_root, [a_flags](RE::BSGeometry* a_geometry) {
-				SetSurfaceFlags(a_geometry, a_flags);
-			});
-		}
-
-		void TagHeldWeapons(RE::Actor* a_actor)
-		{
-			const std::uint32_t bipedCount = a_actor == globals::game::player ? 2u : 1u;
-			for (std::uint32_t bipedIndex = 0; bipedIndex < bipedCount; ++bipedIndex) {
-				const auto& biped = a_actor->GetBiped(bipedIndex != 0);
-				if (!biped)
-					continue;
-
-				for (std::uint32_t slot = RE::BIPED_OBJECTS::kOneHandSword;
-					slot <= RE::BIPED_OBJECTS::kCrossbow; ++slot) {
-					const auto& object = biped->objects[slot];
-					if (object.item && object.item->IsWeapon() && object.partClone)
-						TagGeometryTree(object.partClone.get(), Character | HeldWeapon);
-				}
-			}
-		}
-
 		void ClassifyActor(RE::Actor* a_actor)
 		{
 			if (!a_actor || !a_actor->Is3DLoaded())
@@ -87,7 +63,9 @@ namespace CharacterRainSurfaces
 			Util::ForEachActorGeometry(a_actor, [](RE::BSGeometry* a_geometry) {
 				SetSurfaceFlags(a_geometry, Character);
 			});
-			TagHeldWeapons(a_actor);
+			Util::ForEachHeldWeaponGeometry(a_actor, [](RE::BSGeometry* a_geometry) {
+				SetSurfaceFlags(a_geometry, Character | HeldWeapon);
+			});
 		}
 
 		void QueueActor(RE::FormID a_formID, std::uint8_t a_refreshPasses)
@@ -116,7 +94,7 @@ namespace CharacterRainSurfaces
 				return false;
 
 			const auto& alphaProperty = a_pass->geometry->GetGeometryRuntimeData().alphaProperty;
-			return !alphaProperty || (!alphaProperty->GetAlphaBlending() && !alphaProperty->GetAlphaTesting());
+			return !alphaProperty || !alphaProperty->GetAlphaBlending();
 		}
 
 		void UpdatePermutation(RE::BSRenderPass* a_pass)

@@ -72,9 +72,9 @@ public:
 		uint CharacterSpotDebug = 0u;
 		float CharacterCoatIntensity = 5.0f;
 		float CharacterWetSheen = 0.55f;
-		float CharacterRainActivityMultiplier = 4.0f;
+		float CharacterRainActivityMultiplier = 2.5f;
 		// Used by CPU wetness decay; retained here to preserve the mirrored settings layout.
-		float CharacterDryTime = 20.0f;
+		float CharacterDryTime = 10.0f;
 		uint EnableWeaponRainDrops = true;
 	};
 

@@ -37,6 +37,13 @@ namespace Util
 	void ForEachActorGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback);
 
 	/**
+	 * @brief Visits geometry belonging to weapons held by an actor.
+	 * @param a_actor Actor whose equipped weapon geometry should be traversed.
+	 * @param a_callback Callback invoked for each weapon geometry.
+	 */
+	void ForEachHeldWeaponGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback);
+
+	/**
      * @brief Extracts the shape bounds from a collision object.
      * @param collisionObj Pointer to the collision object.
      * @param centerPos Output: center position of the shape.

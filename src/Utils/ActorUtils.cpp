@@ -49,6 +49,26 @@ namespace Util
 			ForEachGeometry(firstPersonRoot, a_callback);
 	}
 
+	void ForEachHeldWeaponGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback)
+	{
+		if (!a_actor || !a_callback)
+			return;
+
+		const std::uint32_t bipedCount = a_actor == globals::game::player ? 2u : 1u;
+		for (std::uint32_t bipedIndex = 0; bipedIndex < bipedCount; ++bipedIndex) {
+			const auto& biped = a_actor->GetBiped(bipedIndex != 0);
+			if (!biped)
+				continue;
+
+			for (std::uint32_t slot = RE::BIPED_OBJECTS::kOneHandSword;
+				slot <= RE::BIPED_OBJECTS::kCrossbow; ++slot) {
+				const auto& object = biped->objects[slot];
+				if (object.item && object.item->IsWeapon() && object.partClone)
+					ForEachGeometry(object.partClone.get(), a_callback);
+			}
+		}
+	}
+
 	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)
 	{
 		if (!collisionObj)

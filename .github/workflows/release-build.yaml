@@ -140,11 +140,13 @@ jobs:
                     fresh "compiled_sha ${compiled_sha} from run ${run_id} is not fetchable -- compiling fresh."
                   fi
 
-                  # Content check, not identity: only shader source and the tooling that
-                  # produces compiled bytes. Deliberately excludes *.ini/CMakeLists.txt,
-                  # which the version-bump commit between these two SHAs legitimately
-                  # touches on every release.
-                  if git diff --quiet "${compiled_sha}" "${tag_sha}" -- '*.hlsl' '*.hlsli' 'tools/build-shader-cache.py' 'tools/validate_changed_shaders.py' '.github/workflows/_shared-build.yaml'; then
+                  # Content check, not identity: shader source, the profile configs
+                  # that select which defines/features the release-parity pass compiles
+                  # (matrix.config.file, fed to hlslkit-compile as --config), and the
+                  # tooling that produces compiled bytes. Deliberately excludes
+                  # *.ini/CMakeLists.txt, which the version-bump commit between these two
+                  # SHAs legitimately touches on every release.
+                  if git diff --quiet "${compiled_sha}" "${tag_sha}" -- '*.hlsl' '*.hlsli' 'tools/build-shader-cache.py' 'tools/validate_changed_shaders.py' '.github/configs/shader-validation.yaml' '.github/configs/shader-validation-vr.yaml' '.github/workflows/_shared-build.yaml'; then
                     echo "Verified: no shader-source or compile-tooling change between ${compiled_sha} (compiled) and ${tag_sha} (this release). Reusing run ${run_id}."
                     echo "run-id=${run_id}" >> "$GITHUB_OUTPUT"
                     echo "ok=true" >> "$GITHUB_OUTPUT"

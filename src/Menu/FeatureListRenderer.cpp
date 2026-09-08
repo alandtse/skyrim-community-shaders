@@ -875,6 +875,12 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	}
 
 	const ImVec2 cursorPosAfterSettings = ImGui::GetCursorScreenPos();
+	const SKSE::stl::scope_exit restoreCursor([cursorPosAfterSettings]() noexcept {
+		ImGui::SetCursorScreenPos(cursorPosAfterSettings);
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+		const SKSE::stl::scope_exit restoreSpacing([]() noexcept { ImGui::PopStyleVar(); });
+		ImGui::Dummy(ImVec2(0.0f, 0.0f));
+	});
 	ImGui::SetCursorScreenPos(ImVec2(layout.x, layout.y));
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 	const bool overlayVisible = ImGui::BeginChild(
@@ -885,8 +891,6 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	ImGui::PopStyleVar();
 	if (!overlayVisible) {
 		ImGui::EndChild();
-		ImGui::SetCursorScreenPos(cursorPosAfterSettings);
-		ImGui::Dummy(ImVec2(0.0f, 0.0f));
 		return;
 	}
 
@@ -910,7 +914,11 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 		const ImVec2 flyoutPadding(style.WindowPadding.x, highlightGap + style.ItemSpacing.y * 0.5f);
 		Util::FlyoutScope flyout(
 			g_featureActionsFlyout, actionsButtonId, actionsButtonPressed,
-			{ flyoutPadding, style.WindowRounding, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w, style.Alpha });
+			{ .windowPadding = flyoutPadding,
+				.windowRounding = style.WindowRounding,
+				.windowBackgroundAlpha = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w,
+				.contentAlpha = style.Alpha,
+				.blurBackground = true });
 		if (flyout) {
 			bool closeFlyout = false;
 			if (!feat->IsAlwaysEnabled()) {
@@ -943,13 +951,6 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 				}
 			}
 
-			const bool favorite = globals::state->IsFeatureFavorite(featureName);
-			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
-					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
-				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
-			if (g_featurePreferenceSaveFailed)
-				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
-
 			if (canEditSceneSettings) {
 				if (Util::FlyoutMenuItem(
 						T("feature.scene_manager.name", "Scene Manager"),
@@ -963,6 +964,13 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 					closeFlyout = true;
 				}
 			}
+
+			const bool favorite = globals::state->IsFeatureFavorite(featureName);
+			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
+					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
+				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
+			if (g_featurePreferenceSaveFailed)
+				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 
 			if (canRestoreDefaults || canApplyOverrides) {
 				ImGui::Separator();
@@ -1044,8 +1052,6 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	DrawFeatureActionsIcon(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, g_featureActionsIconProgress);
 	ImGui::PopID();
 	ImGui::EndChild();
-	ImGui::SetCursorScreenPos(cursorPosAfterSettings);
-	ImGui::Dummy(ImVec2(0.0f, 0.0f));
 }
 
 void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
@@ -1067,26 +1073,30 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
 				auto* sceneMgr = globals::sceneSettingsManager;
 				bool scenePaused = sceneMgr->IsFeaturePaused(featureShortName);
 				if (sceneMgr->HasAnySceneEntriesForFeature(featureShortName) || scenePaused) {
+					const auto rowStart = ImGui::GetCursorScreenPos();
+					const float rowHeight = ImGui::GetFrameHeight();
+					const ImVec2 toggleSize(rowHeight * 1.6f, rowHeight * 0.8f);
+					ImGui::SetCursorScreenPos(ImVec2(rowStart.x,
+						rowStart.y + (rowHeight - toggleSize.y) * 0.5f));
 					bool active = !scenePaused;
-					if (Util::FeatureToggle("##PauseSceneSettings", &active)) {
+					if (Util::FeatureToggle("##PauseSceneSettings", &active, toggleSize)) {
 						sceneMgr->SetFeaturePaused(featureShortName, !active);
 						scenePaused = !active;
 						sceneControlled = sceneMgr->HasActiveSettingsForFeature(featureShortName) && !scenePaused;
 					}
-					const auto toggleMinimum = ImGui::GetItemRectMin();
 					const auto toggleMaximum = ImGui::GetItemRectMax();
-					ImGui::SameLine();
-					auto labelPosition = ImGui::GetCursorScreenPos();
-					labelPosition.y = toggleMinimum.y +
-					                  (toggleMaximum.y - toggleMinimum.y - ImGui::GetTextLineHeight()) * 0.5f;
-					ImGui::SetCursorScreenPos(labelPosition);
-					ImGui::TextUnformatted(T("menu.features.scene_specific_settings", "Scene Specific Settings"));
+					const ImVec2 labelPosition(toggleMaximum.x + ImGui::GetStyle().ItemSpacing.x,
+						rowStart.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f);
+					ImGui::GetWindowDrawList()->AddText(labelPosition, ImGui::GetColorU32(ImGuiCol_Text),
+						T("menu.features.scene_specific_settings", "Scene Specific Settings"));
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						const auto* tooltip = scenePaused ?
 						                          T("menu.features.scene_paused_tooltip", "Paused - click to resume") :
 						                          T("menu.features.scene_active_tooltip", "Active - click to pause");
 						ImGui::Text("%s", tooltip);
 					}
+					ImGui::SetCursorScreenPos(ImVec2(rowStart.x,
+						rowStart.y + rowHeight + ImGui::GetStyle().ItemSpacing.y));
 					ImGui::Separator();
 				}
 			}

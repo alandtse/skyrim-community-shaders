@@ -310,7 +310,7 @@ namespace BackgroundBlur
 					continue;
 				if (window->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_DockNodeHost))
 					continue;
-				if (window == performanceOverlay || Util::IsFlyoutWindowName(window->Name))
+				if (window == performanceOverlay || Util::IsUnblurredFlyoutWindowName(window->Name))
 					continue;
 
 				// Docked backgrounds and tabs are drawn by the host before the window's content.

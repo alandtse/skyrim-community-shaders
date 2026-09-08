@@ -138,16 +138,91 @@ namespace Util
 		}
 	}
 
+	bool CloseButton(const char* id, float size)
+	{
+		const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size));
+		const auto minimum = ImGui::GetItemRectMin();
+		const auto maximum = ImGui::GetItemRectMax();
+		const bool held = ImGui::IsItemActive() || pressed;
+		const bool hovered = ImGui::IsItemHovered();
+		const auto color = ImGui::GetColorU32(
+			held ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered :
+													 ImGuiCol_Button);
+		ImGui::RenderFrame(minimum, maximum, color, true, ImGui::GetStyle().FrameRounding);
+
+		const ImVec2 center(
+			(minimum.x + maximum.x) * 0.5f,
+			(minimum.y + maximum.y) * 0.5f);
+		const float halfExtent = std::max(3.0f, size * 0.2f);
+		const float stroke = std::max(2.0f, size * 0.1f);
+		auto* drawList = ImGui::GetWindowDrawList();
+		const auto glyphColor = ImGui::GetColorU32(ImGuiCol_Text);
+		drawList->AddLine(
+			ImVec2(center.x - halfExtent, center.y - halfExtent),
+			ImVec2(center.x + halfExtent, center.y + halfExtent), glyphColor, stroke);
+		drawList->AddLine(
+			ImVec2(center.x + halfExtent, center.y - halfExtent),
+			ImVec2(center.x - halfExtent, center.y + halfExtent), glyphColor, stroke);
+		return pressed;
+	}
+
+	static bool BeginDialogPopup(const char* id, const char* title, bool* open, bool modal, ImGuiWindowFlags flags)
+	{
+		if (!(GImGui->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasSize))
+			ImGui::SetNextWindowSize(ImVec2(ThemeManager::Constants::POPUP_BUTTON_WIDTH * GetUIScale() * 2.0f +
+												ImGui::GetStyle().WindowPadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x,
+										 0.0f),
+				ImGuiCond_Appearing);
+		const bool visible = [&] {
+			ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, ImGui::GetStyle().WindowRounding);
+			ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
+			const SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleColor(); ImGui::PopStyleVar(); });
+			flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+			return modal ? ImGui::BeginPopupModal(id, open, flags) : ImGui::BeginPopup(id, flags);
+		}();
+		if (!visible)
+			return false;
+		const bool closable = !modal || open;
+		const float size = ImGui::GetFrameHeight();
+		const auto start = ImGui::GetCursorScreenPos();
+		const float right = start.x + ImGui::GetContentRegionAvail().x;
+		const float textRight = closable ? right - size - ImGui::GetStyle().ItemSpacing.x : right;
+		ImGui::PushClipRect(start, ImVec2(std::max(start.x, textRight), start.y + size), true);
+		ImGui::AlignTextToFramePadding();
+		const std::string_view label(title);
+		const auto visibleLabel = label.substr(0, label.find("##"));
+		ImGui::TextUnformatted(visibleLabel.data(), visibleLabel.data() + visibleLabel.size());
+		ImGui::PopClipRect();
+		if (closable) {
+			ImGui::SameLine();
+			ImGui::SetCursorScreenPos(ImVec2(right - size, start.y));
+			if (CloseButton("##ClosePopup", size)) {
+				if (open)
+					*open = false;
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return false;
+			}
+		}
+		return true;
+	}
+
+	Popup::Popup(const char* id, const char* title, ImGuiWindowFlags flags) :
+		isOpen(BeginDialogPopup(id, title, nullptr, false, flags))
+	{}
+
+	Popup::~Popup()
+	{
+		if (isOpen)
+			ImGui::EndPopup();
+	}
+
 	CenteredPopupModal::CenteredPopupModal(const char* name, bool* p_open, ImGuiWindowFlags flags, ImVec2 pos, ImVec2 pivot)
 	{
 		if (pos.x == -FLT_MAX && pos.y == -FLT_MAX)
 			pos = ImGui::GetMainViewport()->GetCenter();
 		ImGui::SetNextWindowPos(pos, ImGuiCond_Always, pivot);
-		// Fix first-frame vertical stretch: AlwaysAutoResize resets width to 0 on the hidden
-		// measurement frame, causing TextWrapped to wrap at 0px and produce an enormous height.
-		// Setting an initial width gives TextWrapped a sensible wrap column on that frame.
-		ImGui::SetNextWindowSize(ImVec2(400.0f * GetUIScale(), 0.0f), ImGuiCond_Appearing);
-		isOpen = BeginPopupModalWithRoundedClose(name, p_open, flags | ImGuiWindowFlags_NoSavedSettings);
+		isOpen = BeginDialogPopup(name, name, p_open, true, flags);
 	}
 
 	CenteredPopupModal::~CenteredPopupModal()
@@ -2848,6 +2923,7 @@ namespace Util
 		constexpr float kFlyoutSlideDistance = 6.0f;
 		constexpr float kFlyoutAlphaScale = 4.0f;
 		constexpr std::string_view kFlyoutWindowPrefix = "##flyout_";
+		constexpr std::string_view kBlurredFlyoutWindowPrefix = "##blurred_flyout_";
 
 		void ResetFlyout(FlyoutState& state, bool preserveHoverBlock = false) noexcept
 		{
@@ -2964,7 +3040,8 @@ namespace Util
 						state.openProgress = 0.0f;
 						state.keepOpenForNavigation = navigationPressed;
 						state.windowName.clear();
-						std::format_to(std::back_inserter(state.windowName), "{}{}", kFlyoutWindowPrefix, itemId);
+						std::format_to(std::back_inserter(state.windowName), "{}{}",
+							flyoutStyle.blurBackground ? kBlurredFlyoutWindowPrefix : kFlyoutWindowPrefix, itemId);
 					}
 				}
 
@@ -3104,6 +3181,12 @@ namespace Util
 	}
 
 	bool IsFlyoutWindowName(const char* name) noexcept
+	{
+		return IsUnblurredFlyoutWindowName(name) ||
+		       (name && std::string_view(name).starts_with(kBlurredFlyoutWindowPrefix));
+	}
+
+	bool IsUnblurredFlyoutWindowName(const char* name) noexcept
 	{
 		return name && std::string_view(name).starts_with(kFlyoutWindowPrefix);
 	}

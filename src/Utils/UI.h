@@ -105,6 +105,21 @@ namespace Util
 		inline operator bool() { return hovered; }
 	};
 
+	/** @brief RAII non-modal dialog with the shared popup heading and rounded frame. */
+	class Popup
+	{
+	public:
+		Popup(const char* id, const char* title, ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize);
+		~Popup();
+		operator bool() const { return isOpen; }
+
+		Popup(const Popup&) = delete;
+		Popup& operator=(const Popup&) = delete;
+
+	private:
+		bool isOpen;
+	};
+
 	/**
 	 * RAII wrapper for centered popup modals. Positions the window before BeginPopupModal
 	 * (prevents first-frame stretch) and calls EndPopup() automatically on destruction.
@@ -351,6 +366,9 @@ namespace Util
 
 	/** Returns theme text color if monochrome icons enabled, otherwise white. */
 	ImVec4 GetIconTint();
+
+	/** @brief Draws a square close button with a centered cross. */
+	bool CloseButton(const char* id, float size);
 
 	/** @brief Draws a theme-rounded hover/active fill over a button rect. */
 	bool DrawRoundedButtonHighlight(const ImRect& rect, bool hovered, bool active, ImDrawList* drawList = nullptr);
@@ -1795,6 +1813,7 @@ namespace Util
 		float verticalGap = 2.0f;
 		bool centerOnSource = false;
 		bool keepOpenOnSourcePress = false;
+		bool blurBackground = false;
 	};
 
 	enum class ColorChannel : std::uint8_t
@@ -1831,6 +1850,8 @@ namespace Util
 	};
 
 	bool IsFlyoutWindowName(const char* name) noexcept;
+	/// Returns whether a flyout should be excluded from the shared background blur.
+	bool IsUnblurredFlyoutWindowName(const char* name) noexcept;
 	void RequestCloseFlyout(FlyoutState& state) noexcept;
 	void CloseFlyout(FlyoutState& state) noexcept;
 	float GetFlyoutEasedProgress(const FlyoutState& state) noexcept;

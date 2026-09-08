@@ -21,4 +21,6 @@ struct SceneManager : Feature, SceneSettingsManager
 	void PostPostLoad() override;
 	void DataLoaded() override;
 	void Update();
+	/// Expose scene modes and saved sets through the existing devbench action registry.
+	void RegisterUxActions() override;
 };

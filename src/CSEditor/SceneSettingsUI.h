@@ -72,11 +72,11 @@ namespace SceneSettingsUI
 	/// Build a SourceGroup from entries, optionally filtered to a single source.
 	SourceGroup BuildSourceGroup(const std::vector<SceneSettingsManager::SettingEntry>& entries,
 		EntrySource sourceFilter, bool filterBySource = true, bool transitionOnly = false,
-		bool multiColumn = false);
+		bool multiColumn = false, std::optional<bool> periodMode = std::nullopt);
 
 	/// Split entry indices by source (Overwrite vs User).
 	void SplitBySource(const std::vector<SceneSettingsManager::SettingEntry>& entries,
-		std::vector<size_t>& overwriteOut, std::vector<size_t>& userOut, bool transitionOnly = false);
+		std::vector<size_t>& overwriteOut, std::vector<size_t>& userOut, bool transitionOnly = false, std::optional<bool> periodMode = std::nullopt);
 
 	/// Remove entries by indices in reverse order.
 	void RemoveIndicesReversed(const std::vector<size_t>& indices,
@@ -107,16 +107,6 @@ namespace SceneSettingsUI
 		std::vector<size_t> visibleSettingIndices;
 		std::optional<SceneSettingsManager::SceneContextId> selectionSourceContext;
 		std::set<SceneSettingsManager::SettingIdentity> selectedSettings;
-		std::optional<SceneSettingsManager::SceneContextId> preflightSourceContext;
-		std::optional<SceneSettingsManager::SceneContextId> preflightDestination;
-		std::optional<EntrySource> preflightSourceLayer;
-		std::vector<SceneSettingsManager::SettingIdentity> preflightSettings;
-		std::vector<SceneSettingsManager::CopyCandidate> preflightCandidates;
-		std::optional<SceneSettingsManager::SceneContextId> conflictSource;
-		std::optional<SceneSettingsManager::SceneContextId> conflictDestination;
-		EntrySource conflictSourceLayer = EntrySource::User;
-		std::vector<SceneSettingsManager::SettingIdentity> conflictSettings;
-		bool conflictPromptOpen = false;
 
 		void Reset()
 		{
@@ -136,16 +126,6 @@ namespace SceneSettingsUI
 			visibleSettingIndices.clear();
 			selectionSourceContext.reset();
 			selectedSettings.clear();
-			preflightSourceContext.reset();
-			preflightDestination.reset();
-			preflightSourceLayer.reset();
-			preflightSettings.clear();
-			preflightCandidates.clear();
-			conflictSource.reset();
-			conflictDestination.reset();
-			conflictSourceLayer = EntrySource::User;
-			conflictSettings.clear();
-			conflictPromptOpen = false;
 		}
 	};
 
@@ -295,7 +275,7 @@ namespace SceneSettingsUI
 	// --- Consolidated Panel Functions ---
 
 	/// Draw page-wide Scene Manager actions before the tab bar.
-	void DrawGlobalActions();
+	void DrawGlobalActions(std::optional<SceneSettingsManager::SceneContextType> scope = std::nullopt);
 
 	/// Draw the full interior settings panel.
 	void DrawInteriorPanel();

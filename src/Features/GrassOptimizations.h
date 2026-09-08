@@ -24,7 +24,7 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return { T("feature.grass_optimizations.description", "Rewrites grass rendering around GPU-driven culling and instancing, consolidating thousands of engine draw calls into a handful of indirect draws and removing hidden grass before it costs anything."),
-			{ T("feature.grass_optimizations.key_feature_1", "Consolidates per-shape grass draws into one instanced indirect draw per grass type"),
+			{ T("feature.grass_optimizations.key_feature_1", "Consolidates per-shape grass draws into one instanced indirect draw per mesh tier per grass type"),
 				T("feature.grass_optimizations.key_feature_2", "GPU compute culling of individual instances by frustum, distance and projected size"),
 				T("feature.grass_optimizations.key_feature_3", "Hi-Z occlusion culling skips grass hidden behind objects before the vertex shader runs"),
 				T("feature.grass_optimizations.key_feature_4", "Configurable render distance beyond the vanilla INI cap with density scaling"),

@@ -64,6 +64,23 @@ jobs:
                   base-sha: ${{ steps.resolve.outputs.main_sha }}
                   head-sha: ${{ steps.resolve.outputs.target_sha }}
 
+            # Lets release-build.yaml's check-reuse job find, without guessing, exactly
+            # which commit validate-shaders below compiled -- it can't be inferred from
+            # this run's own head_sha (workflow_dispatch's checked-out ref, not
+            # necessarily ff_target) or from the eventual release tag (a CHILD commit:
+            # semantic-release's version-bump commit lands after this job runs).
+            - name: Write shader compile manifest
+              if: steps.check.outputs.hlsl-should-build != 'false'
+              run: echo '{"compiled_sha":"${{ steps.resolve.outputs.target_sha }}"}' > shader-compile-manifest.json
+
+            - name: Upload shader compile manifest
+              if: steps.check.outputs.hlsl-should-build != 'false'
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ShaderCompileManifest
+                  path: shader-compile-manifest.json
+                  retention-days: 1
+
     # Gate the version cut on the release-parity shader validation the cache build
     # enforces (/O3 + default-install profile), and produce the compiled binaries
     # build-artifacts reuses below. Shader-only (no C++ build), so it adds

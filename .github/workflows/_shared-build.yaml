@@ -39,6 +39,10 @@ on:
                 description: "Skip the release-parity fxc compile and download a prior upload-compiled-shaders run's binaries instead. Finalize/upload still run normally against THIS ref's CMakeLists.txt/feature .ini, so Info.ini's PluginVersion and feature Versions stay correct even though the compile itself was reused."
                 type: boolean
                 default: false
+            reuse-run-id:
+                description: "Workflow run id to download the CompiledShaderBinaries-<runtime> artifact from when reuse-compiled-shaders is set. Empty (default) downloads from THIS run (intra-run reuse, the original use case). Set to a different run's id for cross-run reuse -- caller is responsible for verifying that run's compiled output is actually valid for this ref before setting this."
+                type: string
+                default: ""
             run-full-config-validation:
                 description: "Run the full-config pass (every feature, default opt). On by default for broad PR coverage; release/cache/gate runs set this false since they only need the release-parity (profile) set."
                 type: boolean
@@ -258,6 +262,13 @@ jobs:
               with:
                   name: CompiledShaderBinaries-${{ matrix.config.runtime }}
                   path: build/ShaderCache
+                  # Empty run-id downloads from THIS run (github.run_id), preserving the
+                  # original intra-run reuse behavior. A caller-supplied run-id enables
+                  # cross-run reuse -- the caller must have already verified that run's
+                  # compiled output is valid for this ref (see release-build.yaml's
+                  # check-reuse job for the only current cross-run caller).
+                  run-id: ${{ inputs.reuse-run-id != '' && inputs.reuse-run-id || github.run_id }}
+                  github-token: ${{ github.token }}
 
             - name: Validate shader compilation (${{ matrix.config.name }} / ${{ matrix.pass }})
               if: >

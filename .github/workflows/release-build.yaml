@@ -27,6 +27,9 @@ on:
 
 permissions:
     contents: read
+    # actions: read is needed by build's cross-run compiled-shader download when
+    # check-reuse finds a verified reusable release-semantic.yaml compile.
+    actions: read
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
@@ -59,9 +62,99 @@ jobs:
                     echo "needs-build=true" >> "$GITHUB_OUTPUT"
                   fi
 
+    # release-semantic.yaml's validate-shaders job already ran this exact release-parity
+    # compile minutes ago, on the commit this release's shaders were validated against.
+    # Reuse its output instead of paying for the same /O3 compile twice on every release.
+    #
+    # Cannot verify by commit-SHA identity: semantic-release's own version-bump commit
+    # (assets: CMakeLists.txt, features/**/Shaders/Features/*.ini) lands AFTER
+    # validate-shaders compiles and BEFORE this tag exists, so the tag is always a
+    # child of the compiled commit, never equal to it. Verify by content instead --
+    # diff the compiled commit against the tag on shader source + compile-tooling
+    # file patterns only (explicitly excluding the .ini/CMakeLists.txt paths the
+    # version-bump commit legitimately touches). Any real shader-affecting change
+    # in that window fails this diff and falls through to a normal full compile;
+    # nothing here can block or fail the release itself.
+    check-reuse:
+        name: Check for a reusable release-parity compile
+        if: github.event_name == 'release'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: read
+        outputs:
+            run-id: ${{ steps.verify.outputs.run-id }}
+            ok: ${{ steps.verify.outputs.ok }}
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Find and verify a reusable compile
+              id: verify
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  RELEASE_TAG: ${{ github.event.release.tag_name }}
+              run: |
+                  set -euo pipefail
+
+                  # Exactly one write to $GITHUB_OUTPUT's "ok" key, at whichever exit
+                  # point is reached -- never write ok=false then later ok=true, since
+                  # a key written twice in one GITHUB_OUTPUT append is fragile to rely on.
+                  fresh() {
+                    echo "$1"
+                    echo "ok=false" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  }
+
+                  tag_sha="$(gh api "repos/${GH_REPO}/commits/${RELEASE_TAG}" --jq .sha)"
+
+                  # Most recent successful release-semantic.yaml run. Not required to be
+                  # THIS release's own run by construction -- the content diff below is
+                  # what actually gates reuse, so picking the wrong run just means the
+                  # diff (very likely) fails closed, not an incorrect reuse.
+                  run_id="$(gh run list --repo "${GH_REPO}" --workflow release-semantic.yaml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+                  if [ -z "$run_id" ]; then
+                    fresh "No successful release-semantic.yaml run found -- compiling fresh."
+                  fi
+
+                  if ! gh api "repos/${GH_REPO}/actions/runs/${run_id}/artifacts" --jq '.artifacts[].name' 2>/dev/null | grep -qx 'ShaderCompileManifest'; then
+                    fresh "Run ${run_id} has no ShaderCompileManifest artifact (expired or shaders skipped) -- compiling fresh."
+                  fi
+
+                  rm -rf .reuse-manifest && mkdir .reuse-manifest
+                  if ! gh run download "$run_id" --repo "${GH_REPO}" --name ShaderCompileManifest --dir .reuse-manifest 2>/dev/null; then
+                    fresh "Could not download ShaderCompileManifest from run ${run_id} -- compiling fresh."
+                  fi
+                  compiled_sha="$(python -c "import json;print(json.load(open('.reuse-manifest/shader-compile-manifest.json'))['compiled_sha'])")"
+
+                  for runtime in SE VR; do
+                    if ! gh api "repos/${GH_REPO}/actions/runs/${run_id}/artifacts" --jq '.artifacts[].name' 2>/dev/null | grep -qx "CompiledShaderBinaries-${runtime}"; then
+                      fresh "Run ${run_id} is missing CompiledShaderBinaries-${runtime} (expired) -- compiling fresh."
+                    fi
+                  done
+
+                  git fetch origin "$compiled_sha" "$tag_sha" --quiet
+                  if ! git cat-file -e "${compiled_sha}^{commit}" 2>/dev/null; then
+                    fresh "compiled_sha ${compiled_sha} from run ${run_id} is not fetchable -- compiling fresh."
+                  fi
+
+                  # Content check, not identity: only shader source and the tooling that
+                  # produces compiled bytes. Deliberately excludes *.ini/CMakeLists.txt,
+                  # which the version-bump commit between these two SHAs legitimately
+                  # touches on every release.
+                  if git diff --quiet "${compiled_sha}" "${tag_sha}" -- '*.hlsl' '*.hlsli' 'tools/build-shader-cache.py' 'tools/validate_changed_shaders.py' '.github/workflows/_shared-build.yaml'; then
+                    echo "Verified: no shader-source or compile-tooling change between ${compiled_sha} (compiled) and ${tag_sha} (this release). Reusing run ${run_id}."
+                    echo "run-id=${run_id}" >> "$GITHUB_OUTPUT"
+                    echo "ok=true" >> "$GITHUB_OUTPUT"
+                  else
+                    fresh "Shader source or compile tooling differs between ${compiled_sha} and ${tag_sha} -- compiling fresh."
+                  fi
+
     build:
         name: Build
-        needs: [check-existing]
+        needs: [check-existing, check-reuse]
         if: always() && !cancelled() && (github.event_name != 'release' || needs.check-existing.outputs.needs-build == 'true')
         uses: ./.github/workflows/_shared-build.yaml
         with:
@@ -74,6 +167,8 @@ jobs:
             cache-artifacts: true
             # Cache build only needs the release-parity (profile) pass.
             run-full-config-validation: false
+            reuse-compiled-shaders: ${{ needs.check-reuse.outputs.ok == 'true' }}
+            reuse-run-id: ${{ needs.check-reuse.outputs.run-id }}
 
     release:
         name: Post Release for Draft, Manual Run, or Tag

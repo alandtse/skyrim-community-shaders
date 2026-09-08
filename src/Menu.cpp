@@ -835,7 +835,6 @@ void Menu::DrawSettings()
 
 		// Static storage for menu state - must persist across frames
 		static size_t selectedMenu = 0;
-		static std::map<std::string, bool> categoryExpansionStates;
 
 		// Render feature list using extracted component
 		FeatureListRenderer::RenderFeatureList(
@@ -843,7 +842,6 @@ void Menu::DrawSettings()
 			selectedMenu,
 			featureSearch,
 			pendingFeatureSelection,
-			categoryExpansionStates,
 			[&]() { DrawGeneralSettings(); },
 			[&]() { DrawAdvancedSettings(); });
 
@@ -902,7 +900,8 @@ void Menu::DrawAdvancedSettings()
 void Menu::DrawDisableAtBootSettings()
 {
 	auto state = globals::state;
-	auto& disabledFeatures = state->GetDisabledFeatures();
+	static std::unordered_set<std::string> preferenceSaveFailures;
+	static int lastVisibleFrame = -1;
 
 	ImGui::Text("%s",
 		T("menu.disable_at_boot_desc",
@@ -913,6 +912,11 @@ void Menu::DrawDisableAtBootSettings()
 	ImGui::Spacing();
 
 	if (ImGui::CollapsingHeader(T("menu.features", "Features"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		const int currentFrame = ImGui::GetFrameCount();
+		if (ImGui::IsWindowAppearing() || currentFrame > lastVisibleFrame + 1)
+			preferenceSaveFailures.clear();
+		lastVisibleFrame = currentFrame;
+
 		// Prepare a sorted list of feature pointers
 		auto featureList = Feature::GetFeatureList();
 		std::sort(featureList.begin(), featureList.end(), [](Feature* a, Feature* b) {
@@ -926,12 +930,16 @@ void Menu::DrawDisableAtBootSettings()
 
 			const std::string featureName = feature->GetShortName();
 			const auto checkboxLabel = std::format("{}##DisableAtBoot{}", feature->GetDisplayName(), featureName);
-			bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+			bool isDisabled = state->IsFeatureDisabled(featureName);
 
 			if (ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled)) {
-				// Update the disabledFeatures map based on user interaction
-				disabledFeatures[featureName] = isDisabled;
+				if (state->SetFeatureBootEnabled(featureName, !isDisabled))
+					preferenceSaveFailures.erase(featureName);
+				else
+					preferenceSaveFailures.insert(featureName);
 			}
+			if (preferenceSaveFailures.contains(featureName))
+				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 		}
 	}
 }

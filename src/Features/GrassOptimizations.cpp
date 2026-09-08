@@ -656,16 +656,19 @@ void GrassOptimizations::ClearShaderCache()
 		shader = nullptr;
 	};
 	release(cullCS);
+	cullCSFailed = false;
 	hiZ.ClearShaderCache();
 	bucketStore.ClearShaderCache();
 }
 
 ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 {
-	if (!cullCS) {
+	if (!cullCS && !cullCSFailed) {
 		cullCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0"));
-		if (!cullCS)
+		if (!cullCS) {
+			cullCSFailed = true;
 			logger::error("[GRASS OPTIMIZATIONS] cull CS load failed — feature disabled");
+		}
 	}
 	return cullCS;
 }

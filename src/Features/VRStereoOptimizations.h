@@ -89,6 +89,9 @@ struct VRStereoOptimizations
 		/// Culled Eye 1 pixels take Eye 0's warped final depth when it is nearer than the prepass
 		/// depth the classification used (geometry the z-prepass omits, e.g. alpha-tested statics).
 		bool repairFromEye0Depth = true;
+		/// Re-run the classification on the final depth after the repair so later mode-texture
+		/// consumers (SSGI reprojection) see the restored geometry.
+		bool reclassifyAfterRepair = true;
 		// reserved for foveated reprojection — see alandtse/open-shaders#143
 		float foveatedRegionRadius = 0.3f;
 		float foveatedRegionCenterX = 0.5f;
@@ -232,6 +235,9 @@ private:
 	// INTERNAL METHODS
 	//=============================================================================
 
+	/// Runs the classification CS over the full SBS mode texture from the given depth.
+	void DispatchClassify(ID3D11ShaderResourceView* depthSRV);
+
 	/// Fullscreen triangle pass: reads mode texture, writes stencil ref=1 for MODE_MAIN pixels
 	void ExecuteStencilWritePass();
 
@@ -250,6 +256,10 @@ private:
 	/// Reproject the G-buffer from Eye 0 into the culled Eye 1 pixels so downstream passes
 	/// light Eye 1 natively (RepairCulledEye1 step 4).
 	void DispatchGBufferFill();
+
+	/// Re-classify both eyes from the repaired kMAIN depth for the passes that read the mode
+	/// texture after geometry (RepairCulledEye1 step 5); skipped when none is active.
+	void ReclassifyFromFinalDepth();
 
 	/// Sets the rasterizer viewport to the Eye 1 (right) half of the classified SBS area (frameDim).
 	void SetEye1Viewport();

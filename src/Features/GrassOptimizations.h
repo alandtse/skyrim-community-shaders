@@ -298,8 +298,18 @@ public:
 			auto& trampoline = SKSE::GetTrampoline();
 
 			stl::write_vfunc<0x0, BSMultiStreamInstanceTriShape_dtor>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
-			stl::write_vfunc<0x34, BSMultiStreamInstanceTriShape_OnVisible>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
-			stl::write_vfunc<0x3A, DoneAddingInstances>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+			// VR's BSMultiStreamInstanceTriShape vtable carries one extra slot ahead of these two versus
+			// SE/AE (confirmed by direct vtable read), shifting OnVisible/DoneAddingInstances by +1. The
+			// unshifted indices land on PostAttachUpdate/AddInstances instead on VR -- AddInstances takes a
+			// different (count, data) argument pair than DoneAddingInstances' single array reference, so
+			// calling it with the latter's signature crashed on cell load.
+			if (globals::game::isVR) {
+				stl::write_vfunc<0x35, BSMultiStreamInstanceTriShape_OnVisible>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+				stl::write_vfunc<0x3B, DoneAddingInstances>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+			} else {
+				stl::write_vfunc<0x34, BSMultiStreamInstanceTriShape_OnVisible>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+				stl::write_vfunc<0x3A, DoneAddingInstances>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+			}
 
 			stl::write_vfunc<0x6, BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
 

@@ -1036,8 +1036,9 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	vbs[1] = b->compactedBuf;
 	ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 	ctx->VSSetShaderResources(2, 1, &b->extrasSRV);
-	if (globals::game::isVR)
-		SetDrawEyeIndex(self, ctx, 0, b->capacityInstances);
+	// RunGrass.hlsl reads GrassOptimizationsEyeCB (b7) unconditionally under GRASS_OPTIMIZATIONS, not
+	// just VR, so eye 0 must always bind it or flat reads whatever b7 last held from another draw.
+	SetDrawEyeIndex(self, ctx, 0, b->capacityInstances);
 	ctx->DrawIndexedInstancedIndirect(b->argsBuf, argsByteOffset);
 	if (globals::game::isVR) {
 		SetDrawEyeIndex(self, ctx, 1, b->capacityInstances);
@@ -1087,8 +1088,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		strides[0] = lod->meshStride;
 		ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 		ctx->VSSetShaderResources(2, 1, &bin.extrasSRV);
-		if (globals::game::isVR)
-			SetDrawEyeIndex(self, ctx, 0, bin.capacityInstances);
+		SetDrawEyeIndex(self, ctx, 0, bin.capacityInstances);
 		ctx->DrawIndexedInstancedIndirect(bin.argsBuf, argsByteOffset);
 		if (globals::game::isVR) {
 			SetDrawEyeIndex(self, ctx, 1, bin.capacityInstances);

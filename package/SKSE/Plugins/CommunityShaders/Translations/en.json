@@ -2837,6 +2837,8 @@
     "feature.vr_stereo.full_blend_distance": "Full Blend Distance",
     "feature.vr_stereo.full_blend_distance_tooltip": "Geometry closer than this distance (game units) is excluded from culling and rendered natively in both eyes. 0 = disabled.",
     "feature.vr_stereo.off": "Off",
+    "feature.vr_stereo.repair_from_eye0_depth": "Repair From Left Eye Depth",
+    "feature.vr_stereo.repair_from_eye0_depth_tooltip": "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nDebug only: turning this off reintroduces the missing-geometry bug.",
     "feature.vr_stereo.skip_pixel_reprojection": "Skip Pixel Reprojection",
     "feature.vr_stereo.stencil_swaps_this_frame": "Stencil swaps this frame: %u",
     "feature.water_effects.description": "Water Effects enhances water rendering with realistic caustics and underwater lighting effects.\nThis feature adds dynamic light patterns and improved water visual quality.",

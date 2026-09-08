@@ -23,7 +23,7 @@
 #include "VRStereoOptimizations/cbuffers.hlsli"
 #include "VRStereoOptimizations/modes.hlsli"
 
-Texture2D<float> DepthTexture : register(t0);  // classification depth source (full SBS)
+Texture2D<float> DepthTexture : register(t0);  // scene depth after the depth-fill pass (full SBS)
 Texture2D<uint> ModeTexture : register(t1);    // per-pixel classification (full SBS)
 
 RWTexture2D<float4> MainRW : register(u0);                   // diffuse light accumulation (R16G16B16A16F)

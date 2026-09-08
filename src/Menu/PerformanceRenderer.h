@@ -1,9 +1,9 @@
 #pragma once
 
 /**
- * @brief Renders the "Performance" page with Presets and Overlay tabs. Presets
+ * @brief Renders the "Performance" page with Presets, Overlay, and Profiling tabs. Presets
  * aggregates feature performance controls, while Overlay embeds the performance
- * overlay's settings.
+ * overlay's settings. Profiling shows CPU and GPU statistics.
  *
  * The page owns no settings state. Controls bind directly to their owning feature,
  * and VR-specific preset sections are included only when running in VR mode.

@@ -109,42 +109,13 @@ namespace
 			const ImVec2 halfLine(std::cos(lineAngle) * halfWidth, std::sin(lineAngle) * halfWidth);
 			const ImVec2 lineStart(lineCenter.x - halfLine.x, lineCenter.y - halfLine.y);
 			const ImVec2 lineEnd(lineCenter.x + halfLine.x, lineCenter.y + halfLine.y);
-			const ImVec2 rasterOffset(0.5f, 0.5f);
 			const float capStartAngle = lineAngle + std::numbers::pi_v<float> * 0.5f;
-			drawList->PathArcTo(ImVec2(lineStart.x + rasterOffset.x, lineStart.y + rasterOffset.y), capRadius,
+			drawList->PathArcTo(lineStart, capRadius,
 				capStartAngle, capStartAngle + std::numbers::pi_v<float>);
-			drawList->PathArcTo(ImVec2(lineEnd.x + rasterOffset.x, lineEnd.y + rasterOffset.y), capRadius,
+			drawList->PathArcTo(lineEnd, capRadius,
 				capStartAngle + std::numbers::pi_v<float>, capStartAngle + std::numbers::pi_v<float> * 2.0f);
 			drawList->PathFillConvex(lineColor);
 		}
-	}
-
-	// Core built-in menu names that always appear first in the menu list
-	// These are canonical identifiers used for logic — NOT translated
-	constexpr std::array<const char*, 6> CORE_MENU_NAMES = {
-		"Home", "General", "Performance", "Advanced", "Profiling", "Display"
-	};
-
-	const char* GetCoreMenuDisplayName(const char* canonicalName)
-	{
-		if (std::strcmp(canonicalName, "Home") == 0)
-			return T("menu.features.home", "Home");
-		if (std::strcmp(canonicalName, "General") == 0)
-			return T("menu.features.general", "General");
-		if (std::strcmp(canonicalName, "Performance") == 0)
-			return T("menu.features.performance", "Performance");
-		if (std::strcmp(canonicalName, "Advanced") == 0)
-			return T("menu.features.advanced", "Advanced");
-		if (std::strcmp(canonicalName, "Profiling") == 0)
-			return T("menu.features.profiling", "Profiling");
-		if (std::strcmp(canonicalName, "Display") == 0)
-			return T("menu.features.display", "Display");
-		return canonicalName;
-	}
-
-	bool IsCoreMenu(const std::string& canonicalId)
-	{
-		return std::find(CORE_MENU_NAMES.begin(), CORE_MENU_NAMES.end(), canonicalId) != CORE_MENU_NAMES.end();
 	}
 
 	// Color for the [ALPHA]/[BETA] stage marker. Alpha (less stable) reads as an error,
@@ -229,34 +200,6 @@ namespace
 	bool BeginTabItemWithFont(const char* label, Menu::FontRole role, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
 	{
 		return MenuFonts::BeginTabItemWithFont(label, role, flags);
-	}
-
-	std::string TranslateFeatureCategory(std::string_view category)
-	{
-		if (category == FeatureCategories::kCharacters)
-			return T("feature.category.characters", "Characters");
-		if (category == FeatureCategories::kDisplay)
-			return T("feature.category.display", "Display");
-		if (category == FeatureCategories::kFoliage)
-			return T("feature.category.grass", "Foliage");
-		if (category == FeatureCategories::kLandscapeAndTextures)
-			return T("feature.category.landscape_and_textures", "Landscape & Textures");
-		if (category == FeatureCategories::kLighting)
-			return T("feature.category.lighting", "Lighting");
-		if (category == FeatureCategories::kMaterials)
-			return T("feature.category.materials", "Materials");
-		if (category == "Post-Processing")
-			return T("feature.category.post_processing", "Post-Processing");
-		if (category == FeatureCategories::kOther)
-			return T("feature.category.other", "Other");
-		if (category == FeatureCategories::kSky)
-			return T("feature.category.sky", "Sky");
-		if (category == FeatureCategories::kUtility)
-			return T("feature.category.utility", "Utility");
-		if (category == FeatureCategories::kWater)
-			return T("feature.category.water", "Water");
-
-		return std::string(category);
 	}
 
 	/**
@@ -400,6 +343,16 @@ namespace
 
 	Util::FlyoutState g_featureActionsFlyout;
 	std::string g_featureActionsFlyoutFeature;
+	bool g_featurePreferenceSaveFailed = false;
+
+	std::string GetMenuId(const FeatureListRenderer::MenuFuncInfo& item)
+	{
+		if (const auto* feature = std::get_if<Feature*>(&item))
+			return (*feature)->GetShortName();
+		if (const auto* menu = std::get_if<FeatureListRenderer::BuiltInMenu>(&item))
+			return menu->canonicalId;
+		return {};
+	}
 }
 
 void FeatureListRenderer::RenderFeatureList(
@@ -408,7 +361,6 @@ void FeatureListRenderer::RenderFeatureList(
 	size_t& selectedMenu,
 	std::string& featureSearch,
 	std::string& pendingFeatureSelection,
-	std::map<std::string, bool>& categoryExpansionStates,
 	const std::function<void()>& drawGeneralSettings,
 	const std::function<void()>& drawAdvancedSettings)
 {
@@ -417,7 +369,15 @@ void FeatureListRenderer::RenderFeatureList(
 		return;
 	}
 
-	auto menuList = BuildMenuList(featureSearch, categoryExpansionStates, drawGeneralSettings, drawAdvancedSettings);
+	auto menuList = BuildMenuList(drawGeneralSettings, drawAdvancedSettings);
+	static std::string selectedMenuId = "Home";
+	selectedMenu = 0;
+	for (size_t i = 0; i < menuList.size(); ++i) {
+		if (GetMenuId(menuList[i]) == selectedMenuId) {
+			selectedMenu = i;
+			break;
+		}
+	}
 
 	HandlePendingFeatureSelection(pendingFeatureSelection, menuList, selectedMenu);
 
@@ -451,7 +411,7 @@ void FeatureListRenderer::RenderFeatureList(
 		if (windowResized)
 			ImGui::TableSetColumnWidth(0, contentWidth);
 		if (sidebar.progress > 0.0f) {
-			RenderLeftColumn(menuList, selectedMenu, featureSearch, categoryExpansionStates);
+			RenderLeftColumn(menuList, selectedMenu, featureSearch);
 		} else {
 			ImGui::TableNextColumn();
 		}
@@ -467,12 +427,13 @@ void FeatureListRenderer::RenderFeatureList(
 		ImGui::EndTable();
 	}
 
+	if (selectedMenu < menuList.size())
+		selectedMenuId = GetMenuId(menuList[selectedMenu]);
+
 	ImGui::EndChild();
 }
 
 std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuList(
-	const std::string& featureSearch,
-	std::map<std::string, bool>& categoryExpansionStates,
 	const std::function<void()>& drawGeneralSettings,
 	const std::function<void()>& drawAdvancedSettings)
 {
@@ -483,75 +444,41 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		return a->GetDisplayName() < b->GetDisplayName();
 	});
 
-	// Filter features by search string
-	if (!featureSearch.empty()) {
-		auto it = std::remove_if(sortedFeatureList.begin(), sortedFeatureList.end(),
-			[&featureSearch](Feature* feat) { return !Util::FeatureMatchesSearch(feat, featureSearch); });
-		sortedFeatureList.erase(it, sortedFeatureList.end());
-	}
-
 	auto menuList = std::vector<MenuFuncInfo>{
 		BuiltInMenu{ T("menu.features.home", "Home"), "Home", []() { HomePageRenderer::RenderHomePage(); } },
 		BuiltInMenu{ T("menu.features.general", "General"), "General", drawGeneralSettings },
 		BuiltInMenu{ T("menu.features.performance", "Performance"), "Performance", []() { PerformanceRenderer::Render(); } },
-		BuiltInMenu{ T("menu.features.advanced", "Advanced"), "Advanced", drawAdvancedSettings },
-		BuiltInMenu{ T("menu.features.profiling", "Profiling"), "Profiling", []() { ProfilingRenderer::RenderStatistics(); } }
-	};  // NOTE: The menu list is rebuilt every frame, so category expansion states
-	// persist correctly. This is acceptable since the list is small and built
-	// infrequently, but could be optimized if performance becomes an issue.
+		BuiltInMenu{ T("menu.features.advanced", "Advanced"), "Advanced", drawAdvancedSettings }
+	};
 
-	// Group features by category
-	std::map<std::string, std::vector<Feature*>> categorizedFeatures;
+	const auto isFavorite = [](Feature* feature) {
+		return feature != &globals::features::csEditor && globals::state->IsFeatureFavorite(feature->GetShortName());
+	};
+
+	menuList.push_back(CategoryHeader{ "Utility" });
+	if (globals::features::csEditor.IsInMenu() && globals::features::csEditor.loaded)
+		menuList.push_back(&globals::features::csEditor);
 	for (Feature* feat : sortedFeatureList) {
-		if (feat->IsInMenu() && feat->loaded) {
-			std::string category(feat->GetCategory());
-			categorizedFeatures[category].push_back(feat);
-		}
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() == FeatureCategories::kUtility && feat != &globals::features::csEditor && !isFavorite(feat))
+			menuList.push_back(feat);
 	}
 
-	// Sort features within each category
-	for (auto& [category, features] : categorizedFeatures) {
-		std::ranges::sort(features, [](Feature* a, Feature* b) {
-			return a->GetDisplayName() < b->GetDisplayName();
-		});
+	auto favorites = sortedFeatureList | std::ranges::views::filter([&isFavorite](Feature* feat) {
+		return feat->IsInMenu() && feat->loaded && isFavorite(feat);
+	});
+	const auto favoriteCount = std::ranges::distance(favorites);
+	if (favoriteCount != 0) {
+		menuList.push_back(CategoryHeader{ "Favorites", static_cast<int>(favoriteCount) });
+		std::ranges::copy(favorites, std::back_inserter(menuList));
 	}
 
-	// Define category order
-	std::vector<std::string> categoryOrder = { "Display", "Utility", "Characters", "Foliage", "Lighting", "Materials", "Post-Processing", "Sky", "Landscape & Textures", "Water", "Other" };
-	// Add categorized features to menu with collapsible headers
-	for (const std::string& category : categoryOrder) {
-		if (categorizedFeatures.find(category) != categorizedFeatures.end() && !categorizedFeatures[category].empty()) {
-			// Initialize expansion state if not exists
-			if (categoryExpansionStates.find(category) == categoryExpansionStates.end()) {
-				categoryExpansionStates[category] = true;  // Default to expanded
-			}
-
-			// Add category header
-			menuList.push_back(CategoryHeader{ category });
-
-			// Add features only if category is expanded
-			if (categoryExpansionStates[category]) {
-				std::ranges::copy(categorizedFeatures[category], std::back_inserter(menuList));
-			}
-		}
-	}
-
-	// Add any categories not in the predefined order
-	for (const auto& [category, features] : categorizedFeatures) {
-		if (std::find(categoryOrder.begin(), categoryOrder.end(), category) == categoryOrder.end() && !features.empty()) {
-			// Initialize expansion state if not exists
-			if (categoryExpansionStates.find(category) == categoryExpansionStates.end()) {
-				categoryExpansionStates[category] = true;  // Default to expanded
-			}
-
-			// Add category header
-			menuList.push_back(CategoryHeader{ category });
-
-			// Add features only if category is expanded
-			if (categoryExpansionStates[category]) {
-				std::ranges::copy(features, std::back_inserter(menuList));
-			}
-		}
+	const auto featureCount = std::ranges::count_if(sortedFeatureList, [&isFavorite](Feature* feat) {
+		return feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat);
+	});
+	menuList.push_back(CategoryHeader{ "Features", static_cast<int>(featureCount) });
+	for (Feature* feat : sortedFeatureList) {
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat))
+			menuList.push_back(feat);
 	}
 
 	auto unloadedFeatures = sortedFeatureList | std::ranges::views::filter([](Feature* feat) {
@@ -563,7 +490,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 	// Add top section for feature issues (rejected features, obsolete info, etc.)
 	if (FeatureIssues::HasFeatureIssues()) {
-		menuList.insert(menuList.begin(), BuiltInMenu{ T("menu.features.feature_issues", "Feature Issues"), "", []() {
+		menuList.insert(menuList.begin(), BuiltInMenu{ T("menu.features.feature_issues", "Feature Issues"), "FeatureIssues", []() {
 														  FeatureIssues::DrawFeatureIssuesUI();
 													  } });
 	}
@@ -591,8 +518,6 @@ void FeatureListRenderer::HandlePendingFeatureSelection(
 					break;
 				}
 			} else if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				// Built-in pages (e.g. "Performance", "Home") aren't Features and have no
-				// GetShortName(); match on the same canonicalId used by IsCoreMenu() instead.
 				const auto& builtIn = std::get<BuiltInMenu>(menuList[i]);
 				if (!builtIn.canonicalId.empty() && builtIn.canonicalId == pendingFeatureSelection) {
 					selectedMenu = i;
@@ -608,50 +533,29 @@ void FeatureListRenderer::HandlePendingFeatureSelection(
 void FeatureListRenderer::RenderLeftColumn(
 	const std::vector<MenuFuncInfo>& menuList,
 	size_t& selectedMenu,
-	std::string& featureSearch,
-	std::map<std::string, bool>& categoryExpansionStates)
+	std::string& featureSearch)
 {
 	ImGui::TableNextColumn();
 	// Draw the feature list
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4());
 	if (ImGui::BeginListBox("##MenusList", { -FLT_MIN, -FLT_MIN })) {
-		// Find where core built-in menus end (Home, General, Advanced, Display)
-		size_t coreMenuCount = 0;
-		for (size_t i = 0; i < menuList.size(); i++) {
-			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.canonicalId)) {
-					coreMenuCount++;
-				}
+		bool filterFeatures = false;
+		for (size_t i = 0; i < menuList.size(); ++i) {
+			if (const auto* feature = std::get_if<Feature*>(&menuList[i]); feature && filterFeatures && !Util::FeatureMatchesSearch(*feature, featureSearch))
+				continue;
+			if (std::holds_alternative<std::string>(menuList[i]) && !featureSearch.empty() &&
+				std::ranges::none_of(menuList, [&featureSearch](const auto& item) {
+					const auto* feature = std::get_if<Feature*>(&item);
+					return feature && !(*feature)->loaded && Util::FeatureMatchesSearch(*feature, featureSearch);
+				}))
+				continue;
+			std::visit(ListMenuVisitor{ i, selectedMenu }, menuList[i]);
+			if (const auto* header = std::get_if<CategoryHeader>(&menuList[i]); header && header->name == "Features") {
+				filterFeatures = true;
+				Util::DrawFeatureSearchBar(featureSearch);
+				ImGui::Spacing();
 			}
-		}
-
-		// First render the core built-in menus (Home, General, Advanced, Display)
-		size_t renderedCoreMenus = 0;
-		for (size_t i = 0; i < menuList.size() && renderedCoreMenus < CORE_MENU_NAMES.size(); i++) {
-			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.canonicalId)) {
-					std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates }, menuList[i]);
-					renderedCoreMenus++;
-				}
-			}
-		}
-
-		// Add Features header and search bar after built-in settings
-		Util::DrawSectionHeader(T("menu.features.features", "Features"), true);
-		Util::DrawFeatureSearchBar(featureSearch);
-
-		// Then render the rest (features and categories, but skip already rendered core menus)
-		for (size_t i = 0; i < menuList.size(); i++) {
-			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.canonicalId)) {
-					continue;  // Skip, already rendered
-				}
-			}
-			std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates }, menuList[i]);
 		}
 
 		ImGui::EndListBox();
@@ -705,20 +609,14 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const std::string& label)
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const CategoryHeader& header)
 {
-	// Get expansion state from static map
-	bool isExpanded = categoryExpansionStates[header.name];
-
-	// Draw category header with custom styling using util:UI function
-	// Use Heading font for category headers
-	{
-		MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Heading);
-		int count = Menu::categoryCounts[std::string(header.name)];
-		const auto categoryLabel = TranslateFeatureCategory(header.name);
-		Util::DrawCategoryHeader(header.name.c_str(), categoryLabel.c_str(), isExpanded, count);
+	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Heading);
+	if (header.name == "Utility") {
+		Util::DrawSectionHeader(T("feature.category.utility", "Utilities"), true, false);
+	} else {
+		const bool favorites = header.name == "Favorites";
+		const auto label = std::format("{} ({})", favorites ? T("menu.features.favorites", "Favorites") : T("menu.features.features", "Features"), header.count);
+		Util::DrawSectionHeader(label.c_str(), true, false, nullptr, favorites ? Util::DrawStarIcon : nullptr);
 	}
-
-	// Update expansion state
-	categoryExpansionStates[header.name] = isExpanded;
 }
 
 void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
@@ -755,12 +653,25 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 		textColor = feat->installed ? themeSettings.StatusPalette.RestartNeeded : themeSettings.StatusPalette.Disable;
 	}
 
+	auto* icon = feat->GetCategory() != FeatureCategories::kUtility ? Util::GetCategoryIcon(feat->GetCategory()) : nullptr;
+	const ImVec2 iconMin = ImGui::GetCursorScreenPos();
+	const float iconSize = ImGui::GetTextLineHeight();
+	if (icon) {
+		ImGui::Dummy(ImVec2(iconSize, iconSize));
+		Util::AddTooltip(feat->GetDisplayCategory().c_str());
+		ImGui::SameLine();
+	}
+
 	// Create selectable item with semantic color
 	ImGui::PushStyleColor(ImGuiCol_Text, textColor);
 	if (ImGui::Selectable(fmt::format(" {} ", feat->GetDisplayName()).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns)) {
 		selectedMenuRef = listId;
 	}
 	ImGui::PopStyleColor();
+
+	if (icon)
+		ImGui::GetWindowDrawList()->AddImage(icon, iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize),
+			ImVec2(0, 0), ImVec2(1, 1), ImGui::GetColorU32(textColor));
 
 	// Display the stage marker behind the name, regardless of loaded state
 	if (const auto stage = feat->GetReleaseStage(); stage != Feature::ReleaseStage::Release) {
@@ -939,6 +850,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	if (g_featureActionsFlyoutFeature != featureName) {
 		Util::CloseFlyout(g_featureActionsFlyout);
 		g_featureActionsFlyoutFeature = featureName;
+		g_featurePreferenceSaveFailed = false;
 		g_featureActionsIconProgress = 0.0f;
 	}
 
@@ -967,8 +879,8 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 						true,
 						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
 					const bool nowDisabled = feat->ToggleAtBootSetting();
+					g_featurePreferenceSaveFailed = nowDisabled == isDisabled;
 					bootEnabled = !nowDisabled;
-					logger::info("{}: {} at boot.", featureName, nowDisabled ? "Disabled" : "Enabled");
 				}
 			}
 
@@ -981,6 +893,13 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 						"Disabling removes performance impact."),
 					bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
 			}
+
+			const bool favorite = globals::state->IsFeatureFavorite(featureName);
+			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
+					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
+				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
+			if (g_featurePreferenceSaveFailed)
+				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 
 			if (!isDisabled && isLoaded) {
 				ImGui::Separator();
@@ -1005,7 +924,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 							feat->HasScopedOverrideSettings() ?
 								T("menu.features.apply_page_override", "Apply Override (Page)") :
 								T("menu.features.apply_override", "Apply Override"),
-							false,
+							std::nullopt,
 							!sceneControlled)) {
 						closeFlyout = true;
 						if (feat->ReapplyCurrentPageOverrideSettings()) {

@@ -44,6 +44,7 @@ struct ABInterval
 	std::vector<std::vector<DrawCallRow>> frameRows;
 	std::chrono::steady_clock::time_point startTime;
 	std::chrono::steady_clock::time_point endTime;
+	bool warmup = false;
 	int excludedFrames = 0;  // Frames excluded due to outliers or shader compilation
 };
 
@@ -54,7 +55,7 @@ public:
 	 * @brief Notifies the aggregator of an A/B variant switch.
 	 *
 	 * Closes the current measurement interval and starts a new one for the given variant.
-	 * Records the test start time on the first switch.
+	 * Records the test start time when the first measured interval begins.
 	 *
 	 * @param variant The variant being switched to.
 	 */
@@ -81,6 +82,9 @@ public:
 
 	/** @brief Returns true if at least one measurement interval has been recorded. */
 	bool HasResults() const { return !intervals.empty(); }
+
+	/** @brief Returns true while the initial unmeasured B interval is active. */
+	bool IsWarmingUp() const { return currentInterval && currentInterval->warmup; }
 
 	/** @brief Resets all intervals, frame history, and captured settings to an empty state. */
 	void Clear();
@@ -115,7 +119,7 @@ public:
 	 */
 	int GetTotalFrameCount() const;
 
-	/** @brief Returns the timestamp when the first A/B switch occurred. */
+	/** @brief Returns the timestamp when the first measured interval began. */
 	std::chrono::steady_clock::time_point GetTestStartTime() const { return testStartTime; }
 
 	/** @brief Returns the timestamp when the test ended. */
@@ -152,4 +156,5 @@ private:
 
 	// Frame history for outlier detection
 	std::vector<float> recentFrameTimes;
+	bool initialBWarmupPending = true;
 };

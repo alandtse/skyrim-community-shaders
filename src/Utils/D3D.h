@@ -184,9 +184,10 @@ namespace Util
 	 *
 	 * The caller does NOT own the returned pointer.
 	 *
-	 * @param prefer16bit When false (default) returns R32_FLOAT for compute shaders doing
-	 *        arithmetic on depth; when true returns R16_UNORM for pixel shaders via
-	 *        slot 17 / SharedData::GetDepth.
+	 * Returns prepass depth until Deferred::DeferredPasses copies the finished opaque
+	 * depth, and that final depth for the rest of the frame.
+	 * @param prefer16bit When true, returns the Terrain Blending R16_UNORM texture during
+	 *        the prepass phase; ignored once the final depth is available.
 	 * @return The depth SRV, or nullptr if unavailable.
 	 */
 	ID3D11ShaderResourceView* GetCurrentSceneDepthSRV(bool prefer16bit = false);

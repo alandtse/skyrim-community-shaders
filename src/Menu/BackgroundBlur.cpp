@@ -6,35 +6,26 @@
 #include "../Features/HDRDisplay.h"
 #include "../Features/Upscaling.h"
 #include "../Globals.h"
+#include "../GpuPass.h"
+#include "../I18n/I18n.h"
 #include "../State.h"
 #include "../Util.h"
 
 #include <algorithm>
 #include <cmath>
 #include <imgui.h>
+#include <imgui_impl_dx11.h>
 #include <imgui_internal.h>
 
 #include "RE/Skyrim.h"
 
 using namespace std::literals;
 
-// Blur intensity hardcoded. Super downscaled blur is very sensitive, this value looks best.
-constexpr float BLUR_INTENSITY = 0.03f;
-
 // Downsampling factor (8 = eighth resolution for performance)
 constexpr UINT DOWNSAMPLE_FACTOR = 8;
 
-// Multiplier applied to BLUR_INTENSITY to derive the blur kernel radius
-constexpr float BLUR_RADIUS_SCALE = 10.0f;
-
-// Number of samples per blur pass (Gaussian kernel taps)
-constexpr int BLUR_SAMPLE_COUNT = 9;
-
 // Extra pixels added around scissor rect for anti-aliased rounded corner edges
 constexpr float SCISSOR_AA_PADDING = 2.0f;
-
-// Scale factor applied to BLUR_INTENSITY for the final composite blend alpha
-constexpr float BLEND_ALPHA_SCALE = 0.8f;
 
 // Vertex count for a fullscreen triangle draw call
 constexpr UINT FULLSCREEN_TRIANGLE_VERTICES = 3;
@@ -50,12 +41,14 @@ namespace BackgroundBlur
 
 		// DirectX resources (RAII managed)
 		winrt::com_ptr<ID3D11VertexShader> vertexShader;
+		winrt::com_ptr<ID3D11PixelShader> downsamplePixelShader;
+		winrt::com_ptr<ID3D11PixelShader> copyPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> horizontalPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> verticalPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> compositePixelShader;  // For rounded corner compositing
 		winrt::com_ptr<ID3D11PixelShader> clearPixelShader;      // For rounded corner UI buffer clearing
+		winrt::com_ptr<ID3D11PixelShader> layerPixelShader;
 		winrt::com_ptr<ID3D11Buffer> constantBuffer;
-		winrt::com_ptr<ID3D11Buffer> windowConstantBuffer;  // For window rect and corner radius
 		winrt::com_ptr<ID3D11SamplerState> samplerState;
 		winrt::com_ptr<ID3D11BlendState> blendState;
 		winrt::com_ptr<ID3D11RasterizerState> scissorRasterizerState;
@@ -80,6 +73,20 @@ namespace BackgroundBlur
 		winrt::com_ptr<ID3D11ShaderResourceView> cachedSourceSRV;
 		ID3D11Texture2D* cachedSourceTexture = nullptr;  // raw pointer for cache invalidation check
 
+		winrt::com_ptr<ID3D11Texture2D> editorUITexture;
+		winrt::com_ptr<ID3D11RenderTargetView> editorUIRTV;
+		winrt::com_ptr<ID3D11ShaderResourceView> editorUISRV;
+
+		struct RetainedBuffer
+		{
+			winrt::com_ptr<ID3D11Texture2D> source;
+			winrt::com_ptr<ID3D11Texture2D> clean;
+			uint64_t generation = 0;
+			bool dirty = false;
+		};
+		RetainedBuffer retainedScene;
+		RetainedBuffer retainedUI;
+
 		UINT textureWidth = 0;
 		UINT textureHeight = 0;
 		UINT downsampledWidth = 0;
@@ -89,24 +96,36 @@ namespace BackgroundBlur
 		bool initialized = false;
 		bool initializationFailed = false;
 
-		// Blur shader constants structure
 		struct BlurConstants
 		{
-			float texelSize[4];  // x = 1/width, y = 1/height, z = blur strength, w = unused
-			int blurParams[4];   // x = samples, y = unused, z = unused, w = unused
+			float blurTextureSize[4];
+			float windowRect[4];
+			float windowParams[4];
 		};
-
-		// Window constants for rounded corner compositing
-		struct WindowConstants
-		{
-			float windowRect[4];    // x = minX, y = minY, z = maxX, w = maxY (in pixels)
-			float windowParams[4];  // x = cornerRadius, y = screenWidth, z = screenHeight, w = unused
-		};
+		static_assert(sizeof(BlurConstants) == 48);
 
 		struct UIBufferViews
 		{
 			ID3D11ShaderResourceView* srv = nullptr;
 			ID3D11RenderTargetView* rtv = nullptr;
+		};
+
+		struct BlurFrame
+		{
+			ID3D11ShaderResourceView* sourceSRV;
+			ID3D11RenderTargetView* targetRTV;
+			ID3D11RenderTargetView* imguiRTV;
+			UIBufferViews uiBuffer;
+			bool uiOnly = false;
+		};
+
+		struct WindowBlur
+		{
+			const BlurFrame* frame;
+			ImDrawList* drawList;
+			BlurConstants constants;
+			int drawOrder;
+			bool needed = true;
 		};
 
 		bool ShouldUseD3D12UIBufferForBlur()
@@ -133,6 +152,79 @@ namespace BackgroundBlur
 		bool IsStartupMenuBlurSourceReady()
 		{
 			return globals::state && globals::state->startupMenuBlurSourceReady;
+		}
+
+		winrt::com_ptr<ID3D11Texture2D> GetTexture(ID3D11View* view)
+		{
+			winrt::com_ptr<ID3D11Resource> resource;
+			if (view)
+				view->GetResource(resource.put());
+			return resource ? resource.try_as<ID3D11Texture2D>() : nullptr;
+		}
+
+		bool CopyCompatible(ID3D11Texture2D* first, ID3D11Texture2D* second)
+		{
+			if (!first || !second)
+				return false;
+			D3D11_TEXTURE2D_DESC a{}, b{};
+			first->GetDesc(&a);
+			second->GetDesc(&b);
+			return a.Width == b.Width && a.Height == b.Height && a.Format == b.Format &&
+			       a.MipLevels == b.MipLevels && a.ArraySize == b.ArraySize &&
+			       a.SampleDesc.Count == b.SampleDesc.Count && a.SampleDesc.Quality == b.SampleDesc.Quality;
+		}
+
+		void RestoreBuffer(RetainedBuffer& buffer, ID3D11Texture2D* current, uint64_t generation)
+		{
+			if (buffer.source.get() != current || buffer.generation != generation) {
+				buffer.source = nullptr;
+				buffer.dirty = false;
+				return;
+			}
+			if (buffer.dirty && CopyCompatible(current, buffer.clean.get())) {
+				CS_GPU_PASS("BackgroundBlur::RestoreRetainedBuffer");
+				globals::d3d::context->CopyResource(current, buffer.clean.get());
+			}
+			buffer.dirty = false;
+		}
+
+		bool PreserveUIBuffer(const UIBufferViews& uiBuffer)
+		{
+			if (!uiBuffer.rtv || !globals::state->IsPausedOrMenuOpen(globals::game::ui)) {
+				retainedUI = {};
+				return true;
+			}
+			auto source = GetTexture(uiBuffer.rtv);
+			if (!source)
+				return false;
+			const auto generation = globals::features::hdrDisplay.uiGeneration;
+			if (retainedUI.source == source && retainedUI.generation == generation && retainedUI.clean)
+				return true;
+
+			retainedUI.source = source;
+			retainedUI.generation = generation;
+			if (!CopyCompatible(source.get(), retainedUI.clean.get())) {
+				retainedUI.clean = nullptr;
+				D3D11_TEXTURE2D_DESC desc{};
+				source->GetDesc(&desc);
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.BindFlags = 0;
+				desc.CPUAccessFlags = 0;
+				desc.MiscFlags = 0;
+				if (FAILED(globals::d3d::device->CreateTexture2D(&desc, nullptr, retainedUI.clean.put())))
+					return false;
+				Util::SetResourceName(retainedUI.clean.get(), "BackgroundBlur::RetainedUI");
+			}
+			CS_GPU_PASS("BackgroundBlur::PreserveUI");
+			globals::d3d::context->CopyResource(retainedUI.clean.get(), source.get());
+			return true;
+		}
+
+		void ReleaseEditorLayer()
+		{
+			editorUISRV = nullptr;
+			editorUIRTV = nullptr;
+			editorUITexture = nullptr;
 		}
 
 		// Release all blur texture resources; caller must hold resourceMutex
@@ -179,7 +271,103 @@ namespace BackgroundBlur
 			return true;
 		}
 
+		bool CreateEditorLayer(UINT width, UINT height)
+		{
+			D3D11_TEXTURE2D_DESC desc{};
+			if (editorUITexture) {
+				editorUITexture->GetDesc(&desc);
+				if (desc.Width == width && desc.Height == height)
+					return true;
+			}
+			ReleaseEditorLayer();
+			desc = {};
+			desc.Width = width;
+			desc.Height = height;
+			desc.MipLevels = 1;
+			desc.ArraySize = 1;
+			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+			if (!CreateTextureSet(globals::d3d::device, desc, editorUITexture, editorUIRTV, editorUISRV, "EditorUI")) {
+				ReleaseEditorLayer();
+				return false;
+			}
+			return true;
+		}
+
+		std::vector<WindowBlur> GatherWindows(ImDrawData* drawData, const BlurFrame& frame, BlurConstants constants)
+		{
+			std::vector<WindowBlur> windows;
+			auto* ctx = ImGui::GetCurrentContext();
+			const auto* performanceOverlay = ImGui::FindWindowByName(T("feature.perf_overlay.overlay_title", "Performance Overlay"));
+			windows.reserve(ctx->Windows.Size);
+			constants.windowParams[3] = 0.0f;
+			for (auto* window : ctx->Windows) {
+				if (!window->Active || window->Hidden || window->SkipItems)
+					continue;
+				if ((window->Flags & ImGuiWindowFlags_ChildWindow) && !(window->Flags & ImGuiWindowFlags_Popup) && !window->DockIsActive)
+					continue;
+				if (window->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_DockNodeHost))
+					continue;
+				if (window == performanceOverlay || Util::IsFlyoutWindowName(window->Name))
+					continue;
+
+				// Docked backgrounds and tabs are drawn by the host before the window's content.
+				auto* drawList = window->DockIsActive && window->DockNode && window->DockNode->HostWindow ?
+				                     window->DockNode->HostWindow->DrawList :
+				                     window->DrawList;
+				const auto it = std::ranges::find(drawData->CmdLists, drawList);
+				if (it == drawData->CmdLists.end())
+					continue;
+
+				const ImRect rect = window->Rect();
+				const auto scale = drawData->FramebufferScale;
+				constants.windowRect[0] = (rect.Min.x - drawData->DisplayPos.x) * scale.x;
+				constants.windowRect[1] = (rect.Min.y - drawData->DisplayPos.y) * scale.y;
+				constants.windowRect[2] = (rect.Max.x - drawData->DisplayPos.x) * scale.x;
+				constants.windowRect[3] = (rect.Max.y - drawData->DisplayPos.y) * scale.y;
+				constants.windowParams[0] = window->WindowRounding * (std::min)(scale.x, scale.y);
+				windows.push_back({ &frame, drawList, constants, static_cast<int>(it - drawData->CmdLists.begin()) });
+			}
+			if (csEditorActive) {
+				for (auto& window : windows) {
+					const auto* rect = window.constants.windowRect;
+					window.needed = std::ranges::any_of(windows, [&](const WindowBlur& lower) {
+						const auto* other = lower.constants.windowRect;
+						return lower.drawOrder < window.drawOrder && rect[0] < other[2] && rect[2] > other[0] &&
+						       rect[1] < other[3] && rect[3] > other[1];
+					});
+				}
+				std::erase_if(windows, [](const WindowBlur& window) { return !window.needed; });
+			}
+			return windows;
+		}
+
 	}  // anonymous namespace
+
+	void RestoreRetainedBuffers()
+	{
+		if (globals::game::isVR || !globals::d3d::context)
+			return;
+		std::lock_guard<std::mutex> lock(resourceMutex);
+		auto& hdr = globals::features::hdrDisplay;
+		auto& upscaling = globals::features::upscaling;
+		const bool hdrActive = hdr.loaded && hdr.settings.enableHDR && hdr.hdrTexture;
+		RestoreBuffer(retainedScene, hdrActive ? hdr.hdrTexture->resource.get() : nullptr, hdr.sceneGeneration);
+		retainedScene = {};
+		if (retainedUI.source) {
+			const auto uiBuffer = hdrActive ? GetHDRUIBufferViews(hdr, upscaling) :
+			                      upscaling.d3d12SwapChainActive && ShouldUseD3D12UIBufferForBlur() ?
+			                                  GetD3D12UIBufferViews(upscaling.GetBlurResources()) :
+			                                  UIBufferViews{};
+			RestoreBuffer(retainedUI, GetTexture(uiBuffer.rtv).get(), hdr.uiGeneration);
+		}
+		if (!enabled || !globals::state->IsPausedOrMenuOpen(globals::game::ui))
+			retainedUI = {};
+		if (!enabled || !csEditorActive)
+			ReleaseEditorLayer();
+	}
 
 	bool Initialize()
 	{
@@ -207,9 +395,12 @@ namespace BackgroundBlur
 		};
 
 		if (!compileShader(vertexShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "vs_5_0", "VS_Main", "blur vertex shader") ||
+			!compileShader(copyPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "ps_5_0", "PS_Copy", "UI composite pixel shader") ||
+			!compileShader(downsamplePixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "ps_5_0", "PS_Downsample", "blur downsample pixel shader") ||
 			!compileShader(horizontalPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "ps_5_0", "PS_Main", "horizontal blur pixel shader") ||
 			!compileShader(verticalPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurVertical.hlsl", "ps_5_0", "PS_Main", "vertical blur pixel shader") ||
 			!compileShader(compositePixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurComposite.hlsl", "ps_5_0", "PS_Main", "composite blur pixel shader") ||
+			!compileShader(layerPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurComposite.hlsl", "ps_5_0", "PS_Layer", "UI blur pixel shader") ||
 			!compileShader(clearPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurComposite.hlsl", "ps_5_0", "PS_Clear", "clear pixel shader"))
 			return false;
 
@@ -231,11 +422,6 @@ namespace BackgroundBlur
 		if (!checkCreate(device->CreateBuffer(&cbDesc, nullptr, constantBuffer.put()), "blur constant buffer"))
 			return false;
 		Util::SetResourceName(constantBuffer.get(), "BackgroundBlur::BlurCB");
-
-		cbDesc.ByteWidth = sizeof(WindowConstants);
-		if (!checkCreate(device->CreateBuffer(&cbDesc, nullptr, windowConstantBuffer.put()), "window constant buffer"))
-			return false;
-		Util::SetResourceName(windowConstantBuffer.get(), "BackgroundBlur::WindowCB");
 
 		// Create sampler state
 		D3D11_SAMPLER_DESC samplerDesc = {};
@@ -328,102 +514,66 @@ namespace BackgroundBlur
 		textureFormat = format;
 	}
 
-	void PerformBlur(ID3D11Texture2D* sourceTexture, ID3D11ShaderResourceView* sourceSRV, ID3D11RenderTargetView* targetRTV, ImVec2 menuMin, ImVec2 menuMax, float cornerRadius, ID3D11ShaderResourceView* uiBufferSRV = nullptr, ID3D11RenderTargetView* uiBufferRTV = nullptr)
+	void PerformBlur(const BlurFrame& frame, const BlurConstants& constants)
 	{
-		std::lock_guard<std::mutex> lock(resourceMutex);
-
 		auto context = globals::d3d::context;
-		if (!context || !sourceTexture || !sourceSRV || !targetRTV) {
+		D3D11_RECT scissorRect{
+			static_cast<LONG>((std::max)(0.0f, std::floor(constants.windowRect[0] - SCISSOR_AA_PADDING))),
+			static_cast<LONG>((std::max)(0.0f, std::floor(constants.windowRect[1] - SCISSOR_AA_PADDING))),
+			static_cast<LONG>((std::min)(constants.windowParams[1], std::ceil(constants.windowRect[2] + SCISSOR_AA_PADDING))),
+			static_cast<LONG>((std::min)(constants.windowParams[2], std::ceil(constants.windowRect[3] + SCISSOR_AA_PADDING)))
+		};
+		if (scissorRect.left >= scissorRect.right || scissorRect.top >= scissorRect.bottom)
 			return;
-		}
 
-		if (!vertexShader || !horizontalPixelShader || !verticalPixelShader) {
-			return;
-		}
-
-		if (!blurTexture1 || !blurTexture2) {
-			return;
-		}
-
-		// Get source texture description
-		D3D11_TEXTURE2D_DESC sourceDesc;
-		sourceTexture->GetDesc(&sourceDesc);
-
-		// Save current state
-		ID3D11RenderTargetView* originalRTV = nullptr;
-		ID3D11DepthStencilView* originalDSV = nullptr;
-		context->OMGetRenderTargets(1, &originalRTV, &originalDSV);
-
-		D3D11_VIEWPORT originalViewport;
-		UINT numViewports = 1;
-		context->RSGetViewports(&numViewports, &originalViewport);
-
-		ID3D11RasterizerState* originalRS = nullptr;
-		context->RSGetState(&originalRS);
+		CS_GPU_PASS_SELECT(constants.windowParams[3] != 0.0f, "BackgroundBlur::Fullscreen", "BackgroundBlur::Window");
 
 		auto constantBufferPtr = constantBuffer.get();
 		auto samplerStatePtr = samplerState.get();
-
 		ID3D11ShaderResourceView* nullSRV = nullptr;
+		context->UpdateSubresource(constantBufferPtr, 0, nullptr, &constants, 0, 0);
+		context->PSSetConstantBuffers(1, 1, &constantBufferPtr);
+		context->PSSetSamplers(0, 1, &samplerStatePtr);
+		context->IASetInputLayout(nullptr);
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		context->VSSetShader(vertexShader.get(), nullptr, 0);
+		context->GSSetShader(nullptr, nullptr, 0);
+		context->HSSetShader(nullptr, nullptr, 0);
+		context->DSSetShader(nullptr, nullptr, 0);
+		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+		context->RSSetState(scissorRasterizerState.get());
 
-		// Set up viewport for all blur passes (1/8 resolution for performance)
-		D3D11_VIEWPORT blurViewport = {};
+		D3D11_VIEWPORT blurViewport{};
 		blurViewport.Width = static_cast<FLOAT>(downsampledWidth);
 		blurViewport.Height = static_cast<FLOAT>(downsampledHeight);
-		blurViewport.MinDepth = 0.0f;
 		blurViewport.MaxDepth = 1.0f;
+		D3D11_RECT blurScissor{ 0, 0, static_cast<LONG>(downsampledWidth), static_cast<LONG>(downsampledHeight) };
 		context->RSSetViewports(1, &blurViewport);
+		context->RSSetScissorRects(1, &blurScissor);
 
 		auto downsampleRTVPtr = downsampleRTV.get();
 		context->OMSetRenderTargets(1, &downsampleRTVPtr, nullptr);
-		context->VSSetShader(vertexShader.get(), nullptr, 0);
-		context->PSSetShader(horizontalPixelShader.get(), nullptr, 0);
-		context->PSSetSamplers(0, 1, &samplerStatePtr);
-
-		// Step 1: Downsample game world directly (bilinear filtering does the work)
-		BlurConstants downsampleConstants = {};
-		downsampleConstants.texelSize[0] = 1.0f / static_cast<float>(sourceDesc.Width);
-		downsampleConstants.texelSize[1] = 1.0f / static_cast<float>(sourceDesc.Height);
-		downsampleConstants.blurParams[0] = 1;  // Single sample for downsample
-		context->UpdateSubresource(constantBuffer.get(), 0, nullptr, &downsampleConstants, 0, 0);
-		context->PSSetConstantBuffers(0, 1, &constantBufferPtr);
-		context->PSSetShaderResources(0, 1, &sourceSRV);
+		context->PSSetShader(downsamplePixelShader.get(), nullptr, 0);
+		context->PSSetShaderResources(0, 1, &frame.sourceSRV);
 		context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
 		context->PSSetShaderResources(0, 1, &nullSRV);
 
-		// Step 2: Blend UI buffer at downsampled resolution (pre-multiplied alpha)
-		// Small HUD elements may be slightly softened but this is much faster
-		if (uiBufferSRV && compositeBlendState) {
+		if (frame.uiBuffer.srv) {
 			context->OMSetBlendState(compositeBlendState.get(), nullptr, 0xFFFFFFFF);
-			context->PSSetShaderResources(0, 1, &uiBufferSRV);
+			context->PSSetShaderResources(0, 1, &frame.uiBuffer.srv);
 			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
 			context->PSSetShaderResources(0, 1, &nullSRV);
 			context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 		}
 
-		// Calculate blur parameters at eighth resolution
-		float blurRadius = BLUR_INTENSITY * BLUR_RADIUS_SCALE;
-		int sampleCount = BLUR_SAMPLE_COUNT;
-
-		BlurConstants constants = {};
-		constants.texelSize[0] = blurRadius / static_cast<float>(downsampledWidth);
-		constants.texelSize[1] = blurRadius / static_cast<float>(downsampledHeight);
-		constants.texelSize[2] = BLUR_INTENSITY;
-		constants.blurParams[0] = sampleCount;
-
-		context->UpdateSubresource(constantBuffer.get(), 0, nullptr, &constants, 0, 0);
-		context->PSSetConstantBuffers(0, 1, &constantBufferPtr);
-
-		// First pass: Horizontal blur (on downsampled texture)
 		auto rtv1Ptr = blurRTV1.get();
 		auto downsampleSRVPtr = downsampleSRV.get();
 		context->OMSetRenderTargets(1, &rtv1Ptr, nullptr);
 		context->PSSetShader(horizontalPixelShader.get(), nullptr, 0);
 		context->PSSetShaderResources(0, 1, &downsampleSRVPtr);
 		context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
-
-		// Second pass: Vertical blur (on downsampled texture)
 		context->PSSetShaderResources(0, 1, &nullSRV);
+
 		auto rtv2Ptr = blurRTV2.get();
 		auto srv1Ptr = blurSRV1.get();
 		context->OMSetRenderTargets(1, &rtv2Ptr, nullptr);
@@ -432,70 +582,61 @@ namespace BackgroundBlur
 		context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
 		context->PSSetShaderResources(0, 1, &nullSRV);
 
-		// Final composition: upscale from quarter-res with rounded corner mask
-		context->RSSetViewports(1, &originalViewport);
-
-		// Expand scissor rect slightly for anti-aliased rounded corner edges
-		D3D11_RECT scissorRect;
-		scissorRect.left = static_cast<LONG>((std::max)(0.0f, menuMin.x - SCISSOR_AA_PADDING));
-		scissorRect.top = static_cast<LONG>((std::max)(0.0f, menuMin.y - SCISSOR_AA_PADDING));
-		scissorRect.right = static_cast<LONG>((std::min)(static_cast<FLOAT>(sourceDesc.Width), menuMax.x + SCISSOR_AA_PADDING));
-		scissorRect.bottom = static_cast<LONG>((std::min)(static_cast<FLOAT>(sourceDesc.Height), menuMax.y + SCISSOR_AA_PADDING));
-
-		context->RSSetState(scissorRasterizerState.get());
+		D3D11_VIEWPORT compositeViewport{};
+		compositeViewport.Width = constants.windowParams[1];
+		compositeViewport.Height = constants.windowParams[2];
+		compositeViewport.MaxDepth = 1.0f;
+		context->RSSetViewports(1, &compositeViewport);
 		context->RSSetScissorRects(1, &scissorRect);
-
-		// Set up window constants for rounded corner shaders (used by both composite and clear)
-		bool useRoundedCorners = compositePixelShader && clearPixelShader && windowConstantBuffer;
-		if (useRoundedCorners) {
-			WindowConstants windowConstants = {};
-			windowConstants.windowRect[0] = menuMin.x;
-			windowConstants.windowRect[1] = menuMin.y;
-			windowConstants.windowRect[2] = menuMax.x;
-			windowConstants.windowRect[3] = menuMax.y;
-			windowConstants.windowParams[0] = cornerRadius;
-			windowConstants.windowParams[1] = static_cast<float>(sourceDesc.Width);
-			windowConstants.windowParams[2] = static_cast<float>(sourceDesc.Height);
-			windowConstants.windowParams[3] = csEditorActive ? 1.0f : 0.0f;
-			context->UpdateSubresource(windowConstantBuffer.get(), 0, nullptr, &windowConstants, 0, 0);
-			auto windowConstantBufferPtr = windowConstantBuffer.get();
-			context->PSSetConstantBuffers(1, 1, &windowConstantBufferPtr);
-		}
-
-		// Draw blur to target
-		context->OMSetRenderTargets(1, &targetRTV, nullptr);
-		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, BLUR_INTENSITY * BLEND_ALPHA_SCALE };
-		context->OMSetBlendState(blendState.get(), blendFactor, 0xFFFFFFFF);
-		context->PSSetShader(useRoundedCorners ? compositePixelShader.get() : verticalPixelShader.get(), nullptr, 0);
+		context->OMSetRenderTargets(1, &frame.targetRTV, nullptr);
+		context->OMSetBlendState(frame.uiOnly ? nullptr : blendState.get(), nullptr, 0xFFFFFFFF);
+		context->PSSetShader(frame.uiOnly ? layerPixelShader.get() : compositePixelShader.get(), nullptr, 0);
 		auto srv2Ptr = blurSRV2.get();
 		context->PSSetShaderResources(0, 1, &srv2Ptr);
 		context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
 		context->PSSetShaderResources(0, 1, &nullSRV);
 
-		// Clear UI buffer where blur was drawn (prevents HUD showing through)
-		if (uiBufferRTV) {
-			context->OMSetRenderTargets(1, &uiBufferRTV, nullptr);
+		if (frame.uiBuffer.rtv) {
+			context->OMSetRenderTargets(1, &frame.uiBuffer.rtv, nullptr);
 			context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-
-			// Clear with same rounded shape - window constants already bound
 			context->PSSetShader(clearPixelShader.get(), nullptr, 0);
 			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
 		}
 
-		// Restore state
-		context->OMSetRenderTargets(1, &originalRTV, originalDSV);
-		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-		context->PSSetShaderResources(0, 1, &nullSRV);
-		context->RSSetState(originalRS);
-		context->RSSetScissorRects(0, nullptr);
+		context->OMSetRenderTargets(1, &frame.imguiRTV, nullptr);
+	}
 
-		// Cleanup
-		if (originalRTV)
-			originalRTV->Release();
-		if (originalDSV)
-			originalDSV->Release();
-		if (originalRS)
-			originalRS->Release();
+	void RenderWindowBlur(const ImDrawList*, const ImDrawCmd* command)
+	{
+		const auto& window = *static_cast<const WindowBlur*>(command->UserCallbackData);
+		PerformBlur(*window.frame, window.constants);
+	}
+
+	void CompositeEditorLayer(ID3D11RenderTargetView* target)
+	{
+		CS_GPU_PASS("BackgroundBlur::CompositeEditorUI");
+		auto context = globals::d3d::context;
+		auto srv = editorUISRV.get();
+		auto sampler = samplerState.get();
+		D3D11_VIEWPORT viewport{ 0.0f, 0.0f, static_cast<float>(textureWidth), static_cast<float>(textureHeight), 0.0f, 1.0f };
+		D3D11_RECT scissor{ 0, 0, static_cast<LONG>(textureWidth), static_cast<LONG>(textureHeight) };
+		context->RSSetState(scissorRasterizerState.get());
+		context->RSSetViewports(1, &viewport);
+		context->RSSetScissorRects(1, &scissor);
+		context->IASetInputLayout(nullptr);
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		context->VSSetShader(vertexShader.get(), nullptr, 0);
+		context->PSSetShader(copyPixelShader.get(), nullptr, 0);
+		context->GSSetShader(nullptr, nullptr, 0);
+		context->HSSetShader(nullptr, nullptr, 0);
+		context->DSSetShader(nullptr, nullptr, 0);
+		context->OMSetRenderTargets(1, &target, nullptr);
+		context->OMSetBlendState(compositeBlendState.get(), nullptr, 0xFFFFFFFF);
+		context->PSSetSamplers(0, 1, &sampler);
+		context->PSSetShaderResources(0, 1, &srv);
+		context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
+		srv = nullptr;
+		context->PSSetShaderResources(0, 1, &srv);
 	}
 
 	void Cleanup()
@@ -503,18 +644,23 @@ namespace BackgroundBlur
 		std::lock_guard<std::mutex> lock(resourceMutex);
 
 		vertexShader = nullptr;
+		copyPixelShader = nullptr;
+		downsamplePixelShader = nullptr;
 		horizontalPixelShader = nullptr;
 		verticalPixelShader = nullptr;
 		compositePixelShader = nullptr;
 		clearPixelShader = nullptr;
+		layerPixelShader = nullptr;
 		constantBuffer = nullptr;
-		windowConstantBuffer = nullptr;
 		samplerState = nullptr;
 		blendState = nullptr;
 		compositeBlendState = nullptr;
 		scissorRasterizerState = nullptr;
 
 		ReleaseBlurTextures();
+		ReleaseEditorLayer();
+		retainedScene = {};
+		retainedUI = {};
 
 		cachedSourceSRV = nullptr;
 		cachedSourceTexture = nullptr;
@@ -539,20 +685,20 @@ namespace BackgroundBlur
 		return csEditorActive;
 	}
 
-	void RenderBackgroundBlur()
+	bool RenderDrawData(ImDrawData* drawData)
 	{
-		if (!enabled || globals::game::isVR) {
-			return;
+		if (!enabled || globals::game::isVR || !drawData || drawData->DisplaySize.x <= 0.0f || drawData->DisplaySize.y <= 0.0f) {
+			return false;
 		}
 
 		if (!initialized || initializationFailed) {
-			return;
+			return false;
 		}
 
 		auto device = globals::d3d::device;
 		auto context = globals::d3d::context;
 		if (!device || !context) {
-			return;
+			return false;
 		}
 
 		// Check if upscaling with D3D12 swap chain is active
@@ -565,7 +711,7 @@ namespace BackgroundBlur
 		                 hdr->hdrTexture && hdr->hdrTexture->resource && hdr->hdrTexture->srv && hdr->hdrTexture->rtv;
 
 		if (!IsStartupMenuBlurSourceReady())
-			return;
+			return false;
 
 		winrt::com_ptr<ID3D11Texture2D> currentTexture;
 		winrt::com_ptr<ID3D11RenderTargetView> currentRTV;
@@ -573,9 +719,7 @@ namespace BackgroundBlur
 		UIBufferViews uiBuffer;
 
 		if (hdrActive) {
-			// HDR (any FG state): blur hdrTexture in-place before ApplyHDR composites UI.
-			// No color space conversion needed - blur operates directly in PQ BT.2020 space.
-			// ApplyHDR will then composite vanilla UI + ImGui on top of the blurred scene.
+			// ApplyHDR composites the remaining UI over the blurred scene.
 			currentTexture = hdr->hdrTexture->resource;
 			sourceSRV = hdr->hdrTexture->srv.get();
 			currentRTV = hdr->hdrTexture->rtv;
@@ -585,7 +729,7 @@ namespace BackgroundBlur
 			// When D3D12 swap chain is active, get all resources in one call
 			auto res = upscaling.GetBlurResources();
 			if (!res.backbufferTex || !res.backbufferRTV || !res.backbufferSRV) {
-				return;
+				return false;
 			}
 			currentTexture.copy_from(res.backbufferTex);
 			currentRTV.copy_from(res.backbufferRTV);
@@ -599,7 +743,7 @@ namespace BackgroundBlur
 			ID3D11RenderTargetView* rawRTV = nullptr;
 			context->OMGetRenderTargets(1, &rawRTV, nullptr);
 			if (!rawRTV) {
-				return;
+				return false;
 			}
 			currentRTV.attach(rawRTV);  // Takes ownership of the AddRef from OMGetRenderTargets
 
@@ -609,7 +753,7 @@ namespace BackgroundBlur
 
 			winrt::com_ptr<ID3D11Texture2D> tex;
 			if (FAILED(currentRT->QueryInterface(IID_PPV_ARGS(tex.put()))) || !tex) {
-				return;
+				return false;
 			}
 			currentTexture = tex;
 
@@ -619,8 +763,9 @@ namespace BackgroundBlur
 				HRESULT hr = device->CreateShaderResourceView(currentTexture.get(), nullptr, cachedSourceSRV.put());
 				if (FAILED(hr)) {
 					logger::error("Failed to create cached source SRV for blur");
-					return;
+					return false;
 				}
+				Util::SetResourceName(cachedSourceSRV.get(), "BackgroundBlur::Source SRV");
 				cachedSourceTexture = currentTexture.get();
 			}
 			sourceSRV = cachedSourceSRV.get();
@@ -630,77 +775,84 @@ namespace BackgroundBlur
 		currentTexture->GetDesc(&texDesc);
 
 		// Create blur textures if needed (check format too for HDR toggle)
-		if (textureWidth != texDesc.Width || textureHeight != texDesc.Height || textureFormat != texDesc.Format) {
-			CreateBlurTextures(texDesc.Width, texDesc.Height, texDesc.Format);
+		const auto blurFormat = csEditorActive ? DXGI_FORMAT_R16G16B16A16_FLOAT : texDesc.Format;
+		if (textureWidth != texDesc.Width || textureHeight != texDesc.Height || textureFormat != blurFormat) {
+			CreateBlurTextures(texDesc.Width, texDesc.Height, blurFormat);
 		}
 
-		// Snapshot the clean scene before the in-place HDR blur, for clean captures.
+		std::lock_guard<std::mutex> lock(resourceMutex);
+		if (!downsampleRTV || !blurRTV1 || !blurRTV2)
+			return false;
+
+		winrt::com_ptr<ID3D11RenderTargetView> imguiRTV;
+		context->OMGetRenderTargets(1, imguiRTV.put(), nullptr);
+		if (!imguiRTV)
+			return false;
+
+		const BlurFrame frame{ sourceSRV, currentRTV.get(), imguiRTV.get(), uiBuffer };
+		BlurConstants constants{
+			{ static_cast<float>(downsampledWidth), static_cast<float>(downsampledHeight), 1.0f / downsampledWidth, 1.0f / downsampledHeight },
+			{ 0.0f, 0.0f, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height) },
+			{ 0.0f, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height), csEditorActive ? 1.0f : 0.0f }
+		};
+
+		auto windows = GatherWindows(drawData, frame, constants);
+		if (windows.empty() && !csEditorActive)
+			return false;
+		const bool useEditorLayer = csEditorActive && !windows.empty();
+		if (useEditorLayer && !CreateEditorLayer(texDesc.Width, texDesc.Height))
+			return false;
+		if (!csEditorActive)
+			ReleaseEditorLayer();
+		const BlurFrame editorFrame{ editorUISRV.get(), editorUIRTV.get(), editorUIRTV.get(), {}, true };
+		if (!PreserveUIBuffer(uiBuffer))
+			return false;
+
+		Util::FullscreenPassScope restoreState(context);
+		UINT scissorCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		D3D11_RECT savedScissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+		context->RSGetScissorRects(&scissorCount, savedScissors);
+		const SKSE::stl::scope_exit restoreScissors([&]() noexcept { context->RSSetScissorRects(scissorCount, savedScissors); });
+
 		if (hdrActive) {
 			hdr->SnapshotCleanScene();
+			if (!hdr->IsCleanSceneCaptureFresh() || !CopyCompatible(currentTexture.get(), hdr->cleanSceneCapture->resource.get()))
+				return false;
+			retainedScene = { currentTexture, hdr->cleanSceneCapture->resource, hdr->sceneGeneration, true };
+		}
+		retainedUI.dirty = retainedUI.source != nullptr;
+
+		if (csEditorActive)
+			PerformBlur(frame, constants);
+		if (useEditorLayer) {
+			const float clear[4]{};
+			context->ClearRenderTargetView(editorUIRTV.get(), clear);
+			auto target = editorUIRTV.get();
+			context->OMSetRenderTargets(1, &target, nullptr);
+		}
+		for (auto& window : windows) {
+			if (useEditorLayer)
+				window.frame = &editorFrame;
+			ImDrawCmd reset;
+			reset.UserCallback = ImDrawCallback_ResetRenderState;
+			ImDrawCmd blur;
+			blur.UserCallback = RenderWindowBlur;
+			blur.UserCallbackData = &window;
+			auto& commands = window.drawList->CmdBuffer;
+			commands.insert(commands.begin(), reset);
+			commands.insert(commands.begin(), blur);
 		}
 
-		// CS editor mode: single fullscreen blur pass (better perf than per-window)
-		if (csEditorActive) {
-			ImVec2 screenMin = { 0, 0 };
-			ImVec2 screenMax = { static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height) };
-			PerformBlur(currentTexture.get(), sourceSRV, currentRTV.get(), screenMin, screenMax, 0.0f, uiBuffer.srv, uiBuffer.rtv);
-			return;
-		}
-
-		// Find ImGui windows that need blur
-		ImGuiContext* ctx = ImGui::GetCurrentContext();
-		if (!ctx || ctx->Windows.Size == 0) {
-			return;
-		}
-
-		// Apply blur behind each visible ImGui window
-		for (int i = 0; i < ctx->Windows.Size; i++) {
-			ImGuiWindow* window = ctx->Windows[i];
-			// Use Active (still true after Render) instead of WasActive (stale until next NewFrame)
-			if (!window || !window->Active || window->SkipItems) {
-				continue;
+		const SKSE::stl::scope_exit removeCallbacks([&]() noexcept {
+			for (auto& window : windows) {
+				auto& commands = window.drawList->CmdBuffer;
+				commands.erase(commands.begin(), commands.begin() + 2);
 			}
-
-			// Skip child windows - only blur root windows to cover headers and footers
-			// Exception: docked windows are visually independent even though ParentWindow is set
-			if (window->ParentWindow != nullptr && !window->DockIsActive) {
-				continue;
-			}
-
-			// Skip tooltip windows
-			if (window->Flags & ImGuiWindowFlags_Tooltip) {
-				continue;
-			}
-
-			// Skip Performance Overlay window (no blur)
-			if (window->Name && std::string_view(window->Name) == "Performance Overlay") {
-				continue;
-			}
-
-			// Flyouts sit within an already blurred root window.
-			if (Util::IsFlyoutWindowName(window->Name)) {
-				continue;
-			}
-
-			// Skip if window has no background (fully transparent)
-			if (window->Flags & ImGuiWindowFlags_NoBackground) {
-				continue;
-			}
-
-			// Get window outer bounds (includes title bar, borders, etc.)
-			// Use window's inner rect which includes all content drawn inside the window
-			// including custom headers and footers, not just OuterRectClipped
-			ImRect windowRect = window->Rect();
-			ImVec2 windowMin = windowRect.Min;
-			ImVec2 windowMax = windowRect.Max;
-
-			// Get window corner rounding from the window's style
-			float cornerRadius = window->WindowRounding;
-
-			// Perform blur for this window area with rounded corners
-			// Pass UI buffer SRV/RTV for compositing and clearing during upscaling gameplay
-			PerformBlur(currentTexture.get(), sourceSRV, currentRTV.get(), windowMin, windowMax, cornerRadius, uiBuffer.srv, uiBuffer.rtv);
-		}
+		});
+		ImGui_ImplDX11_RenderDrawData(drawData);
+		if (useEditorLayer)
+			CompositeEditorLayer(imguiRTV.get());
+		return true;
 	}
 
 }  // namespace BackgroundBlur

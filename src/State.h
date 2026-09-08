@@ -120,6 +120,13 @@ public:
 	 */
 	void Save(ConfigMode a_configMode = ConfigMode::USER, bool a_isExplicitUserSave = true);
 
+	/** @brief Saves a feature's boot preference immediately; returns false on failure. */
+	bool SetFeatureBootEnabled(const std::string& featureName, bool enabled);
+	/** @brief Saves a loaded feature's favorite status immediately; returns false on failure. */
+	bool SetFeatureFavorite(const std::string& featureName, bool favorite);
+	/** @brief Returns the saved favorite status, including for unloaded features. */
+	bool IsFeatureFavorite(const std::string& featureName) const;
+
 	/**
 	 * @brief Serializes all settings to a JSON object (in-memory, no disk I/O).
 	 * @param o_json Output JSON object to populate.
@@ -539,6 +546,8 @@ public:
 	}
 
 private:
+	std::unordered_map<std::string, bool> favoriteFeatures;
+	bool SaveFeaturePreference(const json& patch);
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

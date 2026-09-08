@@ -4,6 +4,7 @@
 #include <cmath>
 #include <format>
 #include <imgui.h>
+#include <numbers>
 #include <ranges>
 #include <unordered_map>
 #include <unordered_set>
@@ -33,6 +34,16 @@ namespace
 	constexpr float FEATURE_ACTION_CHECKMARK_LEFT_OFFSET = 2.0f;
 	constexpr float FEATURE_PAGE_BOTTOM_TOLERANCE = 1.0f;
 	constexpr float FEATURE_PAGE_LAYOUT_EPSILON = 0.5f;
+	constexpr float FEATURE_ACTION_ICON_HALF_WIDTH_RATIO = 0.24f;
+	constexpr float FEATURE_ACTION_ICON_LINE_SPACING_RATIO = 0.16f;
+	constexpr float FEATURE_ACTION_ICON_STROKE_RATIO = 0.07f;
+	constexpr float FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO = 0.06f;
+	constexpr float FEATURE_ACTION_ICON_FULL_TURN = std::numbers::pi_v<float> * 2.0f;
+	constexpr float FEATURE_ACTION_ICON_SNAP_RATIO = 0.05f;
+	constexpr float FEATURE_ACTION_ICON_RESPONSE_SPEED = 21.0f;
+	constexpr float FEATURE_ACTION_ICON_START_BOOST = 13.0f;
+	constexpr float FEATURE_ACTION_ICON_MAX_DELTA_TIME = 1.0f / 30.0f;
+	constexpr float FEATURE_ACTION_ICON_FINISH_BIAS = 0.04f;
 
 	struct FeaturePageLayoutState
 	{
@@ -44,6 +55,68 @@ namespace
 	};
 
 	std::unordered_map<std::string, FeaturePageLayoutState> g_featurePageLayouts;
+	float g_featureActionsIconProgress = 0.0f;
+
+	void DrawFeatureActionsIcon(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float progress)
+	{
+		IM_ASSERT(drawList != nullptr);
+		IM_ASSERT(max.x >= min.x && max.y >= min.y);
+
+		const float iconSize = std::min(max.x - min.x, max.y - min.y);
+		const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+		const float halfWidth = iconSize * FEATURE_ACTION_ICON_HALF_WIDTH_RATIO;
+		const float lineSpacing = iconSize * FEATURE_ACTION_ICON_LINE_SPACING_RATIO;
+		const float triangleHalfHeight = halfWidth * std::numbers::sqrt3_v<float> * 0.5f;
+		const float strokeWidth = std::max(1.0f, iconSize * FEATURE_ACTION_ICON_STROKE_RATIO);
+		const float animationProgress = std::clamp(progress, 0.0f, 1.0f);
+		const float snapPhase = std::sin(std::numbers::pi_v<float> * 2.0f * animationProgress) *
+		                        std::sin(std::numbers::pi_v<float> * animationProgress);
+		const float morphProgress = std::clamp(
+			animationProgress + FEATURE_ACTION_ICON_SNAP_RATIO * snapPhase, 0.0f, 1.0f);
+		const float flightPhase = std::sin(std::numbers::pi_v<float> * animationProgress);
+		const auto interpolate = [morphProgress](float start, float end) {
+			return std::lerp(start, end, morphProgress);
+		};
+		struct LineTransform
+		{
+			ImVec2 center;
+			float angle;
+		};
+
+		const ImVec2 triangleLeft(center.x - halfWidth, center.y - triangleHalfHeight);
+		const ImVec2 triangleRight(center.x + halfWidth, center.y - triangleHalfHeight);
+		const ImVec2 triangleBottom(center.x, center.y + triangleHalfHeight);
+		const std::array<LineTransform, 3> hamburgerLines = { { { ImVec2(center.x, center.y - lineSpacing), 0.0f },
+			{ center, 0.0f },
+			{ ImVec2(center.x, center.y + lineSpacing), 0.0f } } };
+		const std::array<LineTransform, 3> triangleLines = { { { ImVec2((triangleBottom.x + triangleRight.x) * 0.5f, (triangleBottom.y + triangleRight.y) * 0.5f),
+																   std::atan2(triangleRight.y - triangleBottom.y, triangleRight.x - triangleBottom.x) - FEATURE_ACTION_ICON_FULL_TURN },
+			{ ImVec2((triangleLeft.x + triangleBottom.x) * 0.5f, (triangleLeft.y + triangleBottom.y) * 0.5f),
+				std::atan2(triangleBottom.y - triangleLeft.y, triangleBottom.x - triangleLeft.x) + FEATURE_ACTION_ICON_FULL_TURN },
+			{ ImVec2((triangleLeft.x + triangleRight.x) * 0.5f, triangleLeft.y), FEATURE_ACTION_ICON_FULL_TURN } } };
+		const std::array<ImVec2, 3> flightOffsets = { { ImVec2(-iconSize * FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO, lineSpacing / std::numbers::pi_v<float>),
+			ImVec2(-iconSize * FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO, 0.0f),
+			ImVec2(iconSize * FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO, -lineSpacing / std::numbers::pi_v<float>) } };
+		const ImU32 lineColor = ImGui::GetColorU32(ImGuiCol_Text);
+		const float capRadius = strokeWidth * 0.5f;
+
+		for (std::size_t i = 0; i < hamburgerLines.size(); ++i) {
+			const ImVec2 lineCenter(
+				interpolate(hamburgerLines[i].center.x, triangleLines[i].center.x) + flightOffsets[i].x * flightPhase,
+				interpolate(hamburgerLines[i].center.y, triangleLines[i].center.y) + flightOffsets[i].y * flightPhase);
+			const float lineAngle = interpolate(hamburgerLines[i].angle, triangleLines[i].angle);
+			const ImVec2 halfLine(std::cos(lineAngle) * halfWidth, std::sin(lineAngle) * halfWidth);
+			const ImVec2 lineStart(lineCenter.x - halfLine.x, lineCenter.y - halfLine.y);
+			const ImVec2 lineEnd(lineCenter.x + halfLine.x, lineCenter.y + halfLine.y);
+			const ImVec2 rasterOffset(0.5f, 0.5f);
+			const float capStartAngle = lineAngle + std::numbers::pi_v<float> * 0.5f;
+			drawList->PathArcTo(ImVec2(lineStart.x + rasterOffset.x, lineStart.y + rasterOffset.y), capRadius,
+				capStartAngle, capStartAngle + std::numbers::pi_v<float>);
+			drawList->PathArcTo(ImVec2(lineEnd.x + rasterOffset.x, lineEnd.y + rasterOffset.y), capRadius,
+				capStartAngle + std::numbers::pi_v<float>, capStartAngle + std::numbers::pi_v<float> * 2.0f);
+			drawList->PathFillConvex(lineColor);
+		}
+	}
 
 	// Core built-in menu names that always appear first in the menu list
 	// These are canonical identifiers used for logic — NOT translated
@@ -837,6 +910,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	if (g_featureActionsFlyoutFeature != featureName) {
 		Util::CloseFlyout(g_featureActionsFlyout);
 		g_featureActionsFlyoutFeature = featureName;
+		g_featureActionsIconProgress = 0.0f;
 	}
 
 	ImGui::PushID(featureName.c_str());
@@ -845,13 +919,8 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	const ImVec2 actionsButtonMin = ImGui::GetItemRectMin();
 	const ImVec2 actionsButtonMax = ImGui::GetItemRectMax();
 	auto* actionsButtonDrawList = ImGui::GetWindowDrawList();
-	float arrowProgress = 0.0f;
 	{
 		Util::FlyoutScope flyout(g_featureActionsFlyout, actionsButtonId, actionsButtonPressed);
-		arrowProgress = g_featureActionsFlyout.activeId == actionsButtonId ?
-		                    Util::GetFlyoutEasedProgress(g_featureActionsFlyout) :
-		                    0.0f;
-
 		if (flyout) {
 			bool closeFlyout = false;
 			{
@@ -946,7 +1015,16 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 		}
 	}
 
-	Util::DrawDisclosureChevron(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, arrowProgress);
+	const bool actionsIconActive = g_featureActionsFlyout.activeId == actionsButtonId &&
+	                               g_featureActionsFlyout.isOpen && !g_featureActionsFlyout.closing;
+	const float iconTargetProgress = actionsIconActive ? 1.0f : 0.0f;
+	const float iconDeltaTime = std::min(ImGui::GetIO().DeltaTime, FEATURE_ACTION_ICON_MAX_DELTA_TIME);
+	const float iconDistance = iconTargetProgress - g_featureActionsIconProgress;
+	const float iconSpeed = FEATURE_ACTION_ICON_RESPONSE_SPEED + FEATURE_ACTION_ICON_START_BOOST * iconDistance * iconDistance;
+	const float iconResponse = 1.0f - std::exp(-iconSpeed * iconDeltaTime);
+	const float iconStep = (std::abs(iconDistance) + FEATURE_ACTION_ICON_FINISH_BIAS) * iconResponse;
+	g_featureActionsIconProgress += std::clamp(iconDistance, -iconStep, iconStep);
+	DrawFeatureActionsIcon(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, g_featureActionsIconProgress);
 	ImGui::PopID();
 	ImGui::EndChild();
 	ImGui::SetCursorScreenPos(cursorPosAfterSettings);

@@ -789,7 +789,7 @@
     "feature.grass_optimizations.full_detail_pixel_size_tooltip": "Instances whose on-screen radius is above this render at full density. Below it, density is increasingly thinned down to Minimum Density at Min Pixel Size. Increasing this setting improves performance by removing closer grass.",
     "feature.grass_optimizations.invisible_fade_cull": "Invisible Fade Cull",
     "feature.grass_optimizations.invisible_fade_cull_tooltip": "Skip drawing grass whose transparency is below this threshold. Grass with a fade value of zero is completely invisible and thus is removed early for performance reasons.",
-    "feature.grass_optimizations.key_feature_1": "Consolidates per-shape grass draws into one instanced indirect draw per grass type",
+    "feature.grass_optimizations.key_feature_1": "Consolidates per-shape grass draws into one instanced indirect draw per mesh tier per grass type",
     "feature.grass_optimizations.key_feature_2": "GPU compute culling of individual instances by frustum, distance and projected size",
     "feature.grass_optimizations.key_feature_3": "Hi-Z occlusion culling skips grass hidden behind objects before the vertex shader runs",
     "feature.grass_optimizations.key_feature_4": "Configurable render distance beyond the vanilla INI cap with density scaling",

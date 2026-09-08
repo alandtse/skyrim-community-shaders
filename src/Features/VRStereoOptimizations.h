@@ -92,6 +92,9 @@ struct VRStereoOptimizations
 		/// Re-run the classification on the final depth after the repair so later mode-texture
 		/// consumers (SSGI reprojection) see the restored geometry.
 		bool reclassifyAfterRepair = true;
+		/// Classify from the nearer of the prepass depth and the reprojected previous-frame
+		/// final depth, so z-prepass-omitted geometry (alpha-tested statics) is not culled in Eye 1.
+		bool classifyWithDepthHistory = true;
 		// reserved for foveated reprojection — see alandtse/open-shaders#143
 		float foveatedRegionRadius = 0.3f;
 		float foveatedRegionCenterX = 0.5f;
@@ -128,8 +131,9 @@ struct VRStereoOptimizations
 		float EdgeDepthThreshold;
 		uint32_t RepairFromEye0Depth;
 
-		float _pad1[2];
-		float FoveatedRadius;  // reserved for foveated reprojection — see alandtse/open-shaders#143
+		uint32_t DepthHistoryValid;    // 1 = texFinalDepthHistory holds the previous frame's final depth
+		uint32_t UseUnrepairableMask;  // 1 = Eye 1 reads the unrepairable-strip feedback mask
+		float FoveatedRadius;          // reserved for foveated reprojection — see alandtse/open-shaders#143
 		float DirectionalOcclusionRatio;
 
 		float FoveatedCenter[2];  // reserved for foveated reprojection — see alandtse/open-shaders#143
@@ -141,6 +145,18 @@ struct VRStereoOptimizations
 	//=============================================================================
 	// PUBLIC API
 	//=============================================================================
+
+	/**
+	 * @brief Snapshots the previous frame's final depth for the history-aware classification.
+	 *
+	 * kPOST_ZPREPASS_COPY still holds the post-geometry depth copied at the end of the
+	 * previous frame; this copies it into the history texture before this frame's z-prepass
+	 * overwrites it. Call from Deferred::EarlyPrepasses, before sceneDepthFinal is cleared.
+	 *
+	 * @param a_previousFrameHadFinalDepth False when the previous frame never produced a
+	 * post-geometry depth copy; the history is marked invalid instead of snapshotting stale data.
+	 */
+	void SnapshotFinalDepthHistory(bool a_previousFrameHadFinalDepth);
 
 	/**
 	 * @brief Classify Eye 1 pixels and write stencil marks.
@@ -235,8 +251,9 @@ private:
 	// INTERNAL METHODS
 	//=============================================================================
 
-	/// Runs the classification CS over the full SBS mode texture from the given depth.
-	void DispatchClassify(ID3D11ShaderResourceView* depthSRV);
+	/// Runs the classification CS over the full SBS mode texture from the given depth;
+	/// useHistory selects the history-aware permutation (previous-frame depth + mask inputs).
+	void DispatchClassify(ID3D11ShaderResourceView* depthSRV, bool useHistory);
 
 	/// Fullscreen triangle pass: reads mode texture, writes stencil ref=1 for MODE_MAIN pixels
 	void ExecuteStencilWritePass();
@@ -257,8 +274,13 @@ private:
 	/// light Eye 1 natively (RepairCulledEye1 step 4).
 	void DispatchGBufferFill();
 
+	/// Write the unrepairable-strip feedback mask from the initial modes and the scatter
+	/// result (RepairCulledEye1 step 5); must run before ReclassifyFromFinalDepth overwrites
+	/// the modes it reads.
+	void DispatchUnrepairableMask();
+
 	/// Re-classify both eyes from the repaired kMAIN depth for the passes that read the mode
-	/// texture after geometry (RepairCulledEye1 step 5); skipped when none is active.
+	/// texture after geometry (RepairCulledEye1 step 6); skipped when none is active.
 	void ReclassifyFromFinalDepth();
 
 	/// Sets the rasterizer viewport to the Eye 1 (right) half of the classified SBS area (frameDim).
@@ -277,6 +299,8 @@ private:
 	eastl::unique_ptr<ConstantBuffer> paramsCB;
 	eastl::unique_ptr<Texture2D> texPerPixelMode;           ///< R8_UINT classification texture (full SBS resolution)
 	eastl::unique_ptr<Texture2D> texScatterDepth;           ///< R32_UINT nearest Eye 0 depth warped into Eye 1 (Eye 1 half width)
+	eastl::unique_ptr<Texture2D> texFinalDepthHistory;      ///< Previous frame's final depth (CopyResource-compatible twin of kPOST_ZPREPASS_COPY)
+	eastl::unique_ptr<Texture2D> texUnrepairableMask;       ///< R8_UINT Eye 1 pixels whose last-frame cull could not be repaired (Eye 1 half width)
 	winrt::com_ptr<ID3D11ShaderResourceView> mainDepthSRV;  ///< kMAIN depth SRV of our own (the engine's pointer is swapped by TerrainBlending)
 
 	winrt::com_ptr<ID3D11DepthStencilState> stencilWriteDSS;
@@ -287,6 +311,8 @@ private:
 	winrt::com_ptr<ID3D11ComputeShader> depthScatterCS;
 	winrt::com_ptr<ID3D11ComputeShader> gBufferFillCS;
 	winrt::com_ptr<ID3D11ComputeShader> stencilDebugDepthMapCS;
+	winrt::com_ptr<ID3D11ComputeShader> stencilHistoryCS;
+	winrt::com_ptr<ID3D11ComputeShader> unrepairableMaskCS;
 	winrt::com_ptr<ID3D11VertexShader> stencilWriteVS;
 	winrt::com_ptr<ID3D11PixelShader> stencilWritePS;
 	winrt::com_ptr<ID3D11PixelShader> depthFillPS;
@@ -300,6 +326,10 @@ private:
 	float2 frameDim{};
 	/// True once DispatchStencil() has written texPerPixelMode for the current frame.
 	bool classifiedThisFrame = false;
+	/// True while texFinalDepthHistory holds the previous frame's post-geometry depth.
+	bool depthHistoryValid = false;
+	/// True while texUnrepairableMask describes the previous frame's Eye 1 cull.
+	bool unrepairableMaskValid = false;
 
 	// GBufferFillCS does typed UAV loads on the G-buffer formats (R10G10B10A2,
 	// R11G11B10, R16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads

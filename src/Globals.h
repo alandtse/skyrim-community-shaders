@@ -10,6 +10,7 @@ struct ExtendedMaterials;
 struct GrassCollision;
 struct GrassLighting;
 struct FoliageLighting;
+struct GrassOptimizations;
 struct HairSpecular;
 struct HorizonFix;
 struct IBL;
@@ -108,6 +109,7 @@ namespace globals
 		extern GrassCollision grassCollision;
 		extern GrassLighting grassLighting;
 		extern FoliageLighting foliageLighting;
+		extern GrassOptimizations grassOptimizations;
 		extern HairSpecular hairSpecular;
 		extern HorizonFix horizonFix;
 		extern IBL ibl;
@@ -319,6 +321,8 @@ namespace globals
 		extern REL::Relocation<const RE::NiRTTI*> NiBillboardNodeRTTI;
 		extern REL::Relocation<const RE::NiRTTI*> NiAlphaPropertyRTTI;
 		extern REL::Relocation<const RE::NiRTTI*> NiSourceTextureRTTI;
+		extern REL::Relocation<const RE::NiRTTI*> BSGrassShaderPropertyRTTI;
+		extern REL::Relocation<const RE::NiRTTI*> BSMultiStreamInstanceTriShapeRTTI;
 	}
 
 	extern State* state;

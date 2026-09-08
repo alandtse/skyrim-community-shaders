@@ -144,6 +144,52 @@ namespace
 
 	constexpr int kFilterColumnCount = 5;
 
+	bool BeginEditorMenuBar()
+	{
+		auto& context = *ImGui::GetCurrentContext();
+		auto* viewport = static_cast<ImGuiViewportP*>(ImGui::GetMainViewport());
+		ImGui::SetCurrentViewport(nullptr, viewport);
+		const auto& style = ImGui::GetStyle();
+		const float border = style.WindowBorderSize;
+		const float safeAreaY = std::max(style.DisplaySafeAreaPadding.y - style.FramePadding.y, 0.0f);
+		const float height = ImGui::GetFrameHeight() + safeAreaY + border * 2.0f;
+		context.NextWindowData.MenuBarOffsetMinVal = ImVec2(
+			std::max({ style.WindowPadding.x, style.ItemSpacing.x, style.DisplaySafeAreaPadding.x }) + border,
+			safeAreaY + border * 2.0f);
+
+		bool visible;
+		{
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+			const SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(2); });
+			visible = ImGui::BeginViewportSideBar("##MainMenuBar", viewport, ImGuiDir_Up, height,
+				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar);
+		}
+		context.NextWindowData.MenuBarOffsetMinVal = ImVec2(0.0f, 0.0f);
+		if (!visible) {
+			ImGui::End();
+			return false;
+		}
+
+		auto* window = ImGui::GetCurrentWindow();
+		window->Flags &= ~ImGuiWindowFlags_NoSavedSettings;
+		window->DC.MenuBarOffset.y = safeAreaY + border;
+		ImGui::BeginMenuBar();
+		const ImRect outer = window->Rect();
+		ImRect inner = outer;
+		inner.Expand(-border);
+		if (border > 0.0f) {
+			const ImU32 color = ImGui::GetColorU32(ImGuiCol_Border);
+			auto* drawList = window->DrawList;
+			drawList->AddRectFilled(outer.Min, ImVec2(outer.Max.x, inner.Min.y), color);
+			drawList->AddRectFilled(ImVec2(outer.Min.x, inner.Max.y), outer.Max, color);
+			drawList->AddRectFilled(ImVec2(outer.Min.x, inner.Min.y), ImVec2(inner.Min.x, inner.Max.y), color);
+			drawList->AddRectFilled(ImVec2(inner.Max.x, inner.Min.y), ImVec2(outer.Max.x, inner.Max.y), color);
+		}
+		ImGui::PushClipRect(inner.Min, inner.Max, true);
+		return true;
+	}
+
 	// The editor can draw before globals are cached, so both fall back to the singleton.
 	RE::Calendar* GetCalendar()
 	{
@@ -910,37 +956,149 @@ void EditorWindow::ShowObjectsWindow()
 	ImGui::End();
 }
 
+static ImVec2 GetViewportBorderInsets()
+{
+	const auto& style = ImGui::GetStyle();
+	return ImVec2(
+		style.WindowBorderSize > 0.0f ? std::ceil((style.WindowBorderSize + 1.0f) * 0.5f) : 0.0f,
+		std::max(0.0f, std::ceil((style.FrameBorderSize - 1.0f) * 0.5f)));
+}
+
 void EditorWindow::ShowViewportWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("viewport"), "Viewport"), nullptr, ImGuiWindowFlags_NoFocusOnAppearing);
+	const ImU32 borderHoveredColor = ImGui::GetColorU32(ImGuiCol_SeparatorHovered);
+	const ImU32 borderActiveColor = ImGui::GetColorU32(ImGuiCol_SeparatorActive);
+	const ImU32 gripHoveredColor = ImGui::GetColorU32(ImGuiCol_ResizeGripHovered);
+	const ImU32 gripActiveColor = ImGui::GetColorU32(ImGuiCol_ResizeGripActive);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+	ImGui::PushStyleVar(ImGuiStyleVar_ImageBorderSize, 0.0f);
+	ImGui::PushStyleColor(ImGuiCol_ResizeGrip, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_ResizeGripHovered, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_ResizeGripActive, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_SeparatorHovered, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_SeparatorActive, IM_COL32(0, 0, 0, 0));
+	const SKSE::stl::scope_exit restoreStyle([]() noexcept {
+		ImGui::PopStyleColor(5);
+		ImGui::PopStyleVar(2);
+	});
 
-	// The size of the image in ImGui																														   // Get the available space in the current window
-	ImVec2 availableSpace = ImGui::GetContentRegionAvail();
+	const char* windowName = T(TKEY("viewport"), "Viewport");
+	const ImVec2 borderInsets = GetViewportBorderInsets();
+	struct ViewportSizeConstraint
+	{
+		ImGuiWindow* window;
+		ImVec2 frameSize;
+	};
+	ViewportSizeConstraint constraint{
+		ImGui::FindWindowByName(windowName),
+		ImVec2(borderInsets.x * 2.0f, ImGui::GetFrameHeight() + borderInsets.x + borderInsets.y)
+	};
+	ImGui::SetNextWindowSizeConstraints(ImGui::GetStyle().WindowMinSize, ImVec2(FLT_MAX, FLT_MAX), [](ImGuiSizeCallbackData* data) {
+		const auto& constraint = *static_cast<const ViewportSizeConstraint*>(data->UserData);
+		const auto displaySize = ImGui::GetIO().DisplaySize;
+		const float aspectRatio = displaySize.x / displaySize.y;
+		float imageWidth = data->DesiredSize.x - constraint.frameSize.x;
+		const float imageHeight = data->DesiredSize.y - constraint.frameSize.y;
+		if (auto* window = constraint.window) {
+			const ImGuiID activeID = ImGui::GetActiveID();
+			if (activeID == ImGui::GetWindowResizeBorderID(window, ImGuiDir_Up) || activeID == ImGui::GetWindowResizeBorderID(window, ImGuiDir_Down)) {
+				imageWidth = imageHeight * aspectRatio;
+			} else if (activeID == ImGui::GetWindowResizeCornerID(window, 0) || activeID == ImGui::GetWindowResizeCornerID(window, 1)) {
+				const float aspectRatioSquared = aspectRatio * aspectRatio;
+				imageWidth = (imageWidth * aspectRatioSquared + imageHeight * aspectRatio) / (aspectRatioSquared + 1.0f);
+			}
+		}
+		const auto minSize = ImGui::GetStyle().WindowMinSize;
+		const float minHeight = std::max(minSize.y, ImGui::GetFrameHeight() + std::max(0.0f, ImGui::GetStyle().WindowRounding - 1.0f));
+		const float minWidth = std::ceil(std::max(minSize.x, (minHeight - constraint.frameSize.y) * aspectRatio + constraint.frameSize.x));
+		data->DesiredSize.x = std::max(std::round(imageWidth + constraint.frameSize.x), minWidth);
+		data->DesiredSize.y = std::round((data->DesiredSize.x - constraint.frameSize.x) / aspectRatio + constraint.frameSize.y); }, &constraint);
 
-	// Calculate aspect ratio of the image
-	float aspectRatio = ImGui::GetIO().DisplaySize.x / ImGui::GetIO().DisplaySize.y;
+	const bool visible = Util::BeginWithRoundedClose(windowName, nullptr,
+		ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+	const SKSE::stl::scope_exit endWindow([]() noexcept { ImGui::End(); });
+	if (!visible)
+		return;
 
-	// Determine the size to fit while preserving the aspect ratio
-	ImVec2 imageSize;
-	if (availableSpace.x / availableSpace.y < aspectRatio) {
-		// Fit width
-		imageSize.x = availableSpace.x;
-		imageSize.y = availableSpace.x / aspectRatio;
-	} else {
-		// Fit height
-		imageSize.y = availableSpace.y;
-		imageSize.x = availableSpace.y * aspectRatio;
+	auto* window = ImGui::GetCurrentWindow();
+	auto* drawList = ImGui::GetWindowDrawList();
+	ImRect imageRect = window->InnerRect;
+	if (!window->DockIsActive) {
+		imageRect.Min.x += borderInsets.x;
+		imageRect.Min.y += borderInsets.y;
+		imageRect.Max.x -= borderInsets.x;
+		imageRect.Max.y -= borderInsets.x;
 	}
+	ImRect clipRect = imageRect;
+	clipRect.ClipWith(window->OuterRectClipped);
+	ImGui::PushClipRect(clipRect.Min, clipRect.Max, false);
+	const SKSE::stl::scope_exit restoreClip([]() noexcept { ImGui::PopClipRect(); });
+	if (window->DockIsActive) {
+		const auto displaySize = ImGui::GetIO().DisplaySize;
+		const float aspectRatio = displaySize.x / displaySize.y;
+		const float imageWidth = std::min(imageRect.GetWidth(), imageRect.GetHeight() * aspectRatio);
+		imageRect.Max = ImVec2(imageRect.Min.x + imageWidth, imageRect.Min.y + imageWidth / aspectRatio);
+		drawList->AddRectFilled(window->InnerRect.Min, window->InnerRect.Max, ImGui::GetColorU32(ImGuiCol_WindowBg));
+	}
+	ImGui::SetCursorScreenPos(imageRect.Min);
+	const ImVec2 imageSize = imageRect.GetSize();
 
 	if (tempTexture && tempTexture->srv) {
 		// Opaque draw: the preview SRV is a render target with non-1 alpha, which a plain
 		// ImGui::Image would show as a transparency mask (a cutout through the HMD in VR).
 		Util::Subrect::ImageOpaque(tempTexture->srv.get(), imageSize);
 	} else {
+		drawList->AddRectFilled(imageRect.Min, imageRect.Max, ImGui::GetColorU32(ImGuiCol_WindowBg));
 		ImGui::TextDisabled("%s", T(TKEY("viewport_unavailable"), "Viewport unavailable"));
 	}
 
-	ImGui::End();
+	if (!window->DockIsActive) {
+		const ImRect hostRect = window->Viewport->GetMainRect();
+		drawList->PushClipRect(hostRect.Min, hostRect.Max);
+		const SKSE::stl::scope_exit restoreBorderClip([drawList]() noexcept { drawList->PopClipRect(); });
+		if (window->WindowBorderSize > 0.0f)
+			drawList->AddRect(window->Pos, window->Rect().Max, ImGui::GetColorU32(ImGuiCol_Border), window->WindowRounding, ImDrawFlags_RoundCornersTop, window->WindowBorderSize);
+		const bool borderHeld = window->ResizeBorderHeld != -1;
+		const int resizeBorder = borderHeld ? window->ResizeBorderHeld : window->ResizeBorderHovered;
+		if (resizeBorder != -1) {
+			constexpr float minResizeBorderThickness = 2.0f;
+			const float rounding = window->WindowRounding;
+			const ImVec2 borderMin(window->Pos.x + 0.5f, window->Pos.y + 0.5f);
+			const ImVec2 borderMax(window->Rect().Max.x - 0.5f, window->Rect().Max.y - 0.5f);
+			const ImVec2 topLeftCenter(borderMin.x + rounding, borderMin.y + rounding);
+			const ImVec2 topRightCenter(borderMax.x - rounding, borderMin.y + rounding);
+			switch (resizeBorder) {
+			case ImGuiDir_Left:
+				drawList->PathLineTo(ImVec2(borderMin.x, borderMax.y));
+				drawList->PathArcTo(topLeftCenter, rounding, IM_PI, IM_PI * 1.25f);
+				break;
+			case ImGuiDir_Right:
+				drawList->PathArcTo(topRightCenter, rounding, -IM_PI * 0.25f, 0.0f);
+				drawList->PathLineTo(ImVec2(borderMax.x, borderMax.y));
+				break;
+			case ImGuiDir_Up:
+				drawList->PathArcTo(topLeftCenter, rounding, IM_PI * 1.25f, IM_PI * 1.5f);
+				drawList->PathArcTo(topRightCenter, rounding, IM_PI * 1.5f, IM_PI * 1.75f);
+				break;
+			case ImGuiDir_Down:
+				drawList->PathLineTo(ImVec2(borderMin.x, borderMax.y));
+				drawList->PathLineTo(borderMax);
+				break;
+			}
+			drawList->PathStroke(borderHeld ? borderActiveColor : borderHoveredColor, ImDrawFlags_None, std::max(minResizeBorderThickness, window->WindowBorderSize));
+		}
+		for (int cornerIndex = 0; cornerIndex < 2; ++cornerIndex) {
+			const ImGuiID cornerID = ImGui::GetWindowResizeCornerID(window, cornerIndex);
+			const bool held = ImGui::GetActiveID() == cornerID;
+			if (!held && ImGui::GetHoveredID() != cornerID)
+				continue;
+			const ImU32 color = held ? gripActiveColor : gripHoveredColor;
+			const float gripSize = ImGui::GetFontSize();
+			const ImVec2 corner(cornerIndex == 0 ? window->Rect().Max.x : window->Pos.x, window->Rect().Max.y);
+			const float direction = cornerIndex == 0 ? -1.0f : 1.0f;
+			drawList->AddTriangleFilled(corner, ImVec2(corner.x + direction * gripSize, corner.y), ImVec2(corner.x, corner.y - gripSize), color);
+		}
+	}
 }
 
 void EditorWindow::ShowWidgetWindow()
@@ -987,14 +1145,9 @@ void EditorWindow::RenderUI()
 		}
 	}
 
-	if (ImGui::BeginMainMenuBar()) {
-		// Tighten bottom clip rect to prevent content bleeding over the bottom border
-		{
-			auto* window = ImGui::GetCurrentWindowRead();
-			float borderInset = std::ceil(window->WindowBorderSize * 0.5f);
-			ImGui::PushClipRect(window->ClipRect.Min,
-				ImVec2(window->ClipRect.Max.x, window->ClipRect.Max.y - borderInset), true);
-		}
+	float menuBarHeight = 0.0f;
+	if (BeginEditorMenuBar()) {
+		menuBarHeight = ImGui::GetWindowSize().y;
 
 		if (ImGui::BeginMenu(T(TKEY("file"), "File"))) {
 			if (ImGui::MenuItem(T(TKEY("save_all_open_widgets"), "Save All Open Widgets"), "Ctrl+S")) {
@@ -1187,18 +1340,18 @@ void EditorWindow::RenderUI()
 		const float cursorY = ImGui::GetCursorScreenPos().y;
 		const float closeButtonSize = ImGui::GetFrameHeight();
 		const float& itemSpacing = ImGui::GetStyle().ItemSpacing.x;
-		const float sliderWidth = kMenuBarSliderWidth * scale;
+		const float sliderWidth = std::floor(kMenuBarSliderWidth * scale);
+		const float closeButtonSpacing = std::round(ThemeManager::Constants::BUTTON_SPACING * scale);
+		const float frameBorderOutset = std::max(0.0f, std::ceil((ImGui::GetStyle().FrameBorderSize - 1.0f) * 0.5f));
 
 		// Measure right-side elements to compute positions right-to-left
-		constexpr float kCloseButtonInset = 3.0f;
-		float rightCursor = clipRight - kCloseButtonInset * scale;
+		constexpr float kCloseButtonRightSpacingAdjustment = 2.0f;
+		float rightCursor = clipRight - closeButtonSpacing - frameBorderOutset + std::round(kCloseButtonRightSpacingAdjustment * scale);
 
-		// X button
+		// Time slider and close button
 		rightCursor -= closeButtonSize;
 		const float xButtonX = rightCursor;
-
-		// Time slider
-		rightCursor -= itemSpacing + sliderWidth;
+		rightCursor -= closeButtonSpacing + frameBorderOutset * 2.0f + sliderWidth;
 		const float sliderX = rightCursor;
 
 		// Period text
@@ -1235,7 +1388,7 @@ void EditorWindow::RenderUI()
 		char previewStatusBuf[128] = {};
 		bool showPreviewStatus = previewMode != PreviewMode::None;
 		if (showPreviewStatus) {
-			std::string hotkey = Util::Input::KeyIdToString(menu->GetSettings().CSEditorToggleKey);
+			std::string hotkey = Util::Input::KeyIdToString(menu->GetSettings().ToggleKey);
 			if (previewMode == PreviewMode::FreeCamera)
 				std::snprintf(previewStatusBuf, sizeof(previewStatusBuf), T(TKEY("preview_free_camera"), " [ %s ] FREE CAMERA (Speed: %.0f)"), hotkey.c_str(), flySpeed);
 			else if (previewMode == PreviewMode::FreeCameraLocked)
@@ -1346,22 +1499,11 @@ void EditorWindow::RenderUI()
 
 		// Close button
 		ImGui::SetCursorScreenPos(ImVec2(xButtonX, cursorY));
-		if (Util::ErrorButton("X", ImVec2(closeButtonSize, closeButtonSize)))
+		if (Util::ErrorTextButton("X", ImVec2(closeButtonSize, closeButtonSize)))
 			open = false;
 		Util::AddTooltip(T(TKEY("close_cs_editor"), "Close OS Editor (Esc)"));
 
-		ImGui::PopClipRect();  // End bottom-border clip rect
-
-		// Redraw the menu bar border on top of all content so elements appear behind it
-		{
-			auto* window = ImGui::GetCurrentWindowRead();
-			const float border = ImGui::GetStyle().WindowBorderSize;
-			if (window && border > 0.0f) {
-				ImU32 borderCol = ImGui::GetColorU32(ImGuiCol_Border);
-				window->DrawList->AddRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y), borderCol, 0.0f, 0, border);
-			}
-		}
-
+		ImGui::PopClipRect();
 		ImGui::EndMainMenuBar();
 	}
 
@@ -1372,7 +1514,6 @@ void EditorWindow::RenderUI()
 	auto height = ImGui::GetIO().DisplaySize.y;
 	const float scale = Util::GetUIScale();
 	const float pad = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * scale;
-	const float menuBarHeight = ImGui::GetFrameHeight();
 	const float availableWidth = width - pad * 3.0f;  // left pad + gap + right pad
 	const float availableHeight = (height - menuBarHeight - pad * 2.0f) * 0.85f;
 	const auto layoutCond = resetLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
@@ -1387,8 +1528,9 @@ void EditorWindow::RenderUI()
 	if (IsViewportActive()) {
 		// Size viewport height to match game aspect ratio so the preview fits snugly
 		const float aspectRatio = width / height;
-		const float imageHeight = viewportWidth / aspectRatio;
-		const float chromeHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+		const ImVec2 borderInsets = GetViewportBorderInsets();
+		const float imageHeight = (viewportWidth - borderInsets.x * 2.0f) / aspectRatio;
+		const float chromeHeight = ImGui::GetFrameHeight() + borderInsets.x + borderInsets.y;
 		const float viewportHeight = imageHeight + chromeHeight;
 		ImGui::SetNextWindowSize(ImVec2(viewportWidth, viewportHeight), layoutCond);
 		ImGui::SetNextWindowPos(ImVec2(pad + browserWidth + pad, menuBarHeight + pad), layoutCond);

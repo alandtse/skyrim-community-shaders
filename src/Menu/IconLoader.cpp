@@ -7,20 +7,28 @@
 #include "Utils/D3D.h"
 #include "Utils/FileSystem.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <stb_image.h>
 #include <thread>
 
 namespace Util
 {
-	bool LoadTextureFromFile(ID3D11Device* device, const char* filename, ID3D11ShaderResourceView** out_srv, ImVec2& out_size)
+	bool LoadTextureFromFile(ID3D11Device* device, const char* filename, ID3D11ShaderResourceView** out_srv, ImVec2& out_size, bool alphaMask)
 	{
 		int image_width = 0;
 		int image_height = 0;
 		unsigned char* image_data = stbi_load(filename, &image_width, &image_height, nullptr, 4);
 		if (image_data == nullptr) {
 			return false;
+		}
+		if (alphaMask) {
+			const size_t pixelCount = static_cast<size_t>(image_width) * image_height;
+			// Transparent mask pixels must stay white to prevent dark filtering fringes.
+			for (size_t pixel = 0; pixel < pixelCount; ++pixel)
+				std::fill_n(image_data + pixel * STBI_rgb_alpha, STBI_rgb, std::numeric_limits<stbi_uc>::max());
 		}
 
 		D3D11_TEXTURE2D_DESC desc = {};
@@ -86,6 +94,7 @@ namespace Util::IconLoader
 		std::string filename;
 		ID3D11ShaderResourceView** texture;
 		ImVec2* size;
+		bool alphaMask = false;
 	};
 
 	std::vector<IconDefinition> GetIconDefinitions(Menu* menu)
@@ -96,6 +105,7 @@ namespace Util::IconLoader
 		const char* logoPath = useMonochromeLogo ? "Community Shaders Logo\\Monochrome\\cs-logo.png" : "Community Shaders Logo\\cs-logo.png";
 
 		return {
+			{ std::string(iconFolder) + "\\sidebar.png", &menu->uiIcons.sidebar.texture, &menu->uiIcons.sidebar.size, true },
 			{ std::string(iconFolder) + "\\save-settings.png", &menu->uiIcons.saveSettings.texture, &menu->uiIcons.saveSettings.size },
 			{ std::string(iconFolder) + "\\load-settings.png", &menu->uiIcons.loadSettings.texture, &menu->uiIcons.loadSettings.size },
 			{ std::string(iconFolder) + "\\clear-cache.png", &menu->uiIcons.clearCache.texture, &menu->uiIcons.clearCache.size },
@@ -214,7 +224,7 @@ namespace Util::IconLoader
 
 		for (const auto& iconDef : iconDefs) {
 			std::string fullPath = basePath + iconDef.filename;
-			if (Util::LoadTextureFromFile(device, fullPath.c_str(), iconDef.texture, *iconDef.size)) {
+			if (Util::LoadTextureFromFile(device, fullPath.c_str(), iconDef.texture, *iconDef.size, iconDef.alphaMask)) {
 				iconsLoaded++;
 				anyIconLoaded = true;
 			} else {
@@ -225,7 +235,7 @@ namespace Util::IconLoader
 					if (pos != std::string::npos) {
 						fallbackPath.erase(pos, 11);  // Remove "\Monochrome"
 					}
-					if (Util::LoadTextureFromFile(device, fallbackPath.c_str(), iconDef.texture, *iconDef.size)) {
+					if (Util::LoadTextureFromFile(device, fallbackPath.c_str(), iconDef.texture, *iconDef.size, iconDef.alphaMask)) {
 						iconsLoaded++;
 						anyIconLoaded = true;
 					} else {

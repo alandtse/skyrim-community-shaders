@@ -465,10 +465,12 @@ namespace Util
 
 	// Icon loading functions
 	// `device` must remain alive for the SRV lifetime. Caller owns *out_srv and must `Release()` it.
+	/** @brief Loads an RGBA texture, optionally using its alpha as a white tintable mask. */
 	bool LoadTextureFromFile(ID3D11Device* device,
 		const char* filename,
 		ID3D11ShaderResourceView** out_srv,
-		ImVec2& out_size);
+		ImVec2& out_size,
+		bool alphaMask = false);
 
 	bool LoadDDSTextureFromFile(ID3D11Device* device,
 		const char* filename,

@@ -189,7 +189,7 @@ float WindScalar(float basis, float timer)
 		const float4 clipC = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dvC, 1.0));
 		if (clipC.w > 0.0) {
 			float2 uv = (clipC.xy / clipC.w) * float2(0.5, -0.5) + 0.5;
-			// Same split as Stereo::ConvertToStereoUV; inlined since this CS has no VR permutation to gate an include on.
+			// Same split as Stereo::ConvertToStereoUV; inlined rather than pulling in the include for one line.
 			if (EyeCount > 1)
 				uv.x = (uv.x + (float)eyeIndex) * 0.5;
 			const float2 tc = uv * HiZSize;
@@ -284,8 +284,9 @@ float WindScalar(float basis, float timer)
 	// Scaled by 4 so it clears the collision and far-shading flags already packed into e1.w.
 	const float4 e1Tier = float4(e1.xyz, e1.w + 4.0 * (float)tier);
 
-	// eyeSlotBase must match the StartInstanceLocation baked into eye 1's args block
-	// (GrassOptimizations.cpp) so the draw's own SV_InstanceID lines up with it.
+	// eyeSlotBase must match the StartInstanceLocation baked into eye 1's args block (GrassOptimizations.cpp)
+	// so the draw's vertex stream lines up. The VS reads InstanceExtras with its own eye slot base
+	// (GrassOptimizationsEyeCB) since SV_InstanceID, unlike the vertex stream, excludes StartInstanceLocation.
 	static const uint ARGS_BLOCK_STRIDE = 32;
 	const uint eyeByteOffset = eyeIndex * ARGS_BLOCK_STRIDE;
 	const uint eyeSlotBase = eyeIndex * OutputCapacityPerEye;

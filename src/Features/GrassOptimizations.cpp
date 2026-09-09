@@ -900,9 +900,9 @@ RE::BSMultiStreamInstanceTriShape* GrassOptimizations::Hooks::LoadGrassType::thu
 	return shape;
 }
 
-static void SetDrawEyeIndex(GrassOptimizations& self, ID3D11DeviceContext* ctx, uint32_t eyeIndex)
+static void SetDrawEyeIndex(GrassOptimizations& self, ID3D11DeviceContext* ctx, uint32_t eyeIndex, uint32_t capacityPerEye)
 {
-	self.eyeIndexCB->Update(GrassOptimizations::EyeIndexCB{ eyeIndex, {} });
+	self.eyeIndexCB->Update(GrassOptimizations::EyeIndexCB{ eyeIndex, eyeIndex * capacityPerEye, {} });
 	ID3D11Buffer* cb = self.eyeIndexCB->CB();
 	// b7 matches GrassOptimizationsEyeCB in RunGrass.hlsl (free there: cb7 only exists on the vanilla path).
 	ctx->VSSetConstantBuffers(7, 1, &cb);
@@ -996,9 +996,10 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		const D3D11_BOX argBox{ argsByteOffset, 0, 0, argsByteOffset + sizeof(uint32_t), 1, 1 };
 		ctx->UpdateSubresource(b->argsBuf, 0, &argBox, &indexCount, 0, 0);
 		if (globals::game::isVR) {
-			// Eye 1 shares the same mesh, so its IndexCountPerInstance matches eye 0's; its
-			// StartInstanceLocation offsets into the second half of the doubled Compacted/Extras
-			// buffers (see CreateBucketCullScratch), so its draw naturally reads eye 1's survivors.
+			// Eye 1 shares the same mesh, so its IndexCountPerInstance matches eye 0's. StartInstanceLocation
+			// offsets the per-instance vertex stream into the second half of the doubled Compacted buffer
+			// (see CreateBucketCullScratch); it does NOT offset SV_InstanceID, so the VS's InstanceExtras
+			// read still needs EyeIndexCB::eyeSlotBase (set in SetDrawEyeIndex) added explicitly.
 			const uint32_t eye1Offset = ArgsByteOffsetForEye(1);
 			const D3D11_BOX eye1IndexCountBox{ eye1Offset, 0, 0, eye1Offset + sizeof(uint32_t), 1, 1 };
 			ctx->UpdateSubresource(b->argsBuf, 0, &eye1IndexCountBox, &indexCount, 0, 0);
@@ -1036,10 +1037,10 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 	ctx->VSSetShaderResources(2, 1, &b->extrasSRV);
 	if (globals::game::isVR)
-		SetDrawEyeIndex(self, ctx, 0);
+		SetDrawEyeIndex(self, ctx, 0, b->capacityInstances);
 	ctx->DrawIndexedInstancedIndirect(b->argsBuf, argsByteOffset);
 	if (globals::game::isVR) {
-		SetDrawEyeIndex(self, ctx, 1);
+		SetDrawEyeIndex(self, ctx, 1, b->capacityInstances);
 		ctx->DrawIndexedInstancedIndirect(b->argsBuf, ArgsByteOffsetForEye(1));
 	}
 
@@ -1087,10 +1088,10 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 		ctx->VSSetShaderResources(2, 1, &bin.extrasSRV);
 		if (globals::game::isVR)
-			SetDrawEyeIndex(self, ctx, 0);
+			SetDrawEyeIndex(self, ctx, 0, bin.capacityInstances);
 		ctx->DrawIndexedInstancedIndirect(bin.argsBuf, argsByteOffset);
 		if (globals::game::isVR) {
-			SetDrawEyeIndex(self, ctx, 1);
+			SetDrawEyeIndex(self, ctx, 1, bin.capacityInstances);
 			ctx->DrawIndexedInstancedIndirect(bin.argsBuf, ArgsByteOffsetForEye(1));
 		}
 	}

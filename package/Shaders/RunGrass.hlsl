@@ -122,10 +122,13 @@ StructuredBuffer<float4> InstanceExtras : register(t2);
 
 // GRASS_OPTIMIZATIONS draws each eye separately (its survivor lists are already split into
 // per-eye halves by the culling CS), so it signals the eye per draw instead of via SV_InstanceID parity.
+// EyeSlotBase must be added to instanceID manually: StartInstanceLocation advances the per-instance
+// vertex stream but NOT SV_InstanceID, so InstanceExtras (an SRV, not a vertex stream) needs it explicitly.
 cbuffer GrassOptimizationsEyeCB : register(b7)
 {
 	uint CurrentEyeIndex;
-	float3 _padEye;
+	uint EyeSlotBase;
+	float2 _padEye;
 }
 #	else
 cbuffer cb7 : register(b7)
@@ -188,8 +191,9 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 {
 	VS_OUTPUT vsout = (VS_OUTPUT)0;
 
-	const float4 e0 = InstanceExtras[instanceID * 2 + 0];
-	const float4 e1 = InstanceExtras[instanceID * 2 + 1];
+	const uint extrasSlot = instanceID + EyeSlotBase;
+	const float4 e0 = InstanceExtras[extrasSlot * 2 + 0];
+	const float4 e1 = InstanceExtras[extrasSlot * 2 + 1];
 	vsout.IsComplex = e0.w;
 	vsout.TexCoord = input.TexCoord.xy;
 

@@ -138,11 +138,14 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(CullBucketCB);
 
-	// Mirrors RunGrass.hlsl's GrassOptimizationsEyeCB.
+	// Mirrors RunGrass.hlsl's GrassOptimizationsEyeCB. eyeSlotBase lets the VS read the right half of
+	// InstanceExtras: SV_InstanceID does not include the draw's StartInstanceLocation (only the
+	// per-instance vertex stream is auto-advanced by it), so the SRV index needs it added explicitly.
 	struct alignas(16) EyeIndexCB
 	{
 		uint32_t eyeIndex;
-		float pad[3];
+		uint32_t eyeSlotBase;
+		float pad[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(EyeIndexCB);
 

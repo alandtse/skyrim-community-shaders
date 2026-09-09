@@ -1,6 +1,7 @@
 #include "Game.h"
 
 #include <atomic>
+#include <mutex>
 
 #include "Globals.h"
 #include "State.h"
@@ -418,6 +419,7 @@ namespace Util::EnvironmentControls
 {
 	namespace
 	{
+		std::recursive_mutex environmentMutex;
 		std::atomic<RE::TESWeather*> lockedWeather{ nullptr };
 		std::atomic_bool weatherLockAvailable{ false };
 		bool timePaused = false;
@@ -507,6 +509,7 @@ namespace Util::EnvironmentControls
 
 	void MaintainLocks()
 	{
+		std::scoped_lock lock(environmentMutex);
 		if (auto* weather = GetLockedWeather()) {
 			if (auto* sky = globals::game::sky) {
 				const bool releasePending = sky->flags.any(RE::Sky::Flags::kReleaseWeatherOverride);
@@ -530,6 +533,7 @@ namespace Util::EnvironmentControls
 
 	void SetLockedWeather(RE::TESWeather* weather)
 	{
+		std::scoped_lock lock(environmentMutex);
 		EndGameHourScrub();
 		StopPreview();
 		ApplyWeatherLock(weather);
@@ -538,6 +542,7 @@ namespace Util::EnvironmentControls
 
 	void ChangeWeather(RE::TESWeather* weather, bool instant)
 	{
+		std::scoped_lock lock(environmentMutex);
 		auto* sky = globals::game::sky;
 		if (!sky || !weather)
 			return;
@@ -556,6 +561,7 @@ namespace Util::EnvironmentControls
 
 	void ResetWeather()
 	{
+		std::scoped_lock lock(environmentMutex);
 		SetLockedWeather(nullptr);
 		if (auto* sky = globals::game::sky)
 			sky->ResetWeather();
@@ -563,6 +569,7 @@ namespace Util::EnvironmentControls
 
 	void RefreshWeather(RE::TESWeather* weather)
 	{
+		std::scoped_lock lock(environmentMutex);
 		if (auto* sky = globals::game::sky; sky && weather && sky->currentWeather == weather) {
 			sky->ForceWeather(weather, true);
 			if (!GetLockedWeather())
@@ -574,6 +581,7 @@ namespace Util::EnvironmentControls
 
 	void BeginGameHourScrub()
 	{
+		std::scoped_lock lock(environmentMutex);
 		auto* calendar = globals::game::calendar;
 		if (scrubPreviousWeather || timeRunningForMenu || !calendar || !calendar->gameHour)
 			return;
@@ -594,6 +602,7 @@ namespace Util::EnvironmentControls
 
 	void EndGameHourScrub()
 	{
+		std::scoped_lock lock(environmentMutex);
 		if (!scrubPreviousWeather)
 			return;
 		auto* previousWeather = *scrubPreviousWeather;
@@ -604,6 +613,7 @@ namespace Util::EnvironmentControls
 
 	bool SetGameHour(float hour, bool synchronize)
 	{
+		std::scoped_lock lock(environmentMutex);
 		auto* calendar = globals::game::calendar;
 		if (!calendar || !calendar->gameHour || !std::isfinite(hour) || hour < 0.0f || hour >= kHoursPerDay)
 			return false;
@@ -616,6 +626,7 @@ namespace Util::EnvironmentControls
 
 	void SetTimeScale(float timeScale)
 	{
+		std::scoped_lock lock(environmentMutex);
 		auto* calendar = globals::game::calendar;
 		if (!calendar || !calendar->timeScale || !std::isfinite(timeScale) || timeScale < 0.0f)
 			return;
@@ -628,6 +639,7 @@ namespace Util::EnvironmentControls
 
 	bool IsTimePaused()
 	{
+		std::scoped_lock lock(environmentMutex);
 		if (auto* calendar = globals::game::calendar; calendar && calendar->timeScale && calendar->timeScale->value > 0.0f)
 			timePaused = false;
 		return timePaused;
@@ -635,11 +647,13 @@ namespace Util::EnvironmentControls
 
 	float GetSavedTimeScale()
 	{
+		std::scoped_lock lock(environmentMutex);
 		return savedTimeScale;
 	}
 
 	void PauseTime()
 	{
+		std::scoped_lock lock(environmentMutex);
 		StopPreview();
 		if (timeRunningForMenu)
 			restorePauseAfterMenu = true;
@@ -649,6 +663,7 @@ namespace Util::EnvironmentControls
 
 	void ResumeTime()
 	{
+		std::scoped_lock lock(environmentMutex);
 		StopPreview();
 		restorePauseAfterMenu = false;
 		ResumeTimeInternal();
@@ -656,11 +671,13 @@ namespace Util::EnvironmentControls
 
 	void ResetTimeScale()
 	{
+		std::scoped_lock lock(environmentMutex);
 		SetTimeScale(kDefaultTimeScale);
 	}
 
 	void SetTimeRunningForMenu(bool needsRunningTime)
 	{
+		std::scoped_lock lock(environmentMutex);
 		auto* calendar = globals::game::calendar;
 		if (!calendar || !calendar->timeScale || timeRunningForMenu == needsRunningTime)
 			return;
@@ -685,6 +702,7 @@ namespace Util::EnvironmentControls
 
 	bool StartPreview(RE::TESWeather* weather, std::optional<float> hour)
 	{
+		std::scoped_lock lock(environmentMutex);
 		auto* calendar = globals::game::calendar;
 		if (!weather && hour)
 			weather = GetWeatherForTimeChange();
@@ -717,6 +735,7 @@ namespace Util::EnvironmentControls
 
 	void StopPreview()
 	{
+		std::scoped_lock lock(environmentMutex);
 		if (!preview)
 			return;
 		const auto previous = *preview;
@@ -730,6 +749,7 @@ namespace Util::EnvironmentControls
 
 	bool IsPreviewActive()
 	{
+		std::scoped_lock lock(environmentMutex);
 		return preview.has_value();
 	}
 }

@@ -938,7 +938,7 @@ std::filesystem::path SettingsOverrideManager::GetUserOverridesDirectory() const
 
 bool SettingsOverrideManager::LoadUserOverride(const std::string& featureName, json& featureJson)
 {
-	if (!enabled || featureName.empty()) {
+	if (!enabled || !discovered || featureName.empty()) {
 		return false;
 	}
 

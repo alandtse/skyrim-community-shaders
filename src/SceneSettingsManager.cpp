@@ -2130,7 +2130,7 @@ static bool WriteGroupedOverwriteFile(const std::filesystem::path& allowedRoot,
 	const json& extraMetadata = json::object())
 {
 	if (path.lexically_normal() == allowedRoot.lexically_normal() ||
-		!Util::PathHelpers::IsPathWithinDirectory(allowedRoot, path)) {
+		!Util::PathHelpers::IsPathLexicallyWithinDirectory(allowedRoot, path)) {
 		logger::error("[SceneSettings] Refusing to write overwrite outside '{}': {}",
 			allowedRoot.string(), path.string());
 		return false;
@@ -2467,7 +2467,7 @@ void SceneSettingsManager::DeleteEntryLayer(EntrySource source, std::optional<Sc
 					return GetLocationOverwritePath(config.type, config.formKey, entry);
 				});
 		for (const auto& path : backingFiles) {
-			if (!Util::PathHelpers::IsPathWithinDirectory(Util::PathHelpers::GetSceneSettingsPath(), path)) {
+			if (!Util::PathHelpers::IsPathLexicallyWithinDirectory(Util::PathHelpers::GetSceneSettingsPath(), path)) {
 				logger::error("[SceneSettings] Refusing to delete overwrite outside the scene settings directory: {}", path.string());
 				continue;
 			}

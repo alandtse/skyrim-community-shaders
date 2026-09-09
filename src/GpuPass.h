@@ -82,8 +82,8 @@ private:
 		ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { CS_DETAIL_CONCAT(cs_gpu_pass_cond_, __LINE__) ? std::string_view(name1) : std::string_view(name2) }
 #endif
 
-#define CS_GPU_PASS_DYNAMIC(name)                                                            \
-	const std::string_view CS_DETAIL_CONCAT(cs_gpu_pass_name_, __LINE__) = (name);           \
-	[[maybe_unused]] static const bool CS_DETAIL_CONCAT(cs_gpu_pass_capability_, __LINE__) = \
-		GpuPassCapabilities::Register(CS_DETAIL_CONCAT(cs_gpu_pass_name_, __LINE__));        \
+#define CS_GPU_PASS_DYNAMIC(name)                                                     \
+	const auto& CS_DETAIL_CONCAT(cs_gpu_pass_name_, __LINE__) = (name);               \
+	[[maybe_unused]] const bool CS_DETAIL_CONCAT(cs_gpu_pass_capability_, __LINE__) = \
+		GpuPassCapabilities::Register(CS_DETAIL_CONCAT(cs_gpu_pass_name_, __LINE__)); \
 	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { CS_DETAIL_CONCAT(cs_gpu_pass_name_, __LINE__) }

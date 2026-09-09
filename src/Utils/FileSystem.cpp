@@ -253,20 +253,21 @@ namespace Util
 			return result;
 		}
 
-		bool IsPathWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path)
+		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path)
 		{
+			if (directory.empty() || path.empty())
+				return false;
 			std::error_code ec;
-			const auto resolvedDirectory = std::filesystem::weakly_canonical(directory, ec);
+			const auto absoluteDirectory = std::filesystem::absolute(directory, ec);
 			if (ec)
 				return false;
 
-			const auto resolvedPath = std::filesystem::weakly_canonical(path, ec);
+			const auto absolutePath = std::filesystem::absolute(path, ec);
 			if (ec)
 				return false;
 
-			const auto mismatch = std::mismatch(
-				resolvedDirectory.begin(), resolvedDirectory.end(), resolvedPath.begin(), resolvedPath.end());
-			return mismatch.first == resolvedDirectory.end();
+			const auto relative = absolutePath.lexically_normal().lexically_relative(absoluteDirectory.lexically_normal());
+			return !relative.empty() && *relative.begin() != "..";
 		}
 	}
 

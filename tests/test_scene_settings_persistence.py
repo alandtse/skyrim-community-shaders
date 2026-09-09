@@ -48,6 +48,8 @@ class SceneSettingsPersistenceTests(unittest.TestCase):
     def test_native_export_modes_and_scoped_deletion(self):
         manager = MANAGER_PATH.read_text(encoding="utf-8")
         header = (ROOT / "src/SceneSettingsManager.h").read_text(encoding="utf-8")
+        filesystem = (ROOT / "src/Utils/FileSystem.cpp").read_text(encoding="utf-8")
+        containment = braced(filesystem, "bool IsPathLexicallyWithinDirectory(")
         declarations = "\n".join([
             braced(header, "enum class TimeOfDayPeriod") + ";",
             braced(header, "enum class EntrySource") + ";",
@@ -105,10 +107,7 @@ template<class... Args> void warn(Args&&...) {}
 namespace Util::PathHelpers {
 std::filesystem::path root;
 std::filesystem::path GetSceneSettingsPath() { return root; }
-bool IsPathWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path) {
-    auto relative = path.lexically_normal().lexically_relative(directory.lexically_normal());
-    return !relative.empty() && *relative.begin() != "..";
-}
+CONTAINMENT
 }
 struct Feature {
     static Feature* FindFeatureByShortName(const std::string& name) {
@@ -173,6 +172,19 @@ int main(int argc, char** argv) {
     check(argc == 2, "Fixture directory required");
     const auto root = std::filesystem::path(argv[1]);
     Util::PathHelpers::root = root;
+    check(Util::PathHelpers::IsPathLexicallyWithinDirectory(root, root / "InteriorOnly/imported.json"),
+          "A discovered virtual path stays valid when its directory maps to another physical root");
+    check(Util::PathHelpers::IsPathLexicallyWithinDirectory(root / "", root / "Weather/../InteriorOnly/imported.json"),
+          "Normalize in-root traversal and trailing separators");
+    const auto outside = root.parent_path() / "outside.json";
+    std::ofstream(outside) << "{}";
+    for (const auto& rejected : { outside, root / "../outside.json", root.parent_path() / "fixtures-other/file.json" }) {
+        check(!Util::PathHelpers::IsPathLexicallyWithinDirectory(root, rejected), "Reject paths outside the logical root");
+        DeleteFiles({{ Context{}, { rejected } }}, std::nullopt);
+    }
+    check(std::filesystem::exists(outside), "Deletion must preserve out-of-root files");
+    check(!Util::PathHelpers::IsPathLexicallyWithinDirectory(root, {}) &&
+          !Util::PathHelpers::IsPathLexicallyWithinDirectory({}, root), "Reject empty paths");
     Manager::SettingEntry entry;
     entry.featureShortName = "Sample";
     entry.settingKey = "amount";
@@ -278,7 +290,7 @@ int main(int argc, char** argv) {
     check(unresolved["unknown"]["entries"] == json::array({9}), "Preserve unknown sections");
 }
 '''
-        for token, replacement in (("DECLARATIONS", declarations), ("HELPERS", helpers),
+        for token, replacement in (("DECLARATIONS", declarations), ("HELPERS", helpers), ("CONTAINMENT", containment),
                                    ("INVENTORY", inventory), ("DELETE_FILES", delete_files), ("CLEANUP", cleanup)):
             source = source.replace(token, replacement)
         includes = sorted((ROOT / "build/ALL/vcpkg_installed").glob("*/include/nlohmann/json.hpp"))
@@ -290,6 +302,15 @@ int main(int argc, char** argv) {
             executable = directory / ("scene_persistence.exe" if os.name == "nt" else "scene_persistence")
             fixtures = directory / "fixtures"
             fixtures.mkdir()
+            mod_directory = directory / "mod-scene-settings"
+            mod_directory.mkdir()
+            virtual_directory = fixtures / "InteriorOnly"
+            if os.name == "nt":
+                linked = subprocess.run(["cmd", "/c", "mklink", "/J", str(virtual_directory), str(mod_directory)],
+                                        capture_output=True, text=True)
+                self.assertEqual(linked.returncode, 0, linked.stdout + linked.stderr)
+            else:
+                virtual_directory.symlink_to(mod_directory, target_is_directory=True)
             cpp.write_text(source, encoding="utf-8")
             include = includes[0].parents[1]
             compiler = shutil.which("clang++") or shutil.which("g++")

@@ -191,8 +191,20 @@ int main() {
     write(first, {{"Strength", 3.0}, {"Toggle", false}, {"Vector", {3.0, 4.0}}, {"_metadata", {{"description", "Preserve me"}}}});
     write(second, {{"Strength", 4.0}, {"_metadata", {{"description", "Preserve me too"}}}});
     const auto globalBefore = read(global), firstBefore = read(first), secondBefore = read(second);
+    write(companion, {{"Strength", 8.0}});
+    write(globalCompanion, {{"General", {{"Value", 6.0}}}});
+    auto beforeDiscovery = base;
+    check(!manager->LoadUserOverride("Fixture", beforeDiscovery["Fixture Feature"]) &&
+          !manager->LoadUserOverride("Global", beforeDiscovery), "Companions cannot load before discovery");
+    check(beforeDiscovery == base, "Undiscovered companions leave normal settings unchanged");
     manager->CaptureBaseSettings(base);
     check(manager->DiscoverOverrides() == 3, "Discover fixture files");
+    check(manager->LoadUserOverride("Fixture", beforeDiscovery["Fixture Feature"]) &&
+          manager->LoadUserOverride("Global", beforeDiscovery), "Discovered companions load normally");
+    check(beforeDiscovery["Fixture Feature"]["Strength"] == 8.0 && beforeDiscovery["General"]["Value"] == 6.0,
+          "Discovered companions apply only installed overwrite-owned keys");
+    std::filesystem::remove(companion);
+    std::filesystem::remove(globalCompanion);
     const auto load = [&] {
         auto values = std::filesystem::exists(mainConfig) ? read(mainConfig) : base;
         manager->CaptureBaseSettings(values);
@@ -335,7 +347,7 @@ int main() {
         sanitize_start = filesystem.index("std::string SanitizeFileName(")
         sanitize_end = filesystem.index("\n\t\t}", sanitize_start) + len("\n\t\t}")
         source = source.replace("SANITIZE", filesystem[sanitize_start:sanitize_end])
-        source = source.replace("WITHIN", braced(filesystem, "bool IsPathWithinDirectory("))
+        source = source.replace("WITHIN", braced(filesystem, "bool IsPathLexicallyWithinDirectory("))
         source = source.replace("KEYS", without_includes(keys))
         scene_helpers = "\n".join(braced(scene, declaration) for declaration in (
             "bool IsCompatibleSceneSettingValue(", "bool ParseCatalogArrayIndex("))

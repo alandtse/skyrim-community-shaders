@@ -28,9 +28,17 @@ bool GpuPassCapabilities::Register(std::string_view passName)
 	if (separator == std::string_view::npos || separator == 0)
 		return false;
 
+	// The registry is append-only, so successful registrations remain valid on every thread.
+	thread_local std::set<std::string, std::less<>> registeredPrefixes;
+	const auto prefix = passName.substr(0, separator);
+	if (registeredPrefixes.contains(prefix))
+		return true;
+
 	auto& registry = GetGpuPassCapabilityRegistry();
 	std::scoped_lock lock(registry.mutex);
-	registry.featurePrefixes.emplace(passName.substr(0, separator));
+	if (!registry.featurePrefixes.contains(prefix))
+		registry.featurePrefixes.emplace(prefix);
+	registeredPrefixes.emplace(prefix);
 	return true;
 }
 

@@ -245,12 +245,12 @@ namespace Util
 		std::filesystem::path SafeRelative(const std::filesystem::path& path, const std::filesystem::path& base);
 
 		/**
-		 * Checks whether a path resolves within a directory without requiring either path to exist.
+		 * Checks logical containment without resolving virtual filesystem mappings or symlinks.
 		 * @param directory The containing directory
 		 * @param path The path to validate
-		 * @return true when the resolved path is the directory or one of its descendants
+		 * @return true when the normalized absolute path is the directory or one of its descendants
 		 */
-		bool IsPathWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path);
+		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path);
 
 	}
 

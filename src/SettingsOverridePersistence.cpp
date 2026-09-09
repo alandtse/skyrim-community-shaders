@@ -300,7 +300,7 @@ bool SettingsOverrideManager::ExportSettings(const std::string& modName, const s
 			return false;
 	const auto selected = Util::Settings::SelectSettingPaths(values, { settingPaths.begin(), settingPaths.end() });
 	const auto path = GetOverridesDirectory() / std::format("{}_{}.json", safeName, featureName);
-	if (selected.empty() || !Util::PathHelpers::IsPathWithinDirectory(GetOverridesDirectory(), path))
+	if (selected.empty() || !Util::PathHelpers::IsPathLexicallyWithinDirectory(GetOverridesDirectory(), path))
 		return false;
 	json document = json::object();
 	std::error_code error;

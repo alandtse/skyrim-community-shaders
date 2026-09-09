@@ -357,7 +357,10 @@ void GrassOptimizations::UpdateGrass()
 
 		const auto& vf = cam->GetRuntimeData2().viewFrustum;
 		// Not Renderer::GetScreenSize(): that reads VR's desktop preview resolution, not the HMD's (see State.cpp's screenSize comment).
-		const float screenH = globals::state->screenSize.y;
+		// Must match HiZPyramid::Build()'s ConvertToDynamic call: ProjScale feeds the HiZ mip-level
+		// selection in GrassCullingCS.hlsl, so using the undynamic screen height there over-culls
+		// grass as occluded whenever DLSS/FSR renders below display resolution.
+		const float screenH = Util::ConvertToDynamic(globals::state->screenSize).y;
 		cp.meshCostBias = settings.MeshCostBias;
 		cp.projScale = screenH / (2.0f * std::abs(vf.fTop));
 		cp.maxDistSq = maxDistSq;

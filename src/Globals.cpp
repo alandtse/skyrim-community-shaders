@@ -13,6 +13,7 @@
 #include "Features/FoliageLighting.h"
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
+#include "Features/GrassOptimizations.h"
 #include "Features/HDRDisplay.h"
 #include "Features/HairSpecular.h"
 #include "Features/HorizonFix.h"
@@ -74,6 +75,7 @@ namespace globals
 		GrassCollision grassCollision{};
 		GrassLighting grassLighting{};
 		FoliageLighting foliageLighting{};
+		GrassOptimizations grassOptimizations{};
 		IBL ibl{};
 		LightLimitFix lightLimitFix{};
 		LinearLighting linearLighting{};
@@ -183,6 +185,8 @@ namespace globals
 		REL::Relocation<const RE::NiRTTI*> NiBillboardNodeRTTI;
 		REL::Relocation<const RE::NiRTTI*> NiAlphaPropertyRTTI;
 		REL::Relocation<const RE::NiRTTI*> NiSourceTextureRTTI;
+		REL::Relocation<const RE::NiRTTI*> BSGrassShaderPropertyRTTI;
+		REL::Relocation<const RE::NiRTTI*> BSMultiStreamInstanceTriShapeRTTI;
 	}
 
 	State* state = nullptr;
@@ -250,6 +254,8 @@ namespace globals
 			NiBillboardNodeRTTI = { RE::NiBillboardNode::Ni_RTTI };
 			NiAlphaPropertyRTTI = { RE::NiAlphaProperty::Ni_RTTI };
 			NiSourceTextureRTTI = { RE::NiSourceTexture::Ni_RTTI };
+			BSGrassShaderPropertyRTTI = { RE::BSGrassShaderProperty::Ni_RTTI };
+			BSMultiStreamInstanceTriShapeRTTI = { RE::BSMultiStreamInstanceTriShape::Ni_RTTI };
 		}
 
 		d3d::device = reinterpret_cast<ID3D11Device*>(game::renderer->GetRuntimeData().forwarder);

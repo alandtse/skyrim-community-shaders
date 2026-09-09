@@ -11,9 +11,9 @@
 #	include "Features/Effects11.h"
 #endif
 #include "Features/ExponentialHeightFog.h"
-#include "Features/FeatureOverwrites.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
+#include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"

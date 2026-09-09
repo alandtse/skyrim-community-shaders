@@ -338,9 +338,9 @@ namespace
 		return result;
 	}
 
+	using Util::Settings::GetCatalogDisplayPath;
 	using Util::Settings::IsStructuralDisplayPart;
 	using Util::Settings::NormalizeDisplayPart;
-	using Util::Settings::GetCatalogDisplayPath;
 	std::vector<std::string> GetCatalogSelectorPath(const SceneSettingsCatalog::SettingMetadata& setting)
 	{
 		auto parts = SplitCatalogPath(setting.selectorPath);

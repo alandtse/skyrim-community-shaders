@@ -1696,6 +1696,9 @@ namespace SceneSettingsUI
 		bool toolbarOpen = false;
 		std::string pendingFeatureShortName;
 		Util::ConfirmationPopup replaceEditor;
+		Util::ConfirmationPopup replaceScene;
+		std::optional<FeatureSceneTargetState> pendingTarget;
+		bool saveFailed = false;
 		std::vector<SceneSettingsManager::SceneContextType> supportedTypes;
 		FeatureSceneTargetState edit;
 		CopyDestinationState destination;
@@ -2552,7 +2555,7 @@ namespace SceneSettingsUI
 					state.policy == SceneSettingsManager::CopyConflictPolicy::OverwriteExisting))
 				state.policy = SceneSettingsManager::CopyConflictPolicy::OverwriteExisting;
 		}
-		ImGui::BeginDisabled(state.compatibleCount == 0);
+		ImGui::BeginDisabled(state.compatibleCount == 0 || (selectSettings && manager->AreFeatureSceneEditActionsLocked()));
 		if (ImGui::Button(T("feature.scene_manager.copy.copy_selected", "Copy Selected Settings"), ImVec2(-FLT_MIN, 0.0f))) {
 			bool copied = false;
 			for (const auto& destination : state.destinations)
@@ -2784,17 +2787,17 @@ namespace SceneSettingsUI
 		       s_featurePageEditor.featureShortName == feature->GetShortName();
 	}
 
-	static bool FinishActiveFeatureSceneEdit(FeaturePageEditorState& state, bool storeChanges)
+	static bool FinishActiveFeatureSceneEdit(FeaturePageEditorState& state)
 	{
 		auto* manager = SceneSettingsManager::GetSingleton();
 		if (!manager->IsFeatureSceneEditing(state.featureShortName)) {
 			state.activeContext.reset();
 			return true;
 		}
-		if (storeChanges && !manager->StoreFeatureSceneEdit())
-			return false;
 		manager->EndFeatureSceneEdit(false);
 		state.activeContext.reset();
+		state.saveFailed = false;
+		state.overwritesPaused = false;
 		return !manager->IsFeatureSceneEditing(state.featureShortName);
 	}
 
@@ -2820,18 +2823,34 @@ namespace SceneSettingsUI
 		s_featurePageCenter = ImGui::GetCurrentWindow()->Rect().GetCenter();
 		if (!feature)
 			return false;
-		if (enabled)
+		if (enabled && SceneSettingsManager::GetSingleton()->IsSceneReady())
 			DrawFeaturePageEditConfirmation(feature);
 		if (!enabled || !IsFeaturePageEditing(feature))
 			return false;
 		auto* manager = SceneSettingsManager::GetSingleton();
 		auto& state = s_featurePageEditor;
+		const auto disableToolbar = Util::DisableGuard(!manager->IsSceneReady());
 		const auto featureShortName = feature->GetShortName();
 		if (!manager->IsFeatureSceneEditing(featureShortName)) {
 			state.activeContext.reset();
 			state.overwritesPaused = false;
 		} else
 			state.overwritesPaused = manager->AreFeatureSceneEditOverwritesPaused();
+
+		if (state.pendingTarget) {
+			state.replaceScene.title = std::format("{}##FeatureSceneChange",
+				T("feature.scene_manager.edit.discard_title", "Discard Unsaved Scene Settings?"));
+			state.replaceScene.message = T("feature.scene_manager.edit.discard_scene_message",
+				"Unsaved scene settings will be discarded. Switch to the selected scene?");
+			state.replaceScene.confirmLabel = T("feature.scene_manager.edit.discard_confirm", "Discard and Open");
+			state.replaceScene.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
+			if (state.replaceScene.Draw()) {
+				FinishActiveFeatureSceneEdit(state);
+				state.edit = *state.pendingTarget;
+				state.pendingTarget.reset();
+			} else if (!state.replaceScene.IsOpen())
+				state.pendingTarget.reset();
+		}
 
 		const auto previousTarget = state.edit;
 		bool closeEditor = false;
@@ -2864,22 +2883,28 @@ namespace SceneSettingsUI
 			DrawFeatureTargetPicker(
 				"##FeatureSceneEdit", state.edit, state.locationPicker, state.featureShortName);
 
-			bool canSwitchContext = true;
-			if (state.edit.type == SceneSettingsManager::SceneContextType::Weather &&
+			bool canSwitchContext = manager->IsSceneReady();
+			if (canSwitchContext && state.activeContext != GetFeatureSceneContext(state.edit) &&
+				manager->HasPendingFeatureSceneEdits()) {
+				state.pendingTarget = state.edit;
+				state.replaceScene.Request();
+				canSwitchContext = false;
+			}
+			if (canSwitchContext && state.edit.type == SceneSettingsManager::SceneContextType::Weather &&
 				state.edit.weatherId != 0) {
 				const bool requestedTimeOfDay = state.edit.period != Period::Count;
 				if (manager->IsWeatherShowTimeOfDay(state.edit.weatherId) != requestedTimeOfDay) {
-					canSwitchContext = FinishActiveFeatureSceneEdit(state, true);
+					canSwitchContext = FinishActiveFeatureSceneEdit(state);
 					if (canSwitchContext)
 						manager->SetWeatherShowTimeOfDay(
 							state.edit.weatherId, requestedTimeOfDay);
 				}
 			}
 
-			if (state.edit.type == SceneSettingsManager::SceneContextType::Location && !state.edit.locationFormKey.empty()) {
+			if (canSwitchContext && state.edit.type == SceneSettingsManager::SceneContextType::Location && !state.edit.locationFormKey.empty()) {
 				const bool requestedTimeOfDay = state.edit.period != Period::Count;
 				if (manager->IsLocationShowTimeOfDay(state.edit.locationType, state.edit.locationFormKey) != requestedTimeOfDay) {
-					canSwitchContext = FinishActiveFeatureSceneEdit(state, true);
+					canSwitchContext = FinishActiveFeatureSceneEdit(state);
 					if (canSwitchContext)
 						manager->SetLocationShowTimeOfDay(state.edit.locationType, state.edit.locationFormKey, requestedTimeOfDay);
 				}
@@ -2887,7 +2912,7 @@ namespace SceneSettingsUI
 
 			requestedContext = GetFeatureSceneContext(state.edit);
 			if (canSwitchContext && state.activeContext != requestedContext) {
-				canSwitchContext = FinishActiveFeatureSceneEdit(state, true);
+				canSwitchContext = FinishActiveFeatureSceneEdit(state);
 				if (canSwitchContext) {
 					if (requestedContext && CanBeginFeatureSceneContext(*requestedContext) &&
 						manager->BeginFeatureSceneEdit(feature, *requestedContext))
@@ -2926,7 +2951,7 @@ namespace SceneSettingsUI
 			ImGui::BeginDisabled(!state.activeContext || !manager->HasPendingFeatureSceneEdits());
 			const auto saveLabel = GetScenePickerLabel(T("menu.save_settings", "Save Settings"), manager->HasPendingFeatureSceneEdits() ? SceneSettingMarker::Settings : SceneSettingMarker::None) + "###FeatureSceneSave";
 			if (ImGui::Button(saveLabel.c_str()))
-				manager->StoreFeatureSceneEdit();
+				state.saveFailed = !manager->StoreFeatureSceneEdit();
 			ImGui::EndDisabled();
 
 			if (state.savedContext != requestedContext || state.savedRevision != manager->GetEntryPresentationRevision()) {
@@ -2938,7 +2963,7 @@ namespace SceneSettingsUI
 																 [&](const auto& setting) { return setting.setting.featureShortName == featureShortName; });
 			}
 			ImGui::TableSetColumnIndex(4);
-			ImGui::BeginDisabled(!state.hasSavedSettings || manager->HasPendingFeatureSceneEdits());
+			ImGui::BeginDisabled(!state.hasSavedSettings || manager->HasPendingFeatureSceneEdits() || manager->AreFeatureSceneEditActionsLocked());
 			if (ImGui::Button(T("feature.scene_manager.copy.to", "Copy to")) && requestedContext) {
 				state.copy.Reset();
 				state.copy.sourceLayer = EntrySource::User;
@@ -2949,7 +2974,7 @@ namespace SceneSettingsUI
 			ImGui::EndDisabled();
 
 			ImGui::TableSetColumnIndex(5);
-			ImGui::BeginDisabled(state.savedSummary.Empty() || manager->HasPendingFeatureSceneEdits());
+			ImGui::BeginDisabled(state.savedSummary.Empty() || manager->HasPendingFeatureSceneEdits() || manager->AreFeatureSceneEditActionsLocked());
 			const auto* pauseLabel = state.savedSummary.paused == 0 ? T("feature.scene_manager.action.pause", "Pause") :
 			                         state.savedSummary.AllPaused() ? T("feature.scene_manager.action.resume", "Resume") :
 			                                                          T("feature.scene_manager.action.resume_all", "Resume All");
@@ -2958,7 +2983,7 @@ namespace SceneSettingsUI
 			ImGui::EndDisabled();
 
 			ImGui::TableSetColumnIndex(6);
-			ImGui::BeginDisabled(!state.hasSavedSettings);
+			ImGui::BeginDisabled(!state.hasSavedSettings || manager->AreFeatureSceneEditActionsLocked());
 			if (ImGui::Button(T("feature.scene_manager.action.delete", "Delete")))
 				state.deleteSettings.Request();
 			ImGui::EndDisabled();
@@ -2973,6 +2998,9 @@ namespace SceneSettingsUI
 			HideFeaturePageEditing();
 			return false;
 		}
+		if (state.saveFailed && manager->HasPendingFeatureSceneEdits())
+			ImGui::TextColored(Util::Colors::GetError(), "%s", T("feature.scene_manager.edit.save_failed",
+				"Could not save scene settings. Your unsaved changes are kept. Try Save Settings again."));
 		if (manager->HasFeatureSceneEditOverwrites() || manager->AreFeatureSceneEditOverwritesPaused()) {
 			const bool paused = manager->AreFeatureSceneEditOverwritesPaused();
 			ImGui::TextColored(Util::Colors::GetError(), "%s", paused ? T("feature.scene_manager.edit.overwrites_paused", "Feature overwrites are temporarily paused") : T("feature.scene_manager.edit.overwritten_warning", "Feature settings are being overwritten"));
@@ -2995,8 +3023,8 @@ namespace SceneSettingsUI
 			"Remove this feature's User Settings from the selected scene?");
 		state.deleteSettings.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
 		state.deleteSettings.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
-		if (state.deleteSettings.Draw() && requestedContext) {
-			FinishActiveFeatureSceneEdit(state, false);
+		if (state.deleteSettings.Draw() && requestedContext && !manager->AreFeatureSceneEditActionsLocked()) {
+			FinishActiveFeatureSceneEdit(state);
 			manager->DeleteFeatureSceneSettings(featureShortName, *requestedContext);
 			if (CanBeginFeatureSceneContext(*requestedContext) &&
 				manager->BeginFeatureSceneEdit(feature, *requestedContext))
@@ -5500,29 +5528,12 @@ namespace SceneSettingsUI
 			SceneSettingsManager::GetSingleton()->CommitSceneSettingChanges();
 	}
 
-	template <class Entries, class Remove>
-	static void RemoveSceneEntries(const std::vector<size_t>& indices, Entries getEntries, Remove remove)
-	{
-		std::vector<SettingEntry> pending;
-		for (const auto index : indices)
-			if (index < getEntries().size())
-				pending.push_back(getEntries()[index]);
-		for (const auto& entry : pending) {
-			const auto& entries = getEntries();
-			const auto current = std::ranges::find_if(entries, [&](const auto& candidate) {
-				return MakeOverrideKey(candidate) == MakeOverrideKey(entry) && candidate.source == entry.source &&
-				       candidate.sourcePath == entry.sourcePath && candidate.sourceFilename == entry.sourceFilename;
-			});
-			if (current != entries.end())
-				remove(static_cast<size_t>(std::distance(entries.begin(), current)));
-		}
-	}
-
 	static void DrawLocationPopups(const LocationTarget& target, PopupState& popups)
 	{
 		auto* manager = SceneSettingsManager::GetSingleton();
 		auto removeIndices = [&](const std::vector<size_t>& indices) {
-			RemoveSceneEntries(indices, [&]() -> const std::vector<SettingEntry>& { return manager->GetLocationConfig(target.type, target.formKey).entries; }, [&](size_t index) { manager->RemoveLocationSetting(target.type, target.formKey, index); });
+			manager->RemoveSceneSettings({ .type = SceneSettingsManager::SceneContextType::Location,
+				.locationType = target.type, .locationFormKey = target.formKey }, indices);
 		};
 		auto getSourceIndices = [&](EntrySource source) {
 			std::vector<size_t> indices;
@@ -5887,7 +5898,7 @@ namespace SceneSettingsUI
 	{
 		auto* manager = SceneSettingsManager::GetSingleton();
 		auto removeIndices = [&](const std::vector<size_t>& indices) {
-			RemoveSceneEntries(indices, [&]() -> const std::vector<SettingEntry>& { return manager->GetWeatherConfig(weatherId).entries; }, [&](size_t index) { manager->RemoveWeatherSetting(weatherId, index); });
+			manager->RemoveSceneSettings({ .type = SceneSettingsManager::SceneContextType::Weather, .weatherId = weatherId }, indices);
 		};
 		auto getSourceIndices = [&](EntrySource source) {
 			std::vector<size_t> indices;

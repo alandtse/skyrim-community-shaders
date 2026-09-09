@@ -229,6 +229,8 @@ public:
 
 	/// Called every frame from State::Update().
 	void Update();
+	/** @brief Return whether a loaded player cell is available outside loading and main menus. */
+	bool IsSceneReady() const;
 
 	/// Applies the new location immediately after a loading-screen transition.
 	void OnLoadingTransition();
@@ -264,8 +266,10 @@ public:
 
 	// --- Persistence ---
 
-	/// Save all user data (interior, TOD, weather) to unified SceneManager.json.
-	void SaveAllUserSettings();
+	/// Save all user data to SceneManager.json, returning false if the write fails.
+	bool SaveAllUserSettings();
+	/** @brief Reload saved scene files without writing or discarding a pending feature draft. */
+	bool ReloadSceneSettings();
 
 	void DiscoverOverwrites(SceneType type);
 
@@ -466,6 +470,8 @@ public:
 		const std::vector<std::string>& settingPath, const std::string& settingKey, TimeOfDayPeriod period,
 		bool deferSave = false);
 	void RemoveWeatherSetting(RE::FormID weatherId, size_t index);
+	/** @brief Remove selected entries with one write per backing file and one catalogue refresh. */
+	void RemoveSceneSettings(const SceneContextId& context, std::span<const size_t> indices);
 	void TogglePauseWeatherEntry(RE::FormID weatherId, size_t index);
 	/// Set weather entries to one pause state with a single persistence and resolver update.
 	void SetWeatherEntriesPaused(RE::FormID weatherId, std::span<const size_t> indices, bool paused);
@@ -683,6 +689,8 @@ public:
 	/// Temporarily bypass overwrites in the current feature preview without changing saved pause flags.
 	void SetFeatureSceneEditOverwritesPaused(bool paused);
 	bool AreFeatureSceneEditOverwritesPaused() const;
+	/** @brief Return whether loading or active overwrites block toolbar scene actions. */
+	bool AreFeatureSceneEditActionsLocked() const;
 	bool HasFeatureSceneEditOverwrites(const SceneContextId* context = nullptr,
 		bool matchPeriod = true, bool wholeType = false) const;
 	/// Return whether an active overwrite locks this control in the current preview.

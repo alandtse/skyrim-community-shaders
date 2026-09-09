@@ -224,6 +224,18 @@ class SceneSettingsPolicyTests(unittest.TestCase):
         ui = (ROOT / "src/CSEditor/SceneSettingsUI.cpp").read_text(encoding="utf-8")
         self.assertIn("ImGui::BeginDisabled(!state.activeContext || !manager->HasPendingFeatureSceneEdits());", ui)
 
+    def test_toolbar_actions_respect_overwrites_and_loading(self):
+        ui = (ROOT / "src/CSEditor/SceneSettingsUI.cpp").read_text(encoding="utf-8")
+        toolbar = ui[ui.index("bool DrawFeaturePageControls("):ui.index("// Core add-setting dialog:")]
+        for column in (4, 5, 6):
+            block = toolbar.split(f"ImGui::TableSetColumnIndex({column});", 1)[1].split("ImGui::EndDisabled();", 1)[0]
+            self.assertIn("manager->AreFeatureSceneEditActionsLocked()", block)
+        self.assertIn("Util::DisableGuard(!manager->IsSceneReady())", toolbar)
+        self.assertIn("state.deleteSettings.Draw() && requestedContext && !manager->AreFeatureSceneEditActionsLocked()", toolbar)
+        self.assertIn("state.compatibleCount == 0 || (selectSettings && manager->AreFeatureSceneEditActionsLocked())", ui)
+        renderer = (ROOT / "src/Menu/FeatureListRenderer.cpp").read_text(encoding="utf-8")
+        self.assertIn("const bool sceneEditing = sceneManager->IsFeatureSceneEditing(featureName);", renderer)
+
     def test_copy_choices_and_execution_share_compatibility_policy(self):
         choices = extract_function(self.manager, "GetCopySourceSettings")
         execution = extract_function(self.manager, "BuildCopyCandidates")

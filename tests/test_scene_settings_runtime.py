@@ -19,6 +19,79 @@ def braced(source, declaration):
 
 
 class SceneSettingsRuntimeTests(unittest.TestCase):
+    def test_native_toolbar_loading_and_overwrite_locks(self):
+        manager = MANAGER_PATH.read_text(encoding="utf-8")
+        source = r'''
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <optional>
+#include <string>
+#include <vector>
+namespace globals {
+struct State { bool isMainMenuOpen = false, isLoadingMenuOpen = false; };
+State* state = nullptr;
+namespace game {
+struct Player { bool cell = true; void* GetParentCell() { return cell ? this : nullptr; } };
+Player* player = nullptr;
+}
+}
+std::string NormalizeLocationFormKey(const std::string& key) { return key; }
+struct SceneSettingsManager {
+    enum class SceneContextType { Interior, Location };
+    struct Context { SceneContextType type = SceneContextType::Interior; int locationType = 0; std::string locationFormKey; };
+    struct Edit { Context context; };
+    struct Target { int type; std::string formKey; };
+    std::optional<Edit> featureSceneEdit{std::in_place};
+    std::vector<Target> targets;
+    bool overwrites = false, paused = false;
+    bool IsSceneReady() const;
+    bool IsFeatureSceneEditPreviewActive() const;
+    bool HasFeatureSceneEditOverwrites() const { return IsFeatureSceneEditPreviewActive() && overwrites; }
+    bool AreFeatureSceneEditOverwritesPaused() const { return paused; }
+    bool AreFeatureSceneEditActionsLocked() const;
+    const auto& GetCurrentLocationTargets() const { return targets; }
+};
+READY
+PREVIEW
+LOCKED
+void check(bool value, const char* message) {
+    if (!value) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
+}
+int main() {
+    globals::State state;
+    globals::game::Player player;
+    SceneSettingsManager manager;
+    for (int unavailable = 0; unavailable < 6; ++unavailable)
+        for (bool overwritten : {false, true})
+            for (bool paused : {false, true}) {
+                globals::state = unavailable == 1 ? nullptr : &state;
+                globals::game::player = unavailable == 2 ? nullptr : &player;
+                player.cell = unavailable != 3;
+                state.isMainMenuOpen = unavailable == 4;
+                state.isLoadingMenuOpen = unavailable == 5;
+                manager.overwrites = overwritten;
+                manager.paused = paused;
+                check(manager.IsSceneReady() == (unavailable == 0), "Only a loaded game scene enables the toolbar");
+                check(manager.IsFeatureSceneEditPreviewActive() == (unavailable == 0), "Loading cannot capture baseline values into a retained draft");
+                check(manager.AreFeatureSceneEditActionsLocked() == (unavailable != 0 || (overwritten && !paused)), "Toolbar actions require a ready scene and paused overwrites");
+                check(manager.featureSceneEdit.has_value(), "Loading retains the draft");
+            }
+    state.isLoadingMenuOpen = false;
+    manager.featureSceneEdit->context = {SceneSettingsManager::SceneContextType::Location, 1, "Fixture"};
+    check(!manager.IsFeatureSceneEditPreviewActive(), "Location preview stays inactive outside its target");
+    manager.targets.push_back({1, "Fixture"});
+    check(manager.IsFeatureSceneEditPreviewActive(), "Location preview resumes inside its target");
+}
+'''
+        for token, declaration in {
+            "READY": "bool SceneSettingsManager::IsSceneReady(",
+            "PREVIEW": "bool SceneSettingsManager::IsFeatureSceneEditPreviewActive(",
+            "LOCKED": "bool SceneSettingsManager::AreFeatureSceneEditActionsLocked(",
+        }.items():
+            source = source.replace(token, braced(manager, declaration))
+        self.compile_and_run(source)
+
     def test_native_scene_control_outline(self):
         library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
         if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():

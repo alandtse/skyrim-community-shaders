@@ -71,6 +71,10 @@ public:
 	/** @brief Installs the grass capture, culling and draw hooks after all plugins have loaded. */
 	virtual void PostPostLoad() override;
 
+	/** @brief Exposes ForceVanillaOnVisible for devbench's openshaders.feature action=runtimeGet/runtimeSet. */
+	virtual json GetRuntimeFlags() override;
+	virtual bool SetRuntimeFlag(std::string_view name, bool value) override;
+
 	/** @brief Returns the instance culling compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetCullCS();
 
@@ -189,6 +193,10 @@ public:
 	HiZPyramid hiZ;
 
 	uint32_t lastFrame = UINT32_MAX;
+
+	/** @brief Diagnostic only: forces OnVisible through the vanilla per-shape path (skipping the
+	 *  coarse-cull shortcut) for a same-session Tracy A/B against the optimized path. */
+	bool ForceVanillaOnVisible = false;
 
 	ID3D11DeviceContext1* ctx1 = nullptr;
 

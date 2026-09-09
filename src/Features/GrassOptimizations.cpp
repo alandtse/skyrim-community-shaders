@@ -178,6 +178,22 @@ void GrassOptimizations::PostPostLoad()
 	Hooks::Install();
 }
 
+json GrassOptimizations::GetRuntimeFlags()
+{
+	return json{
+		{ "ForceVanillaOnVisible", ForceVanillaOnVisible },
+	};
+}
+
+bool GrassOptimizations::SetRuntimeFlag(std::string_view name, bool value)
+{
+	if (name == "ForceVanillaOnVisible") {
+		ForceVanillaOnVisible = value;
+		return true;
+	}
+	return false;
+}
+
 bool GrassOptimizations::HasShaderDefine(RE::BSShader::Type shaderType)
 {
 	switch (shaderType) {
@@ -793,6 +809,15 @@ void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(R
 	auto prop = This->GetGeometryRuntimeData().shaderProperty;
 	if (prop && prop->GetRTTI() == globals::rtti::BSGrassShaderPropertyRTTI.get()) {
 		auto& self = globals::features::grassOptimizations;
+
+		if (self.ForceVanillaOnVisible) {
+			// Diagnostic-only fallback for a same-session Tracy A/B against the optimized path below.
+			ZoneScopedN("GrassOptimizations::VanillaOnVisible");
+			func(This, process, alphaGroupIndex);
+			return;
+		}
+
+		ZoneScopedN("GrassOptimizations::OnVisible");
 
 		// Only queue one representative shape per frame for each bucket to skip redundant setup.
 		if (!self.bucketStore.ClaimQueueSlot(This, globals::game::graphicsState->frameCount))

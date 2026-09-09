@@ -4,7 +4,9 @@
 #include "Utils/LazyShader.h"
 
 #include <atomic>
+#include <chrono>
 #include <d3d11_1.h>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <openvr.h>
@@ -24,6 +26,8 @@ public:
 	void ClearShaderCache();
 	/** @brief Captures world depth and motion before the engine post chain. */
 	void CaptureInputs();
+	/** @brief Reconstructs the menu frame from the engine's post-processing output. */
+	void ReconstructMenuBackground(uint32_t postProcessingTarget);
 	/** @brief True when engine allocations use the immutable render-size plan. */
 	bool IsHookActive() const { return active; }
 	/** @brief True while a submit-stage vendor dispatch is executing. */
@@ -40,8 +44,10 @@ public:
 	const TemporalParameters* GetDispatchParameters() const { return dispatching ? &temporal : nullptr; }
 	/** @brief Whether reconstruction can consume projection jitter this frame. */
 	bool CanJitter() const;
-	/** @brief Whether the reduced-resolution menu should use the engine's TAA path. */
-	bool ShouldUseMenuTAA() const;
+	/** @brief Whether the active VR frame uses menu projection and presentation handling. */
+	bool IsMenuFrame() const;
+	/** @brief Whether the current menu frame lacks captured inputs for background reconstruction. */
+	bool ShouldApplyMenuTAA() const;
 	/** @brief Returns the latest presentation result and successful stereo-pair count. */
 	std::string GetStatus() const;
 	/** @brief Returns the latched output width per eye. */
@@ -113,7 +119,13 @@ private:
 	vr::EColorSpace sourceColorSpace = vr::ColorSpace_Auto;
 	std::atomic_bool shaderResetPending = false;
 	std::unique_ptr<Texture2D> menuColor, menuDepth;
-	std::unique_ptr<Texture2D> menuReference, menuResolved, menuMismatch;
+	std::unique_ptr<Texture2D> menuReference, menuResolved, menuMismatch, menuScene;
+	std::unique_ptr<Texture2D> menuSceneReference, menuSceneMismatch, menuUILayer;
+	winrt::com_ptr<ID3D11BlendState> menuLayerBlend[2];
+	uint64_t menuUILayerCycle = UINT64_MAX;
+	uint32_t menuLayerDraws = 0, menuLayerRejected = 0;
+	std::string menuLayerRejection;
+	bool CaptureMenuDraw(ID3D11DeviceContext* drawContext, const std::function<void()>& draw);
 	Util::LazyShader<ID3D11ComputeShader> menuValidateCS, menuResolveCS;
 	Util::LazyShader<ID3D11VertexShader> menuCopyVS;
 	Util::LazyShader<ID3D11PixelShader> menuCopyPS;
@@ -122,13 +134,24 @@ private:
 	uint64_t menuResolvedCycle = UINT64_MAX;
 	ID3D11Texture2D* menuResolvedSource = nullptr;
 	bool menuReady = false;
-	bool menuDrawing = false, menuUnavailable = false;
+	std::atomic_bool menuDrawing = false;
+	bool menuUnavailable = false;
+	bool menuSceneUnavailable = false, capturedMenuScene = false, lastSuccessMenuScene = false;
+	bool menuSceneReconstructed = false;
+	uint64_t menuSceneCycle = UINT64_MAX;
+	std::string menuSceneFallback = "waiting for world inputs";
+	bool capturedMapScene = false, lastSuccessMapScene = false;
+	std::chrono::steady_clock::time_point lastCaptureTime{};
+	std::chrono::steady_clock::time_point menuDiagnosticTimes[4]{};
+	void LogMenuDiagnostics(uint32_t stage, uint32_t postProcessingTarget = UINT32_MAX);
 
 	bool WantsNativeMenuUI() const;
 	void SetupMenuResources();
 	void CopyMenuColor(ID3D11ShaderResourceView* source, ID3D11RenderTargetView* destination, uint32_t width, uint32_t height);
 	bool DrawNativeMenuUI(RE::BSGraphics::BSShaderAccumulator* accumulator, uint32_t flags);
 	bool ResolveNativeMenu(ID3D11Texture2D* source);
+	bool CanCaptureMenuScene();
+	bool ReconstructMenuScene(ID3D11Texture2D* source);
 
 	void Invalidate();
 	void SetStatus(std::string_view message);
@@ -153,6 +176,26 @@ private:
 	struct MenuUIHook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* accumulator, uint32_t flags);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct MenuDrawIndexed
+	{
+		static void thunk(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct MenuDraw
+	{
+		static void thunk(ID3D11DeviceContext* ctx, UINT count, UINT start);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct MenuDrawIndexedInstanced
+	{
+		static void thunk(ID3D11DeviceContext* ctx, UINT count, UINT instances, UINT start, INT base, UINT firstInstance);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct MenuDrawInstanced
+	{
+		static void thunk(ID3D11DeviceContext* ctx, UINT count, UINT instances, UINT start, UINT firstInstance);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 	struct MenuViewportHook

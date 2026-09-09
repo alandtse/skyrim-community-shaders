@@ -1,6 +1,7 @@
 #include "VRSubmitUpscaling.h"
 
 #include "Deferred.h"
+#include "Features/HDRDisplay.h"
 #include "Features/Upscaling.h"
 #include "GpuPass.h"
 #include "State.h"
@@ -137,6 +138,11 @@ void VRSubmitUpscaling::InstallRenderTargetSizeHook()
 	active = true;
 	stl::write_vfunc<0x2A, MenuUIHook>(RE::VTABLE_BSShaderAccumulator[0]);
 	stl::detour_thunk<MenuViewportHook>(REL::RelocationID(75455, 77240));
+	stl::detour_vfunc<12, MenuDrawIndexed>(globals::d3d::context);
+	stl::detour_vfunc<13, MenuDraw>(globals::d3d::context);
+	stl::detour_vfunc<20, MenuDrawIndexedInstanced>(globals::d3d::context);
+	stl::detour_vfunc<21, MenuDrawInstanced>(globals::d3d::context);
+
 	logger::info("[VRSubmit] Latched per-eye render {}x{} -> output {}x{}", plan.renderWidth, plan.renderHeight, plan.outputWidth, plan.outputHeight);
 }
 
@@ -179,6 +185,11 @@ void VRSubmitUpscaling::SetupResources()
 	renderThread = 0;
 	menuReady = false;
 	menuUnavailable = false;
+	menuSceneUnavailable = capturedMenuScene = lastSuccessMenuScene = false;
+	menuSceneReconstructed = false;
+	menuSceneCycle = UINT64_MAX;
+	capturedMapScene = lastSuccessMapScene = false;
+	lastCaptureTime = {};
 	menuCycle = UINT64_MAX;
 	menuResolvedCycle = UINT64_MAX;
 	menuResolvedSource = nullptr;
@@ -187,6 +198,13 @@ void VRSubmitUpscaling::SetupResources()
 	menuReference.reset();
 	menuResolved.reset();
 	menuMismatch.reset();
+	menuSceneReference.reset();
+	menuSceneMismatch.reset();
+	menuUILayer.reset();
+	menuUILayerCycle = UINT64_MAX;
+	menuLayerDraws = menuLayerRejected = 0;
+	menuLayerRejection.clear();
+	menuScene.reset();
 	SetupMenuResources();
 	failed = false;
 	SetStatus("Waiting for world inputs");
@@ -221,10 +239,10 @@ void VRSubmitUpscaling::Fail(std::string_view reason)
 
 bool VRSubmitUpscaling::CanJitter() const
 {
-	return active && !failed && globals::state && !ShouldUseMenuTAA();
+	return active && !failed && globals::state && !IsMenuFrame();
 }
 
-bool VRSubmitUpscaling::ShouldUseMenuTAA() const
+bool VRSubmitUpscaling::IsMenuFrame() const
 {
 	return active && globals::state &&
 	       (globals::state->IsPausedOrMenuOpen(globals::game::ui) || globals::state->IsFullScreenMenuOpen());
@@ -233,9 +251,161 @@ bool VRSubmitUpscaling::ShouldUseMenuTAA() const
 bool VRSubmitUpscaling::WantsNativeMenuUI() const
 {
 	auto* ui = globals::game::ui;
-	return ShouldUseMenuTAA() && ui &&
+	return IsMenuFrame() && ui &&
 	       (ui->IsMenuOpen(RE::JournalMenu::MENU_NAME) || ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME) ||
 			   ui->IsMenuOpen(RE::MapMenu::MENU_NAME) || ui->IsMenuOpen(RE::MagicMenu::MENU_NAME));
+}
+
+bool VRSubmitUpscaling::CanCaptureMenuScene()
+{
+	if (menuSceneUnavailable)
+		return false;
+	if (globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR) {
+		menuSceneFallback = "HDR output is enabled";
+		return false;
+	}
+	if (menuUnavailable || !WantsNativeMenuUI() ||
+		globals::state->IsMainOrLoadingMenuOpen(globals::game::ui) || globals::state->isStatsMenuOpen) {
+		menuSceneFallback = "unsupported menu state";
+		return false;
+	}
+	if (!menuReady || menuCycle != cycle || menuUILayerCycle != cycle || !menuLayerDraws || menuLayerRejected) {
+		menuSceneFallback = menuLayerRejected ? "UI capture incomplete: " + menuLayerRejection : "no separate UI layer this frame";
+		return false;
+	}
+	if (
+		!menuColor || !menuDepth || !menuReference || !menuResolved || !menuMismatch || !menuScene || !menuSceneReference || !menuSceneMismatch ||
+		!menuCopyVS || !menuCopyPS || !menuSampler || !menuValidateCS || !menuResolveCS) {
+		menuSceneFallback = "menu resources unavailable";
+		return false;
+	}
+	const auto& source = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
+	D3D11_TEXTURE2D_DESC desc{};
+	if (!source.texture || !source.SRV || !source.RTV) {
+		menuSceneFallback = "world framebuffer unavailable";
+		return false;
+	}
+	source.texture->GetDesc(&desc);
+	if (desc.Width != plan.renderWidth * 2 || desc.Height != plan.renderHeight ||
+		desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM || desc.MipLevels != 1 || desc.ArraySize != 1 || desc.SampleDesc.Count != 1) {
+		menuSceneFallback = std::format("unsupported framebuffer: {}x{}, format {}", desc.Width, desc.Height, uint32_t(desc.Format));
+		return false;
+	}
+	menuSceneFallback = "waiting for post-processed world";
+	return true;
+}
+
+bool VRSubmitUpscaling::ShouldApplyMenuTAA() const
+{
+	return IsMenuFrame() && !(captured && capturedMenuScene && captureCycle == cycle && !failed);
+}
+
+bool VRSubmitUpscaling::ReconstructMenuScene(ID3D11Texture2D* source)
+{
+	if (!captured || !capturedMenuScene || captureCycle != cycle || attempted || menuSceneUnavailable)
+		return false;
+	attempted = true;
+	try {
+		CS_GPU_PASS("Upscaling::MenuSceneReconstruct");
+		if (ReconstructPair(source, vr::ColorSpace_Gamma)) {
+			ContextScope scope(context.get(), isolatedState.get());
+			for (uint32_t eye = 0; eye < 2; ++eye)
+				context->CopySubresourceRegion(menuScene->resource.get(), 0, eye * plan.outputWidth, 0, 0,
+					eyes[eye].submit->resource.get(), 0, nullptr);
+			menuSceneReconstructed = true;
+			menuSceneCycle = captureCycle;
+			return true;
+		}
+	} catch (const std::exception& error) {
+		logger::warn("[VRSubmit] Menu scene reconstruction unavailable: {}", error.what());
+	} catch (...) {
+		logger::warn("[VRSubmit] Menu scene reconstruction failed");
+	}
+	dispatching = false;
+	menuSceneUnavailable = true;
+	menuSceneFallback = "DLSS/FSR dispatch failed; reset required";
+	lastSuccessCycle = UINT64_MAX;
+	return false;
+}
+
+void VRSubmitUpscaling::LogMenuDiagnostics(uint32_t stage, uint32_t postProcessingTarget)
+{
+	if (globals::features::upscaling.bootSnapshot.Boot(&Upscaling::Settings::streamlineLogLevel) != 2 ||
+		stage >= std::size(menuDiagnosticTimes) || !WantsNativeMenuUI())
+		return;
+	const auto now = std::chrono::steady_clock::now();
+	if (now - menuDiagnosticTimes[stage] < std::chrono::seconds(10))
+		return;
+	menuDiagnosticTimes[stage] = now;
+	static constexpr const char* stages[] = { "capture", "post-processing", "UI", "submit" };
+	logger::info("[VRSubmitMenu] stage={} cycle={} captureCycle={} worldRendered={} captured={} menuInputs={} attempted={} reconstructed={} menuReady={} fallback='{}' postTarget={} uiLayerDraws={} uiLayerRejected={}",
+		stages[stage], cycle.load(), captureCycle, globals::state->worldRenderedThisFrame, captured, capturedMenuScene,
+		attempted, menuSceneReconstructed, menuReady, menuSceneFallback, postProcessingTarget, menuLayerDraws, menuLayerRejected);
+	const auto describeTexture = [](ID3D11Texture2D* texture) {
+		if (!texture)
+			return std::string("none");
+		D3D11_TEXTURE2D_DESC desc{};
+		texture->GetDesc(&desc);
+		return std::format("{} {}x{} fmt={} bind={} samples={} slices={} mips={}", static_cast<void*>(texture),
+			desc.Width, desc.Height, uint32_t(desc.Format), desc.BindFlags, desc.SampleDesc.Count, desc.ArraySize, desc.MipLevels);
+	};
+	const auto describeView = [&](ID3D11View* view) {
+		if (!view)
+			return std::string("none");
+		winrt::com_ptr<ID3D11Resource> resource;
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		view->GetResource(resource.put());
+		if (resource)
+			resource->QueryInterface(texture.put());
+		return describeTexture(texture.get());
+	};
+	auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
+	for (const auto index : { RE::RENDER_TARGETS::kMAIN, RE::RENDER_TARGETS::kFRAMEBUFFER,
+			 RE::RENDER_TARGETS::kMENUBG, RE::RENDER_TARGETS::kTOTAL }) {
+		const auto& target = targets[index];
+		logger::info("[VRSubmitMenu] stage={} target={} texture=[{}] SRV=[{}] RTV=[{}]",
+			stages[stage], uint32_t(index), describeTexture(target.texture), describeView(target.SRV), describeView(target.RTV));
+	}
+	if (globals::game::shadowState) {
+		const auto& shadow = globals::game::shadowState->GetVRRuntimeData();
+		logger::info("[VRSubmitMenu] stage={} shadowTarget={} depth={} clearMode={} viewport={}x{}",
+			stages[stage], uint32_t(shadow.renderTargets[0]), shadow.depthStencil, uint32_t(shadow.setRenderTargetMode[0]),
+			shadow.viewPort.Width, shadow.viewPort.Height);
+	}
+	winrt::com_ptr<ID3D11RenderTargetView> boundTarget;
+	context->OMGetRenderTargets(1, boundTarget.put(), nullptr);
+	logger::info("[VRSubmitMenu] stage={} boundRTV=[{}]", stages[stage], describeView(boundTarget.get()));
+	logger::info("[VRSubmitMenu] stage={} lastUIRejection='{}'", stages[stage], menuLayerRejection);
+	spdlog::default_logger()->flush();
+}
+
+void VRSubmitUpscaling::ReconstructMenuBackground(uint32_t postProcessingTarget)
+{
+	if (!active || GetCurrentThreadId() != renderThread)
+		return;
+	std::unique_lock lock(mutex, std::try_to_lock);
+	if (!lock)
+		return;
+	LogMenuDiagnostics(1, postProcessingTarget);
+	if (failed || shaderResetPending || !captured || !capturedMenuScene || captureCycle != cycle || attempted)
+		return;
+	if (postProcessingTarget != uint32_t(RE::RENDER_TARGETS::kTOTAL)) {
+		menuSceneFallback = "unexpected post-processing output target";
+		return;
+	}
+	auto& source = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
+	D3D11_TEXTURE2D_DESC desc{};
+	if (!source.texture || !source.SRV || !source.RTV)
+		return;
+	source.texture->GetDesc(&desc);
+	if (desc.Width != plan.renderWidth * 2 || desc.Height != plan.renderHeight ||
+		desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM || desc.MipLevels != 1 || desc.ArraySize != 1 || desc.SampleDesc.Count != 1)
+		return;
+	if (ReconstructMenuScene(source.texture)) {
+		CopyMenuColor(menuScene->srv.get(), source.RTV, plan.renderWidth * 2, plan.renderHeight);
+		ContextScope scope(context.get(), isolatedState.get());
+		context->CopyResource(menuSceneReference->resource.get(), source.texture);
+	}
 }
 
 void VRSubmitUpscaling::SetupMenuResources()
@@ -276,6 +446,34 @@ void VRSubmitUpscaling::SetupMenuResources()
 			winrt::check_hresult(globals::d3d::device->CreateSamplerState(&desc, menuSampler.put()));
 			Util::SetResourceName(menuSampler.get(), "Upscaling::NativeMenuSampler");
 		}
+		if (!menuUILayer) {
+			D3D11_TEXTURE2D_DESC desc{};
+			menuColor->resource->GetDesc(&desc);
+			menuUILayer = std::make_unique<Texture2D>(desc, "Upscaling::MenuUILayer");
+			D3D11_RENDER_TARGET_VIEW_DESC rtv{};
+			rtv.Format = desc.Format;
+			rtv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+			menuUILayer->CreateRTV(rtv);
+			D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+			srv.Format = desc.Format;
+			srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srv.Texture2D.MipLevels = 1;
+			menuUILayer->CreateSRV(srv);
+		}
+		for (uint32_t premultiplied = 0; premultiplied < 2; ++premultiplied) {
+			if (menuLayerBlend[premultiplied])
+				continue;
+			D3D11_BLEND_DESC desc{};
+			auto& blend = desc.RenderTarget[0];
+			blend.BlendEnable = true;
+			blend.SrcBlend = premultiplied ? D3D11_BLEND_ONE : D3D11_BLEND_SRC_ALPHA;
+			blend.DestBlend = blend.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+			blend.BlendOp = blend.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+			blend.SrcBlendAlpha = D3D11_BLEND_ONE;
+			blend.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+			winrt::check_hresult(globals::d3d::device->CreateBlendState(&desc, menuLayerBlend[premultiplied].put()));
+			Util::SetResourceName(menuLayerBlend[premultiplied].get(), "Upscaling::MenuLayerBlend%u", premultiplied);
+		}
 		menuCopyVS.Get(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0", "main", "Upscaling::NativeMenuCopy VS");
 		menuCopyPS.Get(L"Data/Shaders/Upscaling/PerfMode/MenuBGBlitPS.hlsl", { { "PSHADER", "" } }, "ps_5_0", "main", "Upscaling::NativeMenuCopy PS");
 		if (!menuReference)
@@ -284,6 +482,12 @@ void VRSubmitUpscaling::SetupMenuResources()
 			menuResolved = MakeTexture(plan.outputWidth * 2, plan.outputHeight, DXGI_FORMAT_R8G8B8A8_UNORM, "Upscaling::MenuResolved");
 		if (!menuMismatch)
 			menuMismatch = MakeTexture(1, 1, DXGI_FORMAT_R32_UINT, "Upscaling::MenuMismatch");
+		if (!menuSceneReference)
+			menuSceneReference = MakeTexture(plan.renderWidth * 2, plan.renderHeight, DXGI_FORMAT_R8G8B8A8_UNORM, "Upscaling::MenuSceneReference");
+		if (!menuSceneMismatch)
+			menuSceneMismatch = MakeTexture(1, 1, DXGI_FORMAT_R32_UINT, "Upscaling::MenuSceneMismatch");
+		if (!menuScene)
+			menuScene = MakeTexture(plan.outputWidth * 2, plan.outputHeight, DXGI_FORMAT_R8G8B8A8_UNORM, "Upscaling::MenuScene");
 		menuValidateCS.Get(L"Data/Shaders/Upscaling/NativeMenuCS.hlsl", { { "VALIDATE_MENU", "" } }, "cs_5_0", "main", "Upscaling::MenuValidate CS");
 		menuResolveCS.Get(L"Data/Shaders/Upscaling/NativeMenuCS.hlsl", {}, "cs_5_0", "main", "Upscaling::MenuResolve CS");
 	} catch (const std::exception& error) {
@@ -317,9 +521,11 @@ bool VRSubmitUpscaling::DrawNativeMenuUI(RE::BSGraphics::BSShaderAccumulator* ac
 	std::unique_lock lock(mutex, std::try_to_lock);
 	if (!lock || failed || menuUnavailable || shaderResetPending || !globals::game::shadowState ||
 		!menuColor || !menuDepth || !menuCopyVS || !menuCopyPS || !menuSampler ||
-		!menuReference || !menuResolved || !menuMismatch || !menuValidateCS || !menuResolveCS)
+		!menuReference || !menuResolved || !menuMismatch || !menuValidateCS || !menuResolveCS ||
+		!menuSceneReference || !menuSceneMismatch)
 		return false;
 	auto& shadow = globals::game::shadowState->GetVRRuntimeData();
+	LogMenuDiagnostics(2);
 	if (shadow.renderTargets[0] != RE::RENDER_TARGETS::kMENUBG ||
 		shadow.depthStencil != uint32_t(RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN))
 		return false;
@@ -338,6 +544,13 @@ bool VRSubmitUpscaling::DrawNativeMenuUI(RE::BSGraphics::BSShaderAccumulator* ac
 		return false;
 	CS_GPU_PASS("Upscaling::NativeMenuUI");
 	menuReady = false;
+	if (menuUILayer && menuUILayerCycle != cycle) {
+		const float transparent[4]{};
+		context->ClearRenderTargetView(menuUILayer->rtv.get(), transparent);
+		menuUILayerCycle = cycle.load();
+		menuLayerDraws = menuLayerRejected = 0;
+		menuLayerRejection.clear();
+	}
 	// A pending color clear must not seed the native target with the previous menu image.
 	if (shadow.setRenderTargetMode[0] == RE::BSGraphics::SetRenderTargetMode::SRTM_CLEAR) {
 		const float transparent[4]{};
@@ -409,6 +622,116 @@ bool VRSubmitUpscaling::DrawNativeMenuUI(RE::BSGraphics::BSShaderAccumulator* ac
 	return true;
 }
 
+bool VRSubmitUpscaling::CaptureMenuDraw(ID3D11DeviceContext* drawContext, const std::function<void()>& draw)
+{
+	if (GetCurrentThreadId() != renderThread || drawContext != globals::d3d::context ||
+		!menuDrawing || !menuUILayer || !menuLayerBlend[0] || !menuLayerBlend[1] || menuUILayerCycle != cycle)
+		return false;
+	winrt::com_ptr<ID3D11ShaderResourceView> source;
+	drawContext->PSGetShaderResources(0, 1, source.put());
+	if (!source)
+		return false;
+	winrt::com_ptr<ID3D11Resource> sourceResource;
+	source->GetResource(sourceResource.put());
+	auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
+	bool menuSource = false;
+	for (const auto index : { RE::RENDER_TARGETS::kPROJECTEDMENU, RE::RENDER_TARGETS::kHUDMENU,
+			 RE::RENDER_TARGETS::kWORLDUI0, RE::RENDER_TARGETS::kWORLDUI1, RE::RENDER_TARGETS::kWORLDUI2,
+			 RE::RENDER_TARGETS::kWORLDUI3, RE::RENDER_TARGETS::kWORLDUI4, RE::RENDER_TARGETS::kWORLDUI5, RE::RENDER_TARGETS::kWORLDUI6 }) {
+		const auto& target = targets[index];
+		menuSource |= source.get() == target.SRV || source.get() == target.SRVCopy ||
+		              sourceResource.get() == target.texture || sourceResource.get() == target.textureCopy;
+	}
+	if (!menuSource)
+		return false;
+	winrt::com_ptr<ID3D11RenderTargetView> target;
+	winrt::com_ptr<ID3D11DepthStencilView> depth;
+	ID3D11RenderTargetView* boundTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+	drawContext->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, boundTargets, depth.put());
+	target.attach(boundTargets[0]);
+	bool additionalTarget = false;
+	for (UINT index = 1; index < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++index) {
+		if (boundTargets[index]) {
+			additionalTarget = true;
+			boundTargets[index]->Release();
+		}
+	}
+	winrt::com_ptr<ID3D11DepthStencilState> depthState;
+	UINT stencilRef = 0;
+	drawContext->OMGetDepthStencilState(depthState.put(), &stencilRef);
+	D3D11_DEPTH_STENCIL_DESC depthDesc{};
+	if (depthState)
+		depthState->GetDesc(&depthDesc);
+	winrt::com_ptr<ID3D11BlendState> blendState;
+	float blendFactor[4]{};
+	UINT sampleMask = 0;
+	drawContext->OMGetBlendState(blendState.put(), blendFactor, &sampleMask);
+	D3D11_BLEND_DESC blendDesc{};
+	if (blendState)
+		blendState->GetDesc(&blendDesc);
+	const auto& blend = blendDesc.RenderTarget[0];
+	if (additionalTarget || target.get() != menuColor->rtv.get() || !blendState || blendDesc.AlphaToCoverageEnable ||
+		!blend.BlendEnable || blend.BlendOp != D3D11_BLEND_OP_ADD || blend.DestBlend != D3D11_BLEND_INV_SRC_ALPHA ||
+		(blend.SrcBlend != D3D11_BLEND_SRC_ALPHA && blend.SrcBlend != D3D11_BLEND_ONE) ||
+		(blend.RenderTargetWriteMask & 7) != 7 ||
+		(depth && (!depthState || (depthDesc.DepthEnable && depthDesc.DepthWriteMask != D3D11_DEPTH_WRITE_MASK_ZERO) ||
+					  (depthDesc.StencilEnable && depthDesc.StencilWriteMask != 0)))) {
+		++menuLayerRejected;
+		if (menuLayerRejected == 1)
+			menuLayerRejection = std::format("target={} MRT={} blend={} op={} src={} dst={} mask={} depth={} write={} stencil={} stencilMask={}",
+				target.get() == menuColor->rtv.get(), additionalTarget, bool(blend.BlendEnable), uint32_t(blend.BlendOp),
+				uint32_t(blend.SrcBlend), uint32_t(blend.DestBlend), uint32_t(blend.RenderTargetWriteMask), bool(depthDesc.DepthEnable),
+				uint32_t(depthDesc.DepthWriteMask), bool(depthDesc.StencilEnable), uint32_t(depthDesc.StencilWriteMask));
+		return false;
+	}
+	CS_GPU_PASS("Upscaling::MenuLayerCapture");
+	auto* layer = menuUILayer->rtv.get();
+	drawContext->OMSetRenderTargets(1, &layer, depth.get());
+	drawContext->OMSetBlendState(menuLayerBlend[blend.SrcBlend == D3D11_BLEND_ONE ? 1 : 0].get(), blendFactor, sampleMask);
+	const auto restore = [&]() {
+		auto* previous = target.get();
+		drawContext->OMSetRenderTargets(1, &previous, depth.get());
+		drawContext->OMSetBlendState(blendState.get(), blendFactor, sampleMask);
+	};
+	try {
+		draw();
+	} catch (...) {
+		restore();
+		throw;
+	}
+	restore();
+	++menuLayerDraws;
+	return true;
+}
+
+void VRSubmitUpscaling::MenuDrawIndexed::thunk(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base)
+{
+	auto& owner = globals::features::upscaling.vrSubmit;
+	if (!owner.menuDrawing || !owner.CaptureMenuDraw(ctx, [&]() { func(ctx, count, start, base); }))
+		func(ctx, count, start, base);
+}
+
+void VRSubmitUpscaling::MenuDraw::thunk(ID3D11DeviceContext* ctx, UINT count, UINT start)
+{
+	auto& owner = globals::features::upscaling.vrSubmit;
+	if (!owner.menuDrawing || !owner.CaptureMenuDraw(ctx, [&]() { func(ctx, count, start); }))
+		func(ctx, count, start);
+}
+
+void VRSubmitUpscaling::MenuDrawIndexedInstanced::thunk(ID3D11DeviceContext* ctx, UINT count, UINT instances, UINT start, INT base, UINT firstInstance)
+{
+	auto& owner = globals::features::upscaling.vrSubmit;
+	if (!owner.menuDrawing || !owner.CaptureMenuDraw(ctx, [&]() { func(ctx, count, instances, start, base, firstInstance); }))
+		func(ctx, count, instances, start, base, firstInstance);
+}
+
+void VRSubmitUpscaling::MenuDrawInstanced::thunk(ID3D11DeviceContext* ctx, UINT count, UINT instances, UINT start, UINT firstInstance)
+{
+	auto& owner = globals::features::upscaling.vrSubmit;
+	if (!owner.menuDrawing || !owner.CaptureMenuDraw(ctx, [&]() { func(ctx, count, instances, start, firstInstance); }))
+		func(ctx, count, instances, start, firstInstance);
+}
+
 void VRSubmitUpscaling::MenuUIHook::thunk(RE::BSGraphics::BSShaderAccumulator* accumulator, uint32_t flags)
 {
 	auto& owner = globals::features::upscaling.vrSubmit;
@@ -430,7 +753,7 @@ void VRSubmitUpscaling::MenuViewportHook::thunk(RE::BSGraphics::Renderer* render
 
 bool VRSubmitUpscaling::ResolveNativeMenu(ID3D11Texture2D* source)
 {
-	if (!menuReady || menuCycle != cycle || !WantsNativeMenuUI() || shaderResetPending)
+	if (!menuReady || menuCycle != cycle || !WantsNativeMenuUI() || shaderResetPending || !menuSceneReference || !menuSceneMismatch)
 		return false;
 	if (menuResolvedCycle == menuCycle)
 		return menuResolvedSource == source;
@@ -458,6 +781,19 @@ bool VRSubmitUpscaling::ResolveNativeMenu(ID3D11Texture2D* source)
 	context->Dispatch((plan.renderWidth * 2 + 7) / 8, (plan.renderHeight + 7) / 8, 1);
 	ID3D11UnorderedAccessView* nullUAV = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	const bool reconstructedScene = menuSceneReconstructed && menuSceneCycle == cycle;
+	auto sceneReference = reconstructedScene ? menuSceneReference->srv.get() : sourceSRV;
+	const UINT unavailable[4]{ 1, 1, 1, 1 };
+	context->ClearUnorderedAccessViewUint(menuSceneMismatch->uav.get(), reconstructedScene ? zero : unavailable);
+	context->CSSetShaderResources(1, 1, &sceneReference);
+	auto sceneMismatch = menuSceneMismatch->uav.get();
+	context->CSSetUnorderedAccessViews(0, 1, &sceneMismatch, nullptr);
+	context->Dispatch((plan.renderWidth * 2 + 7) / 8, (plan.renderHeight + 7) / 8, 1);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	ID3D11ShaderResourceView* sceneInputs[] = { reconstructedScene ? menuScene->srv.get() : sourceSRV, menuSceneMismatch->srv.get() };
+	context->CSSetShaderResources(4, 2, sceneInputs);
+	auto* uiLayer = menuUILayerCycle == cycle && menuLayerDraws ? menuUILayer->srv.get() : nullptr;
+	context->CSSetShaderResources(6, 1, &uiLayer);
 	auto mismatchSRV = menuMismatch->srv.get();
 	context->CSSetShaderResources(3, 1, &mismatchSRV);
 	auto destination = menuResolved->uav.get();
@@ -521,7 +857,10 @@ void VRSubmitUpscaling::CaptureInputs()
 		menuValidateCS.Reset();
 		menuResolveCS.Reset();
 		menuReady = false;
+		menuSceneReconstructed = false;
+		menuSceneCycle = UINT64_MAX;
 		menuUnavailable = false;
+		menuSceneUnavailable = false;
 		SetupMenuResources();
 		ClearFoveationResources();
 		failed = false;
@@ -533,10 +872,17 @@ void VRSubmitUpscaling::CaptureInputs()
 	if (captured && captureCycle == currentCycle)
 		return;
 	captured = attempted = pairReady = false;
+	menuSceneReconstructed = false;
+	menuSceneCycle = UINT64_MAX;
 	submittedSource = nullptr;
-	if (!state->worldRenderedThisFrame || ShouldUseMenuTAA()) {
+	capturedMenuScene = CanCaptureMenuScene();
+	capturedMapScene = capturedMenuScene && state->isMapMenuOpen;
+	LogMenuDiagnostics(0);
+	if (!state->worldRenderedThisFrame || (IsMenuFrame() && !capturedMenuScene)) {
+		if (!state->worldRenderedThisFrame)
+			menuSceneFallback = "no fresh world frame";
 		Invalidate();
-		SetStatus(ShouldUseMenuTAA() ? "Menu: engine TAA at render resolution" : "Upscaling paused: no active world frame");
+		SetStatus(IsMenuFrame() ? "Menu: engine TAA at render resolution" : "Upscaling paused: no active world frame");
 		return;
 	}
 	auto& upscaling = globals::features::upscaling;
@@ -571,6 +917,15 @@ void VRSubmitUpscaling::CaptureInputs()
 			}
 		}
 		const bool dlss = method == Upscaling::UpscaleMethod::kDLSS;
+		if (capturedMapScene) {
+			upscaling.FillMenuCameraMotionVectors();
+			if (!upscaling.menuCameraMVsValid) {
+				menuSceneUnavailable = true;
+				menuSceneFallback = "map camera motion unavailable";
+				SetStatus("Map: camera motion unavailable; retaining TAA");
+				return;
+			}
+		}
 		auto* shader = encodeShaders[dlss ? 0 : 1].Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl",
 			{ { dlss ? "DLSS" : "FSR", "" }, { "DEPTH_OUTPUT", "" } }, "cs_5_0", "main", "Upscaling::SubmitEncode CS");
 		if (!shader || !colorShader.Get(L"Data/Shaders/Upscaling/SubmitColorCS.hlsl", {}, "cs_5_0", "main", "Upscaling::SubmitColor CS")) {
@@ -596,6 +951,10 @@ void VRSubmitUpscaling::CaptureInputs()
 		capturedJitter = upscaling.jitter;
 		temporal = { capturedJitter, *globals::game::cameraNear, *globals::game::cameraFar,
 			Util::GetVerticalFOVRad(), *globals::game::deltaTime * 1000.0f };
+		const auto captureTime = std::chrono::steady_clock::now();
+		if (capturedMenuScene)
+			temporal.frameTime = std::clamp(std::chrono::duration<float, std::milli>(captureTime - lastCaptureTime).count(), 1.0f, 100.0f);
+		lastCaptureTime = captureTime;
 		if (!std::isfinite(temporal.cameraNear) || !std::isfinite(temporal.cameraFar) || !std::isfinite(temporal.verticalFov) ||
 			!std::isfinite(temporal.frameTime) || temporal.cameraNear <= 0 || temporal.cameraFar <= temporal.cameraNear ||
 			temporal.verticalFov <= 0 || temporal.verticalFov >= DirectX::XM_PI || temporal.frameTime < 0) {
@@ -678,7 +1037,8 @@ bool VRSubmitUpscaling::ReconstructPair(ID3D11Texture2D* source, vr::EColorSpace
 	}
 	context->CopyResource(sourceCopy.get(), source);
 	const bool gamma = colorSpace != vr::ColorSpace_Linear;
-	resetHistory = lastSuccessCycle == UINT64_MAX || lastSuccessCycle + 1 != captureCycle;
+	resetHistory = lastSuccessCycle == UINT64_MAX || lastSuccessCycle + 1 != captureCycle ||
+	               lastSuccessMenuScene != capturedMenuScene || lastSuccessMapScene != capturedMapScene;
 	if (upscaling.pendingDLSSReset.exchange(false))
 		resetHistory = true;
 	for (uint32_t eye = 0; eye < 2; ++eye)
@@ -728,6 +1088,8 @@ bool VRSubmitUpscaling::ReconstructPair(ID3D11Texture2D* source, vr::EColorSpace
 	if (FAILED(globals::d3d::device->GetDeviceRemovedReason()))
 		return false;
 	lastSuccessCycle = captureCycle;
+	lastSuccessMenuScene = capturedMenuScene;
+	lastSuccessMapScene = capturedMapScene;
 	reconstructedPairs.fetch_add(1);
 	return true;
 }
@@ -749,6 +1111,8 @@ vr::EVRCompositorError VRSubmitUpscaling::SubmitHook::thunk(vr::IVRCompositor* s
 		return func(self, eye, texture, bounds, flags);
 	auto& upscaling = globals::features::upscaling;
 	if (owner.WantsNativeMenuUI()) {
+		if (eye == vr::Eye_Left)
+			owner.LogMenuDiagnostics(3);
 		winrt::com_ptr<ID3D11Texture2D> menuSource;
 		if (texture->eType == vr::TextureType_DirectX && flags == vr::Submit_Default &&
 			(texture->eColorSpace == vr::ColorSpace_Auto || texture->eColorSpace == vr::ColorSpace_Gamma || texture->eColorSpace == vr::ColorSpace_Linear) &&
@@ -756,7 +1120,11 @@ vr::EVRCompositorError VRSubmitUpscaling::SubmitHook::thunk(vr::IVRCompositor* s
 			owner.ValidateSource(menuSource.get(), eye, bounds) && owner.ResolveNativeMenu(menuSource.get())) {
 			vr::Texture_t replacement = *texture;
 			replacement.handle = owner.menuResolved->resource.get();
-			owner.SetStatus("Menu: full-resolution UI presentation with composition fallback");
+			owner.SetStatus(owner.menuSceneReconstructed ?
+								std::format("Menu: {} scene reconstructed; post-upscale UI draws={} (unsupported={})",
+									owner.capturedMethod == uint32_t(Upscaling::UpscaleMethod::kDLSS) ? "DLSS" : "FSR",
+									owner.menuLayerDraws, owner.menuLayerRejected) :
+								std::format("Menu: full-resolution UI; scene fallback: {}", owner.menuSceneFallback));
 			const auto result = func(self, eye, &replacement, bounds, flags);
 			if (result != vr::VRCompositorError_None) {
 				owner.menuUnavailable = true;

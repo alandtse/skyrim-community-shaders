@@ -1977,7 +1977,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 	// Delete or create resources as necessary
 	CheckResources(upscaleMethod);
-	if (vrSubmit.ShouldUseMenuTAA())
+	if (vrSubmit.IsMenuFrame())
 		upscaleMethod = UpscaleMethod::kTAA;
 
 	// Cache original TAA values for UI
@@ -3181,7 +3181,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		}
 	}
 
-	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA || upscaling.vrSubmit.ShouldUseMenuTAA());
+	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA || upscaling.vrSubmit.ShouldApplyMenuTAA());
 
 	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
 	// When HDR Display is not loaded, ISHDR writes to vanilla kFRAMEBUFFER (SDR path)
@@ -3194,6 +3194,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// Restore kFRAMEBUFFER after ISHDR — hdrTexture now has the HDR scene
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
+
+	if (upscaling.vrSubmit.IsHookActive() && !(hdrLoaded && globals::features::hdrDisplay.settings.enableHDR))
+		upscaling.vrSubmit.ReconstructMenuBackground(uint32_t(a_target));
 
 	Util::SetTemporal(false);
 }

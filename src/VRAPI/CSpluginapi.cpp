@@ -257,7 +257,7 @@ namespace CSPluginAPI
 	UpscalePreset CSInterface001::GetUpscalePreset()
 	{
 		auto& upscaling = globals::features::upscaling;
-		// While PerfMode's render-target hook is active the boot-latched preset is the
+		// While the VR render-target hook is active the boot-latched preset is the
 		// one actually rendering; report it rather than a pending selection.
 		const uint32_t mode = upscaling.vrSubmit.IsHookActive() ?
 		                          upscaling.bootSnapshot.Boot(&Upscaling::Settings::qualityMode) :

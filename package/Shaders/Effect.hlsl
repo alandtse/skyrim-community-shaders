@@ -539,10 +539,10 @@ cbuffer PerGeometry : register(b2)
 #	if defined(LIGHTING)
 float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPosition, uint eyeIndex, inout float shadowVariance)
 {
-	float3 color = DLightColor.xyz * Color::EffectLightingMult();
+	float3 color = Color::Light(DLightColor.xyz) * Color::EffectLightingMult();
 	bool suppressExternalEmittance = SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SuppressExternalEmittance);
 	if (suppressExternalEmittance) {
-		color = ShadowSampling::GetAmbientLighting() + ShadowSampling::GetDirectionalLighting();
+		color = ShadowSampling::GetAmbientLighting() + ShadowSampling::GetEffectDirectionalLighting();
 	}
 
 #		if defined(SKYLIGHTING)
@@ -562,14 +562,14 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 	float3 dirColor;
 	float3 ambientColor;
 #		if defined(SKYLIGHTING) && !defined(INTERIOR)
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor, skylightingDiffuse);
+	ShadowSampling::ExtractEffectLighting(color, dirColor, ambientColor, skylightingDiffuse);
 #		else
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
+	ShadowSampling::ExtractEffectLighting(color, dirColor, ambientColor);
 #		endif
 
 #		if defined(EFFECTS11)
 	if (SharedData::enbSettings.Enable) {
-		dirColor = ShadowSampling::GetDirectionalLighting();
+		dirColor = ShadowSampling::GetEffectDirectionalLighting();
 #			if defined(SKYLIGHTING) && !defined(INTERIOR)
 		ambientColor = ShadowSampling::GetAmbientLighting(skylightingDiffuse);
 #			else
@@ -636,9 +636,9 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 #		else
 		float pointScale = 1.0;
 #		endif
-		color.x += dot(Color::PointLight(PLightColorR.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
-		color.y += dot(Color::PointLight(PLightColorG.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
-		color.z += dot(Color::PointLight(PLightColorB.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
+		color.x += dot(Color::EffectPointLight(PLightColorR.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
+		color.y += dot(Color::EffectPointLight(PLightColorG.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
+		color.z += dot(Color::EffectPointLight(PLightColorB.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
 	}
 
 	return color;
@@ -649,9 +649,9 @@ float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPositi
 	float3 dirColor;
 	float3 ambientColor;
 #		if defined(SKYLIGHTING) && !defined(INTERIOR)
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor, 1.0);
+	ShadowSampling::ExtractEffectLighting(color, dirColor, ambientColor, 1.0);
 #		else
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
+	ShadowSampling::ExtractEffectLighting(color, dirColor, ambientColor);
 #		endif
 
 	static const uint sampleCount = 8;
@@ -837,7 +837,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif
 
 		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult();
+		float3 lightColor = Color::EffectPointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult();
 		propertyColor += lightColor;
 	}
 

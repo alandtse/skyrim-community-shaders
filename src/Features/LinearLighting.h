@@ -33,10 +33,10 @@ struct LinearLighting : Feature
 		float emitColorGamma = 1.8f;
 		float glowmapGamma = 1.8f;
 		float ambientGamma = 1.8f;
-		float fogGamma = 1.97f;
-		float fogAlphaGamma = 1.8f;
-		float effectGamma = 1.4f;
-		float effectAlphaGamma = 1.55f;
+		float fogGamma = 1.8f;
+		float fogAlphaGamma = 1.0f;
+		float effectGamma = 1.8f;
+		float effectAlphaGamma = 1.0f;
 		float skyGamma = 1.8f;
 		float waterGamma = 1.8f;
 		float vlGamma = 1.8f;
@@ -45,10 +45,10 @@ struct LinearLighting : Feature
 		float ambientMult = 1.0f;
 		float vanillaDiffuseColorMult = 1.0f;
 		float emitColorMult = 1.0f;
-		float glowmapMult = 0.66f;
+		float glowmapMult = 1.0f;
 
 		// Effect multipliers
-		float effectLightingMult = 0.32f;
+		float effectLightingMult = 1.0f;
 		float membraneEffectMult = 1.0f;
 		float bloodEffectMult = 1.0f;
 		float projectedEffectMult = 1.0f;

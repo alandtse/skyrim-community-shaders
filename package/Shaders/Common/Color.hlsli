@@ -265,11 +265,15 @@ namespace Color
 #	endif
 	}
 
+	float3 EffectDirectionalLight(float3 color, bool isLinear = false)
+	{
+		return Light(color, isLinear) * SharedData::csUtilitySettings.directionalLightMult;
+	}
+
 	float3 DirectionalLight(float3 color, bool isLinear = false)
 	{
-		return Light(color, isLinear) *
-		       ((ENABLE_LL && !isLinear) ? Math::PI : 1.0f) *
-		       SharedData::csUtilitySettings.directionalLightMult;
+		return EffectDirectionalLight(color, isLinear) *
+		       ((ENABLE_LL && !isLinear) ? Math::PI : 1.0f);
 	}
 
 	float GetPointLightMultiplier(bool isLinear)
@@ -287,12 +291,17 @@ namespace Color
 		return 1.0f;
 	}
 
-	float3 PointLight(float3 color, bool isLinear = false, uint lightFlags = 0)
+	float3 EffectPointLight(float3 color, bool isLinear = false, uint lightFlags = 0)
 	{
 		return Light(color, isLinear) *
-		       ((ENABLE_LL && !isLinear) ? Math::PI : 1.0f) *
 		       GetPointLightMultiplier(isLinear) *
 		       GetPointLightTypeMultiplier(isLinear, lightFlags);
+	}
+
+	float3 PointLight(float3 color, bool isLinear = false, uint lightFlags = 0)
+	{
+		return EffectPointLight(color, isLinear, lightFlags) *
+		       ((ENABLE_LL && !isLinear) ? Math::PI : 1.0f);
 	}
 
 	uint GetVanillaPointLightFlags(uint lightIndex)

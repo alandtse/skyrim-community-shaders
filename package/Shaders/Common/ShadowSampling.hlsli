@@ -176,15 +176,21 @@ namespace ShadowSampling
 		return Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, MinDirectionalLightMultiplier), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
 	}
 
+	float3 GetEffectDirectionalLighting()
+	{
+		float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
+		return Color::EffectDirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, MinDirectionalLightMultiplier), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
+	}
+
 	float3 GetSceneLightingColor()
 	{
 		return GetAmbientLighting() + GetDirectionalLighting();
 	}
 
 #if defined(SKYLIGHTING) && !defined(INTERIOR)
-	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
+	void ExtractLighting(float3 inputColor, float3 directionalLighting, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
 #else
-	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor)
+	void ExtractLighting(float3 inputColor, float3 directionalLighting, out float3 dirColor, out float3 ambientColor)
 #endif
 	{
 #if defined(SKYLIGHTING) && !defined(INTERIOR)
@@ -192,11 +198,9 @@ namespace ShadowSampling
 #else
 		float3 ambientColorAmb = GetAmbientLighting();
 #endif
-		float3 dirLightColorDir = GetDirectionalLighting();
-
 		float inputLuma = Color::RGBToLuminance(inputColor);
 		float ambientLuma = Color::RGBToLuminance(ambientColorAmb);
-		float dirLightLuma = Color::RGBToLuminance(dirLightColorDir);
+		float dirLightLuma = Color::RGBToLuminance(directionalLighting);
 
 		float totalLuma = ambientLuma + dirLightLuma;
 
@@ -208,6 +212,28 @@ namespace ShadowSampling
 		dirColor = dirLightColorAmb;
 		ambientColor = ambientColorAmb;
 	}
+
+#if defined(SKYLIGHTING) && !defined(INTERIOR)
+	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
+	{
+		ExtractLighting(inputColor, GetDirectionalLighting(), dirColor, ambientColor, skylightingDiffuse);
+	}
+
+	void ExtractEffectLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
+	{
+		ExtractLighting(inputColor, GetEffectDirectionalLighting(), dirColor, ambientColor, skylightingDiffuse);
+	}
+#else
+	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor)
+	{
+		ExtractLighting(inputColor, GetDirectionalLighting(), dirColor, ambientColor);
+	}
+
+	void ExtractEffectLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor)
+	{
+		ExtractLighting(inputColor, GetEffectDirectionalLighting(), dirColor, ambientColor);
+	}
+#endif
 }
 
 #endif  // __SHADOW_SAMPLING_DEPENDENCY_HLSL__

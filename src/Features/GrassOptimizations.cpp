@@ -727,7 +727,7 @@ ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 
 static void WriteArgsUint32(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, uint32_t byteOffset, uint32_t value)
 {
-	const D3D11_BOX box{ byteOffset, 0, 0, byteOffset + sizeof(uint32_t), 1, 1 };
+	const D3D11_BOX box{ byteOffset, 0, 0, byteOffset + static_cast<uint32_t>(sizeof(uint32_t)), 1, 1 };
 	ctx->UpdateSubresource(buf, 0, &box, &value, 0, 0);
 }
 

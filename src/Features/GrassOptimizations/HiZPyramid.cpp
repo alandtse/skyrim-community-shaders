@@ -3,6 +3,7 @@
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "Profiler.h"
+#include "State.h"
 
 void HiZPyramid::SetupResources()
 {
@@ -123,7 +124,10 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	if (!paramsCB || !globals::game::renderer)
 		return false;
 
-	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+	// graphicsState->screenWidth/Height reads the desktop preview window's resolution on VR, not the
+	// HMD's real render target (see State.cpp's own screenSize comment); use the cached value derived
+	// from the actual kMAIN texture instead, same as every other VR-aware feature.
+	float2 screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	const uint32_t srcW = std::max(1u, (uint32_t)std::lround(renderSize.x));

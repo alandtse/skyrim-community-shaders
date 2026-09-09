@@ -1,5 +1,6 @@
 #include "GrassOptimizations.h"
 #include "GrassLighting.h"
+#include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
 
 #define I18N_KEY_PREFIX "feature.grass_optimizations."
@@ -337,7 +338,10 @@ void GrassOptimizations::UpdateGrass()
 		cp.lodFadeBand = 0.15f;
 
 		const auto& vf = cam->GetRuntimeData2().viewFrustum;
-		const auto [screenW, screenH] = globals::game::renderer->GetScreenSize();
+		// Renderer::GetScreenSize() reads the desktop preview window's resolution on VR, not the
+		// HMD's real render target (see State.cpp's own screenSize comment); use the cached value
+		// derived from the actual kMAIN texture instead, same as every other VR-aware feature.
+		const float screenH = globals::state->screenSize.y;
 		cp.meshCostBias = settings.MeshCostBias;
 		cp.projScale = screenH / (2.0f * std::abs(vf.fTop));
 		cp.maxDistSq = maxDistSq;

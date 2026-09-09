@@ -1,4 +1,5 @@
 #include "GrassOptimizations.h"
+#include "GpuPass.h"
 #include "GrassLighting.h"
 #include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
@@ -279,10 +280,11 @@ void GrassOptimizations::UpdateGrass()
 
 	bucketStore.BeginFrame({ settings.EnableMeshLOD, settings.EnableMidLOD, settings.EnableFarLOD, timeAccum });
 
-	globals::profiler->BeginPass("GrassOptimizations::ApplyPending");
-	bucketStore.RefreshComplexGrass(globals::features::grassLighting.settings.ComplexGrassThreshold, ctx);
-	bucketStore.ApplyPending(device, ctx);
-	globals::profiler->EndPass();
+	{
+		CS_GPU_PASS("GrassOptimizations::ApplyPending");
+		bucketStore.RefreshComplexGrass(globals::features::grassLighting.settings.ComplexGrassThreshold, ctx);
+		bucketStore.ApplyPending(device, ctx);
+	}
 
 	RE::NiCamera* cam = RE::Main::WorldRootCamera();
 	if (!cam) {
@@ -375,31 +377,33 @@ void GrassOptimizations::UpdateGrass()
 	uint32_t visibleBuckets = 0;
 	sliceTableCPU.clear();
 
-	// Measures the CPU time spent frustum culling bucket slices
-	globals::profiler->BeginPass("GrassOptimizations::SliceCull");
-	for (auto& [key, b] : bucketStore.buckets) {
-		b.ResetCullState();
-		if (!b.totalInstances || !b.instanceSRV)
-			continue;
+	{
+		// Measures the CPU time spent frustum culling bucket slices
+		CS_GPU_PASS("GrassOptimizations::SliceCull");
+		for (auto& [key, b] : bucketStore.buckets) {
+			b.ResetCullState();
+			if (!b.totalInstances || !b.instanceSRV)
+				continue;
 
-		if (!b.coarseValid)
-			bucketStore.UpdateCoarseBounds(b);
+			if (!b.coarseValid)
+				bucketStore.UpdateCoarseBounds(b);
 
-		CullBucketSlices(b, frustumSoAs, frustumCount, camPosV);
+			CullBucketSlices(b, frustumSoAs, frustumCount, camPosV);
 
-		if (!b.cullVisible)
-			continue;
+			if (!b.cullVisible)
+				continue;
 
-		for (uint32_t tier = 0; tier < (uint32_t)GrassMeshLibrary::LODTier::kCount; ++tier)
-			b.lodBins[tier].active = bucketStore.EnsureLODBin(b, (GrassMeshLibrary::LODTier)tier, device);
-		++visibleBuckets;
+			for (uint32_t tier = 0; tier < (uint32_t)GrassMeshLibrary::LODTier::kCount; ++tier)
+				b.lodBins[tier].active = bucketStore.EnsureLODBin(b, (GrassMeshLibrary::LODTier)tier, device);
+			++visibleBuckets;
+		}
 	}
-	globals::profiler->EndPass();
 
-	// Measures the slice table upload, the per-bucket constants, and the cull dispatch per visible bucket.
-	globals::profiler->BeginPass("GrassOptimizations::InstanceCull");
-	UploadCullState(device, ctx, visibleBuckets);
-	globals::profiler->EndPass();
+	{
+		// Measures the slice table upload, the per-bucket constants, and the cull dispatch per visible bucket.
+		CS_GPU_PASS("GrassOptimizations::InstanceCull");
+		UploadCullState(device, ctx, visibleBuckets);
+	}
 }
 
 void GrassOptimizations::MergeSlicesIntoRuns(GrassBucket& b)
@@ -981,6 +985,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		b->drawnFrame = frame;
 		b->drawnPassKey = passKey;
 	}
+
+	CS_GPU_PASS("GrassOptimizations::Draw");
 
 	// b outlives the lock: buckets is node-based and only UpdateGrass erases, on this same thread.
 	if (!b->cullVisible) {

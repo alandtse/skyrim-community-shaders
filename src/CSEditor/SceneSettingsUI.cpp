@@ -2999,8 +2999,7 @@ namespace SceneSettingsUI
 			return false;
 		}
 		if (state.saveFailed && manager->HasPendingFeatureSceneEdits())
-			ImGui::TextColored(Util::Colors::GetError(), "%s", T("feature.scene_manager.edit.save_failed",
-				"Could not save scene settings. Your unsaved changes are kept. Try Save Settings again."));
+			ImGui::TextColored(Util::Colors::GetError(), "%s", T("feature.scene_manager.edit.save_failed", "Could not save scene settings. Your unsaved changes are kept. Try Save Settings again."));
 		if (manager->HasFeatureSceneEditOverwrites() || manager->AreFeatureSceneEditOverwritesPaused()) {
 			const bool paused = manager->AreFeatureSceneEditOverwritesPaused();
 			ImGui::TextColored(Util::Colors::GetError(), "%s", paused ? T("feature.scene_manager.edit.overwrites_paused", "Feature overwrites are temporarily paused") : T("feature.scene_manager.edit.overwritten_warning", "Feature settings are being overwritten"));
@@ -5533,7 +5532,9 @@ namespace SceneSettingsUI
 		auto* manager = SceneSettingsManager::GetSingleton();
 		auto removeIndices = [&](const std::vector<size_t>& indices) {
 			manager->RemoveSceneSettings({ .type = SceneSettingsManager::SceneContextType::Location,
-				.locationType = target.type, .locationFormKey = target.formKey }, indices);
+											 .locationType = target.type,
+											 .locationFormKey = target.formKey },
+				indices);
 		};
 		auto getSourceIndices = [&](EntrySource source) {
 			std::vector<size_t> indices;

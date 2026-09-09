@@ -5292,7 +5292,7 @@ void SceneSettingsManager::RemoveSceneSettings(const SceneContextId& context, st
 			userIndices.insert(index);
 		else {
 			const auto path = context.type == SceneContextType::Weather ? GetWeatherOverwritePath(context.weatherId, entry) :
-			                                                            GetLocationOverwritePath(context.locationType, context.locationFormKey, entry);
+			                                                              GetLocationOverwritePath(context.locationType, context.locationFormKey, entry);
 			if (!path.empty())
 				overwriteSettings[path].insert({ entry.featureShortName, entry.settingPath, entry.settingKey });
 		}

@@ -287,8 +287,8 @@ float WindScalar(float basis, float timer)
 	// eyeSlotBase must match the StartInstanceLocation baked into eye 1's args block (GrassOptimizations.cpp)
 	// so the draw's vertex stream lines up. The VS reads InstanceExtras with its own eye slot base
 	// (GrassOptimizationsEyeCB) since SV_InstanceID, unlike the vertex stream, excludes StartInstanceLocation.
-	static const uint ARGS_BLOCK_STRIDE = 32;
-	const uint eyeByteOffset = eyeIndex * ARGS_BLOCK_STRIDE;
+	static const uint kArgsBlockStride = 32;
+	const uint eyeByteOffset = eyeIndex * kArgsBlockStride;
 	const uint eyeSlotBase = eyeIndex * OutputCapacityPerEye;
 
 	uint slot;

@@ -691,7 +691,6 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
 {
-	SceneManagerUI::EndFeaturePageEditing(true);
 	ProfilingRenderer::DeactivateFeatureTimers();
 	ImGui::PushID(menu.name.c_str());
 	if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
@@ -707,14 +706,12 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const std::string&)
 {
-	SceneManagerUI::EndFeaturePageEditing(true);
 	// std::unreachable() from c++23
 	// you are not supposed to have selected a label!
 }
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const CategoryHeader&)
 {
-	SceneManagerUI::EndFeaturePageEditing(true);
 	// Category headers are not selectable in the right panel
 	ImGui::TextDisabled("%s", T("menu.features.select_feature_left", "Please select a feature from the left."));
 }
@@ -722,7 +719,6 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(const CategoryHeader&)
 void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 {
 	if (feat == &globals::features::csEditor) {
-		SceneManagerUI::EndFeaturePageEditing(true);
 		ProfilingRenderer::DeactivateFeatureTimers();
 		return;
 	}
@@ -958,7 +954,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 						!isDisabled && isLoaded,
 						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
 					if (sceneEditing)
-						SceneManagerUI::EndFeaturePageEditing(true);
+						SceneManagerUI::HideFeaturePageEditing();
 					else
 						SceneManagerUI::BeginFeaturePageEditing(feat);
 					closeFlyout = true;
@@ -1066,13 +1062,11 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
 		ImGui::Text("%s", T("menu.features.enable_to_access_config", "Enable the feature above to access its configuration options."));
 	} else {
 		if (isLoaded) {
-			// Scene-specific settings toggle
-			// Show toggle whenever scene entries exist for this feature, even if feature-paused
 			if (!sceneEditing) {
 				const auto& featureShortName = feat->GetShortName();
 				auto* sceneMgr = globals::sceneSettingsManager;
 				bool scenePaused = sceneMgr->IsFeaturePaused(featureShortName);
-				if (sceneMgr->HasAnySceneEntriesForFeature(featureShortName) || scenePaused) {
+				if (sceneMgr->HasCurrentSceneSettingsForFeature(featureShortName)) {
 					const auto rowStart = ImGui::GetCursorScreenPos();
 					const float rowHeight = ImGui::GetFrameHeight();
 					const ImVec2 toggleSize(rowHeight * 1.6f, rowHeight * 0.8f);

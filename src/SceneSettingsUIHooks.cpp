@@ -115,6 +115,8 @@ namespace
 		SceneSettingsCatalog::AggregateSemantic, std::int8_t, std::uint8_t>;
 	thread_local const BlockedFeatureSceneEditSettings* g_blockedFeatureSceneEditSettings = nullptr;
 	thread_local BlockedFeatureSceneEditSettings g_cachedBlockedFeatureSceneEditSettings;
+	thread_local BlockedFeatureSceneEditSettings g_cachedAlteredFeatureSceneEditSettings;
+	thread_local std::map<LogicalControlKey, const SceneSettingsCatalog::SettingMetadata*> g_cachedAlteredFeatureSceneEditAggregates;
 	thread_local std::map<LogicalControlKey, const SceneSettingsCatalog::SettingMetadata*>
 		g_cachedBlockedFeatureSceneEditAggregates;
 	thread_local std::string g_cachedFeatureSceneEditFeature;
@@ -235,15 +237,23 @@ namespace
 			return;
 
 		g_cachedBlockedFeatureSceneEditSettings.clear();
+		g_cachedAlteredFeatureSceneEditSettings.clear();
+		g_cachedAlteredFeatureSceneEditAggregates.clear();
 		g_cachedBlockedFeatureSceneEditAggregates.clear();
 		g_cachedFeatureSceneEditFeature = featureShortName;
 		g_cachedFeatureSceneEditRevision = revision;
 		g_cachedFeatureSceneEditCaptureAllowed = captureAllowed;
 		std::set<LogicalControlKey> blockedAggregates;
 		for (const auto& setting : SceneSettingsCatalog::GetSettings()) {
+			if (captureAllowed && setting.featureShortName == featureShortName &&
+				manager->IsFeatureSceneEditSettingAltered(setting.featureShortName, setting.settingPath, setting.settingKey)) {
+				g_cachedAlteredFeatureSceneEditSettings.insert(&setting);
+				if (setting.aggregateSemantic != SceneSettingsCatalog::AggregateSemantic::None)
+					g_cachedAlteredFeatureSceneEditAggregates.try_emplace(GetLogicalControlKey(setting), &setting);
+			}
 			if (setting.featureShortName != featureShortName ||
-				(captureAllowed && manager->IsFeatureSceneEditSetting(
-									   setting.featureShortName, setting.settingPath, setting.settingKey)))
+				(captureAllowed && manager->IsFeatureSceneEditSetting(setting.featureShortName, setting.settingPath, setting.settingKey) &&
+					!manager->IsFeatureSceneEditSettingOverwritten(setting.featureShortName, setting.settingPath, setting.settingKey)))
 				continue;
 			g_cachedBlockedFeatureSceneEditSettings.insert(&setting);
 			if (setting.aggregateSemantic != SceneSettingsCatalog::AggregateSemantic::None) {
@@ -283,6 +293,31 @@ namespace
 		return !IsFeatureSceneEditSetting(setting);
 	}
 
+	bool ShouldOutlineSetting(const SceneSettingsCatalog::SettingMetadata& setting)
+	{
+		return g_featureSceneEditing && g_cachedAlteredFeatureSceneEditSettings.contains(&setting);
+	}
+
+	struct SettingOutlineGuard
+	{
+		bool outlined;
+		explicit SettingOutlineGuard(const SceneSettingsCatalog::SettingMetadata* setting) :
+			outlined(setting && ShouldOutlineSetting(*setting))
+		{
+			if (!outlined)
+				return;
+			ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, std::max(ImGui::GetStyle().FrameBorderSize, Util::GetUIScale()));
+		}
+		~SettingOutlineGuard()
+		{
+			if (outlined) {
+				ImGui::PopStyleVar();
+				ImGui::PopStyleColor();
+			}
+		}
+	};
+
 	const SceneSettingsCatalog::SettingMetadata* FindUniqueBlockedSettingForLabel(
 		const char* label, bool choiceLabelsOnly)
 	{
@@ -295,7 +330,7 @@ namespace
 			if (candidate.featureShortName != featureShortName ||
 				!SceneSettingsCatalog::IsSceneControllable(candidate) ||
 				!MatchesSettingLabel(candidate, label, choiceLabelsOnly) ||
-				!ShouldBlockSetting(candidate))
+				(!ShouldBlockSetting(candidate) && !ShouldOutlineSetting(candidate)))
 				continue;
 			if (match && !IsSameLogicalControl(*match, candidate))
 				return nullptr;
@@ -310,9 +345,10 @@ namespace
 		if (g_featureSceneEditing) {
 			const auto match = g_cachedBlockedFeatureSceneEditAggregates.find(
 				GetLogicalControlKey(aggregate));
-			return match != g_cachedBlockedFeatureSceneEditAggregates.end() ?
-			           match->second :
-			           nullptr;
+			if (match != g_cachedBlockedFeatureSceneEditAggregates.end())
+				return match->second;
+			const auto altered = g_cachedAlteredFeatureSceneEditAggregates.find(GetLogicalControlKey(aggregate));
+			return altered != g_cachedAlteredFeatureSceneEditAggregates.end() ? altered->second : nullptr;
 		}
 		for (const auto& candidate : SceneSettingsCatalog::GetSettings()) {
 			if (candidate.featureShortName == aggregate.featureShortName &&
@@ -382,7 +418,7 @@ namespace
 				setting->featureShortName, setting->settingPath, setting->settingKey))
 			return g_featureSceneEditing ? setting : nullptr;
 		if (setting->aggregateSemantic == SceneSettingsCatalog::AggregateSemantic::None)
-			return ShouldBlockSetting(*setting) ? setting : nullptr;
+			return ShouldBlockSetting(*setting) || ShouldOutlineSetting(*setting) ? setting : nullptr;
 		return FindBlockedAggregateSetting(*setting);
 	}
 
@@ -429,7 +465,9 @@ namespace
 		if (g_controlDetourDepth > 0)
 			return draw();
 		ClearControlledItem();
-		if (!FindControlSetting(label, valueAddress))
+		const auto* setting = FindControlSetting(label, valueAddress);
+		SettingOutlineGuard outline(setting);
+		if (!setting || !ShouldBlockSetting(*setting))
 			return TrackFeatureSettingMutation(draw());
 
 		ImGui::BeginDisabled();
@@ -493,7 +531,9 @@ namespace
 		if (g_controlDetourDepth > 0)
 			return g_button(label, size);
 		ClearControlledItem();
-		if (!FindControlSetting(label, nullptr, true))
+		const auto* setting = FindControlSetting(label, nullptr, true);
+		SettingOutlineGuard outline(setting);
+		if (!setting || !ShouldBlockSetting(*setting))
 			return TrackFeatureSettingMutation(g_button(label, size));
 
 		ImGui::BeginDisabled();
@@ -732,7 +772,9 @@ namespace
 		if (g_controlDetourDepth > 0)
 			return g_beginCombo(label, previewValue, flags);
 		ClearControlledItem();
-		if (!FindControlSetting(label, nullptr))
+		const auto* setting = FindControlSetting(label, nullptr);
+		SettingOutlineGuard outline(setting);
+		if (!setting || !ShouldBlockSetting(*setting))
 			return g_beginCombo(label, previewValue, flags);
 
 		ImGui::BeginDisabled();

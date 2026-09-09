@@ -307,6 +307,6 @@ namespace SceneSettingsUI
 	/// Draw the active feature-page scene toolbar and return whether the page is editing.
 	bool DrawFeaturePageControls(Feature* feature, bool enabled);
 
-	/// Finish the active feature-page scene edit session.
-	void EndFeaturePageEditing(bool storeChanges = true);
+	/// Hide the toolbar without saving, discarding, or stopping its scene preview.
+	void HideFeaturePageEditing();
 }

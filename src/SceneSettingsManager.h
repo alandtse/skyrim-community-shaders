@@ -153,6 +153,7 @@ public:
 	{
 		size_t count = 0;
 		size_t paused = 0;
+		size_t activeOverwrites = 0;
 
 		bool Empty() const { return count == 0; }
 		bool AllPaused() const { return count != 0 && paused == count; }
@@ -234,7 +235,8 @@ public:
 
 	/// Check if any scene settings are active for a given feature
 	bool HasActiveSettingsForFeature(const std::string& featureShortName) const;
-	bool HasAnySceneEntriesForFeature(const std::string& featureShortName) const;
+	/// Applied settings, or settings in the current scene that can resume from a feature-wide pause.
+	bool HasCurrentSceneSettingsForFeature(const std::string& featureShortName) const;
 	bool IsActiveSceneSetting(std::string_view featureShortName,
 		std::string_view settingPath, std::string_view settingKey) const;
 	bool IsActiveSceneSetting(const std::string& featureShortName,
@@ -425,7 +427,22 @@ public:
 	struct PeriodicSceneConfig
 	{
 		bool timeOfDayEnabled = false;
+		std::optional<bool> userTimeOfDayEnabled;
+		std::optional<bool> overwriteTimeOfDayEnabled;
 		std::vector<SettingEntry> entries;
+
+		/// Resolve the local preference before imported defaults or an unambiguous saved set.
+		void RefreshTimeOfDayMode()
+		{
+			if (userTimeOfDayEnabled)
+				timeOfDayEnabled = *userTimeOfDayEnabled;
+			else if (overwriteTimeOfDayEnabled)
+				timeOfDayEnabled = *overwriteTimeOfDayEnabled;
+			else
+				timeOfDayEnabled = !entries.empty() && std::ranges::all_of(entries, [](const auto& entry) {
+					return entry.period >= TimeOfDayPeriod::Dawn && entry.period < TimeOfDayPeriod::Count;
+				});
+		}
 
 		/// Select the saved set without converting or copying its values.
 		bool IsPeriodActive(TimeOfDayPeriod period) const
@@ -567,6 +584,13 @@ public:
 		auto operator<=>(const SceneContextId&) const = default;
 	};
 
+	/// Summarize saved entries and entry pauses in both layers; an empty feature includes every feature.
+	EntryLayerSummary GetFeatureSceneSummary(std::string_view featureShortName, const SceneContextId& context, bool matchPeriod = true) const;
+	/// Summarize every saved target and mode of one scene kind for a feature.
+	EntryLayerSummary GetFeatureSceneSummary(std::string_view featureShortName, SceneContextType type) const;
+	/// Pause or resume both ownership layers for this feature in the selected saved scene set.
+	void SetFeatureSceneSettingsPaused(std::string_view featureShortName, const SceneContextId& context, bool paused);
+
 	/// How an existing destination user setting is handled.
 	enum class CopyConflictPolicy : std::uint8_t
 	{
@@ -656,6 +680,16 @@ public:
 		std::string_view settingPath, std::string_view settingKey) const;
 	/** @brief Return whether the active feature-page edit session has unstored changes. */
 	bool HasPendingFeatureSceneEdits() const;
+	/// Temporarily bypass overwrites in the current feature preview without changing saved pause flags.
+	void SetFeatureSceneEditOverwritesPaused(bool paused);
+	bool AreFeatureSceneEditOverwritesPaused() const;
+	bool HasFeatureSceneEditOverwrites(const SceneContextId* context = nullptr,
+		bool matchPeriod = true, bool wholeType = false) const;
+	/// Return whether an active overwrite locks this control in the current preview.
+	bool IsFeatureSceneEditSettingOverwritten(std::string_view featureShortName,
+		std::string_view settingPath, std::string_view settingKey) const;
+	bool IsFeatureSceneEditSettingAltered(std::string_view featureShortName,
+		std::string_view settingPath, std::string_view settingKey) const;
 	/** @brief Return the generation of the active feature-page edit context. */
 	std::uint64_t GetFeatureSceneEditRevision() const { return featureSceneEditRevision; }
 
@@ -690,7 +724,7 @@ private:
 
 	std::atomic<bool> queuedLoadingTransition = false;
 
-	/// Float epsilon - changes smaller than this skip the LoadSettings call.
+	/// Minimum blend-progress or real-time change before advancing the resolver.
 	static constexpr float kBlendEpsilon = 1e-3f;
 
 	/// Minimum game-hour delta before re-running the blend. At the default
@@ -704,6 +738,7 @@ private:
 	// --- Per-Weather Scene storage ---
 	std::map<RE::FormID, WeatherSceneConfig> weatherSceneConfigs;
 	static const WeatherSceneConfig kEmptyWeatherConfig;
+	std::map<SceneContextId, std::set<std::filesystem::path>> overwriteBackingFiles;
 
 	/// UI preference per weather: show TOD table vs flat view (keyed by FormID for fast access).
 
@@ -744,6 +779,9 @@ private:
 		json workingSettings = json::object();
 		ResolvedSettingMap workingOverrides;
 		bool dirty = false;
+		bool overwritesPaused = false;
+		std::set<SettingAddress> overwriteAddresses;
+		std::set<SettingAddress> alteredAddresses;
 	};
 	ResolvedSettingMap baselineSettings;
 	ResolvedSettingMap appliedSettings;
@@ -839,7 +877,6 @@ private:
 	bool cachedLocationOverridesValid = false;
 	bool locationOverridesDirty = true;
 	std::optional<FeatureSceneEditState> featureSceneEdit;
-	bool featureSceneEditAutoCloseAttempted = false;
 	std::uint64_t featureSceneEditRevision = 0;
 
 	// --- Per-Weather helpers ---
@@ -885,7 +922,9 @@ private:
 		const ResolvedSettingMap* userLocationValues,
 		std::span<const SettingAddress> addressFilter = {},
 		const PeriodSettingMap* userLocationPeriods = nullptr,
-		const PeriodSettingMap* overwriteLocationPeriods = nullptr, bool transitionStart = false) const;
+		const PeriodSettingMap* overwriteLocationPeriods = nullptr, bool transitionStart = false,
+		bool applyOverwrites = true, std::set<SettingAddress>* appliedOverwrites = nullptr,
+		std::set<SettingAddress>* appliedSceneSettings = nullptr) const;
 	void ResolveTimeOfDaySettings(ResolvedSettingMap& resolved, const PeriodSettingMap& values,
 		const std::array<float, kPeriodCount>& factors) const;
 	void ResolveWeatherSettings(ResolvedSettingMap& resolved, const PeriodSettingMap& timeOfDayValues,
@@ -915,6 +954,7 @@ private:
 		std::string_view formKey, std::optional<EntrySource> selectedSource = std::nullopt,
 		TimeOfDayPeriod period = TimeOfDayPeriod::Count);
 	static bool ResolvedValuesEqual(const json& lhs, const json& rhs);
+	static bool AppliedValuesEqual(const json& actual, const json& expected);
 	static size_t GetCatalogUpdateSignature(std::string_view featureShortName,
 		std::span<const CatalogSceneSettingUpdate> updates);
 	bool ApplyCatalogSceneSettings(
@@ -924,7 +964,7 @@ private:
 		std::span<const SettingAddress> restorationAddresses = {});
 	void VerifyPendingApplies(bool overdueOnly = false);
 	bool SnapshotFeatureSceneEdit(Feature& feature, json& snapshot) const;
-	void RefreshFeatureSceneEditOverrides();
+	void RefreshFeatureSceneEditOverrides(json liveSettings);
 	void RebaseFeatureSceneEditPreview();
 	void ApplyFeatureSceneEditPreview(ResolvedSettingMap& resolved);
 	bool IsFeatureSceneEditPreviewActive() const;
@@ -968,14 +1008,13 @@ private:
 	};
 	mutable std::map<std::string, CachedFeaturePresentation> featurePresentationCache;
 	mutable std::map<std::string, json> featureBaseSnapshots;
-	mutable std::set<std::string> configuredFeatureNamesCache;
-	mutable std::uint64_t configuredFeatureNamesRevision = std::numeric_limits<std::uint64_t>::max();
 	std::set<std::string> appliedFeatureNames;
 	const std::vector<SettingDescriptor>& GetCachedFeatureSceneSettings(
 		SceneType type, const std::string& featureShortName);
 	void InvalidateFeatureSnapshot(std::string_view featureShortName = {});
 
 	const std::vector<SettingEntry>* GetCopyContextEntries(const SceneContextId& context) const;
+	std::vector<SettingEntry>* GetCopyContextEntriesMut(const SceneContextId& context);
 	bool IsCopyEntryCompatible(const SettingEntry& entry, SceneContextType destinationType) const;
 	std::vector<CopyCandidate> BuildCopyCandidates(const SceneContextId& source,
 		const SceneContextId& destination, EntrySource sourceLayer,

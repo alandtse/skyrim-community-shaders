@@ -25,9 +25,9 @@ namespace SceneManagerUI
 		return SceneSettingsUI::DrawFeaturePageControls(feature, enabled);
 	}
 
-	void EndFeaturePageEditing(bool storeChanges)
+	void HideFeaturePageEditing()
 	{
-		SceneSettingsUI::EndFeaturePageEditing(storeChanges);
+		SceneSettingsUI::HideFeaturePageEditing();
 	}
 
 	void Draw()

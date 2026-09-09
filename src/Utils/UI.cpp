@@ -166,6 +166,56 @@ namespace Util
 		return pressed;
 	}
 
+	struct DialogSizeAnimation
+	{
+		ImVec2 size;
+		ImGuiSizeCallback callback = nullptr;
+		void* callbackData = nullptr;
+	};
+
+	static void AnimateDialogSize(ImGuiSizeCallbackData* data)
+	{
+		auto& animation = *static_cast<DialogSizeAnimation*>(data->UserData);
+		if (animation.callback) {
+			data->UserData = animation.callbackData;
+			animation.callback(data);
+			data->UserData = &animation;
+		}
+		const float blend = 1.0f - std::exp(-ThemeManager::Constants::DIALOG_RESIZE_RESPONSE * ImGui::GetIO().DeltaTime);
+		for (int axis = 0; axis < 2; ++axis) {
+			const float difference = data->DesiredSize[axis] - animation.size[axis];
+			const float step = std::min(std::abs(difference), std::ceil(std::abs(difference) * blend));
+			data->DesiredSize[axis] = animation.size[axis] + std::copysign(step, difference);
+		}
+	}
+
+	static void PrepareDialogSizeAnimation(ImGuiWindow* window, ImGuiWindowFlags flags, DialogSizeAnimation& animation)
+	{
+		const auto& context = *GImGui;
+		if (!(flags & ImGuiWindowFlags_AlwaysAutoResize) || !window || window->Hidden ||
+			window->LastFrameActive != context.FrameCount - 1 || window->AutoFitFramesX > 0 || window->AutoFitFramesY > 0)
+			return;
+		animation.size = window->SizeFull;
+		const bool constrained = context.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasSizeConstraint;
+		const auto bounds = constrained ? context.NextWindowData.SizeConstraintRect : ImRect(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+		if (constrained) {
+			animation.callback = context.NextWindowData.SizeCallback;
+			animation.callbackData = context.NextWindowData.SizeCallbackUserData;
+		}
+		ImGui::SetNextWindowSizeConstraints(bounds.Min, bounds.Max, AnimateDialogSize, &animation);
+	}
+
+	static ImGuiWindow* GetOpenDialogWindow(const char* id)
+	{
+		const auto& context = *GImGui;
+		if (context.OpenPopupStack.Size > context.BeginPopupStack.Size) {
+			const auto& popup = context.OpenPopupStack[context.BeginPopupStack.Size];
+			if (popup.PopupId == ImGui::GetID(id) && popup.OpenFrameCount < context.FrameCount - 1)
+				return popup.Window;
+		}
+		return nullptr;
+	}
+
 	static bool BeginDialogPopup(const char* id, const char* title, bool* open, bool modal, ImGuiWindowFlags flags)
 	{
 		if (!(GImGui->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasSize))
@@ -173,6 +223,8 @@ namespace Util
 												ImGui::GetStyle().WindowPadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x,
 										 0.0f),
 				ImGuiCond_Appearing);
+		DialogSizeAnimation animation;
+		PrepareDialogSizeAnimation(GetOpenDialogWindow(id), flags, animation);
 		const bool visible = [&] {
 			ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, ImGui::GetStyle().WindowRounding);
 			ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
@@ -1109,6 +1161,8 @@ namespace Util
 
 	bool BeginWithRoundedClose(const char* name, bool* p_open, ImGuiWindowFlags flags)
 	{
+		DialogSizeAnimation animation;
+		PrepareDialogSizeAnimation(ImGui::FindWindowByName(name), flags, animation);
 		bool visible = false;
 		{
 			NativeTitleBarButtonHighlightGuard guard;
@@ -1120,6 +1174,8 @@ namespace Util
 
 	bool BeginPopupModalWithRoundedClose(const char* name, bool* p_open, ImGuiWindowFlags flags)
 	{
+		DialogSizeAnimation animation;
+		PrepareDialogSizeAnimation(GetOpenDialogWindow(name), flags, animation);
 		bool visible = false;
 		{
 			NativeTitleBarButtonHighlightGuard guard;

@@ -196,6 +196,7 @@ public:
 		static constexpr float SEPARATOR_THICKNESS = 3.0f;
 		static constexpr float UNDOCKED_ICON_ITEM_SPACING = 6.0f;
 		static constexpr float POPUP_BUTTON_WIDTH = 180.0f;
+		static constexpr float DIALOG_RESIZE_RESPONSE = 20.0f;
 		static constexpr float EDITOR_VIEWPORT_BACKGROUND_DIM_ALPHA = 0.35f;  // Extra backdrop dim while the CS Editor viewport is open
 
 		// Feature header constants

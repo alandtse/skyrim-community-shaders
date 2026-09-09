@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Feature.h"
+#include "Utils/LazyShader.h"
 
 #include <array>
 #include <filesystem>
@@ -22,6 +23,7 @@ private:
 
 	static constexpr uint32_t kMaximumDropCount = 131072;
 	static constexpr uint32_t kRainComputeGroupSize = 128;
+	static constexpr uint32_t kRainLightCacheSize = 16384;
 	static constexpr uint32_t kMaximumCompactionGroupCount = kMaximumDropCount / kRainComputeGroupSize;
 	static constexpr uint32_t kMaximumDebugMode = 8;
 	static constexpr uint32_t kMinimumRuntimeDropCount = 1;
@@ -79,8 +81,8 @@ public:
 		uint ForceRainRendering = 0;
 		uint EnableRainRoofOcclusion = 1;
 		uint EnableRainWind = 1;
-		uint RainDropCount = 65536;
-		uint RainOverheadDropCount = 32;
+		uint RainDropCount = 32000;
+		uint RainOverheadDropCount = 64;
 		float RainDensity = 2.0f;
 		float RainFallSpeed = 2336.0f;
 		float RainWindInfluence = 2.0f;
@@ -89,17 +91,17 @@ public:
 		float RainVelocityStretch = 0.045f;
 		float RainStreakWidth = 1.54f;
 
-		float RainOpacity = 0.20f;
+		float RainOpacity = 0.30f;
 		float RainBrightness = 0.85f;
 		float RainLightingResponse = 0.13f;
-		float RainMinimumVisibility = 0.02f;
+		float RainMinimumVisibility = 0.05f;
 		float RainNearCutoffDistance = 4.0f;
-		float RainFarDistance = 10468.0f;
-		float RainNearLayerDistance = 1324.0f;
-		float RainMidLayerDistance = 3056.0f;
-		float RainNearBudgetWeight = 1.01f;
+		float RainFarDistance = 5000.0f;
+		float RainNearLayerDistance = 900.0f;
+		float RainMidLayerDistance = 2500.0f;
+		float RainNearBudgetWeight = 1.0f;
 		float RainMidBudgetWeight = 1.00f;
-		float RainFarBudgetWeight = 0.44f;
+		float RainFarBudgetWeight = 1.0f;
 		float RainDensityNoiseScale = 2596.0f;
 		float RainDensityNoiseStrength = 0.76f;
 
@@ -158,9 +160,11 @@ public:
 		float4 MaterialLighting;
 		float4 RoofOcclusion;
 		float4 VanillaWind;
+		std::array<float4, 12> FrustumPlanes;
+		std::array<float, 12> FrustumPlaneLengths;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	static_assert(sizeof(PerFrame) == 368, "RainRendering::PerFrame must match the rain shaders");
+	static_assert(sizeof(PerFrame) == 608, "RainRendering::PerFrame must match the rain shaders");
 
 	/** @brief Shared particle-shader controls for replacing Skyrim rain. */
 	struct alignas(16) CommonBuffer
@@ -180,6 +184,19 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(DropData);
 	static_assert(sizeof(DropData) == 64, "RainRendering::DropData must match RainRendering.hlsl");
+
+	/** @brief World-space representative and lighting stored in the shared GPU cache. */
+	struct alignas(16) CachedLightData
+	{
+		float4 Position;
+		float4 IrradianceScattering;
+		float4 Direction;
+	};
+	static_assert(sizeof(CachedLightData) == 48, "RainRendering::CachedLightData must match RainCachedLight");
+	static_assert((kRainLightCacheSize & (kRainLightCacheSize - 1)) == 0);
+
+	/** @brief Installs the shared precipitation hook through the feature lifecycle. */
+	void PostPostLoad() override;
 
 	Settings settings;
 
@@ -234,6 +251,7 @@ private:
 	};
 
 	void DrawRain();
+	void UpdateSharedLighting(uint32_t a_groupCount);
 	void DrawGeneralSettings();
 	void DrawVolumeSettings();
 	void DrawMotionSettings();
@@ -270,21 +288,26 @@ private:
 
 	std::unique_ptr<ConstantBuffer> perFrameCB;
 	std::unique_ptr<StructuredBuffer> dropBuffer;
+	std::unique_ptr<StructuredBuffer> lightClaimBuffer;
+	std::unique_ptr<StructuredBuffer> lightCacheBuffer;
 	std::unique_ptr<StructuredBuffer> dropLocalOffsetBuffer;
 	std::unique_ptr<StructuredBuffer> dropGroupOffsetBuffer;
 	std::unique_ptr<StructuredBuffer> visibleDropIndexBuffer;
 	std::unique_ptr<Buffer> indirectDrawArgsBuffer;
-	winrt::com_ptr<ID3D11ComputeShader> rainUpdateCS;
-	winrt::com_ptr<ID3D11ComputeShader> rainCountCS;
-	winrt::com_ptr<ID3D11ComputeShader> rainPrefixCS;
-	winrt::com_ptr<ID3D11ComputeShader> rainScatterCS;
-	winrt::com_ptr<ID3D11VertexShader> rainVS;
-	winrt::com_ptr<ID3D11PixelShader> rainPS;
-	winrt::com_ptr<ID3D11VertexShader> sceneColorDownsampleVS;
-	winrt::com_ptr<ID3D11PixelShader> sceneColorDownsamplePS;
+	Util::LazyShader<ID3D11ComputeShader> rainUpdateCS;
+	Util::LazyShader<ID3D11ComputeShader> rainLightCacheCS;
+	Util::LazyShader<ID3D11ComputeShader> rainApplyLightingCS;
+	Util::LazyShader<ID3D11ComputeShader> rainCountCS;
+	Util::LazyShader<ID3D11ComputeShader> rainPrefixCS;
+	Util::LazyShader<ID3D11ComputeShader> rainScatterCS;
+	Util::LazyShader<ID3D11VertexShader> rainVS;
+	Util::LazyShader<ID3D11PixelShader> rainPS;
+	Util::LazyShader<ID3D11VertexShader> sceneColorDownsampleVS;
+	Util::LazyShader<ID3D11PixelShader> sceneColorDownsamplePS;
 	winrt::com_ptr<ID3D11BlendState> blendState;
 	winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
 	winrt::com_ptr<ID3D11DepthStencilState> depthStencilState;
+	winrt::com_ptr<ID3D11DepthStencilState> depthTestState;
 	winrt::com_ptr<ID3D11SamplerState> refractionSampler;
 	winrt::com_ptr<ID3D11ShaderResourceView> rainTextureSRV;
 	float2 rainTextureSize{};

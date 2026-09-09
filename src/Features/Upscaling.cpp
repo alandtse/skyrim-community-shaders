@@ -1,5 +1,7 @@
 #include "Upscaling.h"
+
 #include "GpuPass.h"
+#include "Precipitation.h"
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
@@ -1293,6 +1295,7 @@ struct SSRPostRender_Hook
 
 void Upscaling::PostPostLoad()
 {
+	Precipitation::Install();
 	// Guard before foveatedRender.PostPostLoad() so its hooks also stand down.
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {

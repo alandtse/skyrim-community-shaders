@@ -25,7 +25,7 @@ namespace RainLighting
 		float Scattering;
 	};
 
-	/** @brief Samples the shared light grid once per drop, before either eye renders it. */
+	/** @brief Evaluates incident local lighting at one world-space sample shared by both eyes. */
 	Sample Evaluate(float3 worldPosition, float3 headPosition, float headDistance)
 	{
 		Sample result = (Sample)0;

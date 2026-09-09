@@ -6,6 +6,7 @@
 #include "I18n/I18n.h"
 #include "InverseSquareLighting.h"
 #include "LightLimitFix.h"
+#include "Precipitation.h"
 #include "Skylighting.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -261,9 +262,9 @@ namespace
 			context->CSSetShaderResources(0, 1, &nullOcclusionDepth);
 			ID3D11ShaderResourceView* nullDropResource = nullptr;
 			context->CSSetShaderResources(1, 1, &nullDropResource);
-			std::array<ID3D11ShaderResourceView*, 2> nullResources{};
+			std::array<ID3D11ShaderResourceView*, 4> nullResources{};
 			context->CSSetShaderResources(39, static_cast<UINT>(nullResources.size()), nullResources.data());
-			std::array<ID3D11UnorderedAccessView*, 5> nullUAVs{};
+			std::array<ID3D11UnorderedAccessView*, 7> nullUAVs{};
 			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(nullUAVs.size()), nullUAVs.data(), nullptr);
 			context->CSSetShader(shader, nullptr, 0);
 			context->CSSetConstantBuffers(0, 1, &rainConstantBuffer);
@@ -300,10 +301,10 @@ namespace
 		ID3D11Buffer* frameConstantBuffer = nullptr;
 		ID3D11ShaderResourceView* occlusionDepthResource = nullptr;
 		ID3D11ShaderResourceView* dropResource = nullptr;
-		std::array<ID3D11ShaderResourceView*, 2> compactionResources{};
+		std::array<ID3D11ShaderResourceView*, 4> compactionResources{};
 		std::array<ID3D11ShaderResourceView*, 4> computeResources{};
 		ID3D11SamplerState* computeSampler = nullptr;
-		std::array<ID3D11UnorderedAccessView*, 5> computeUAVs{};
+		std::array<ID3D11UnorderedAccessView*, 7> computeUAVs{};
 	};
 }
 
@@ -317,6 +318,11 @@ std::pair<std::string, std::vector<std::string>> RainRendering::GetFeatureSummar
 			T("feature.rain_rendering.key_feature_3", "Stable world-space density variation and rain curtains"),
 			T("feature.rain_rendering.key_feature_4", "Scene-depth occlusion with distance-layered precipitation") }
 	};
+}
+
+void RainRendering::PostPostLoad()
+{
+	Precipitation::Install();
 }
 
 void RainRendering::SetupResources()
@@ -334,6 +340,16 @@ void RainRendering::SetupResources()
 			"RainRendering::Drops");
 		dropBuffer->CreateSRV();
 		dropBuffer->CreateUAV();
+	}
+	if (!lightClaimBuffer) {
+		lightClaimBuffer = std::make_unique<StructuredBuffer>(StructuredBufferDesc<uint32_t>(kRainLightCacheSize, true, false), kRainLightCacheSize, "RainRendering::LightClaims");
+		lightClaimBuffer->CreateSRV();
+		lightClaimBuffer->CreateUAV();
+	}
+	if (!lightCacheBuffer) {
+		lightCacheBuffer = std::make_unique<StructuredBuffer>(StructuredBufferDesc<CachedLightData>(kRainLightCacheSize, true, false), kRainLightCacheSize, "RainRendering::LightCache");
+		lightCacheBuffer->CreateSRV();
+		lightCacheBuffer->CreateUAV();
 	}
 	if (!dropLocalOffsetBuffer) {
 		dropLocalOffsetBuffer = std::make_unique<StructuredBuffer>(
@@ -406,7 +422,16 @@ void RainRendering::SetupResources()
 		Util::SetResourceName(depthStencilState.get(), "RainRendering::DepthDisabled");
 	}
 
-	renderPathReady = perFrameCB && dropBuffer && dropLocalOffsetBuffer && dropGroupOffsetBuffer &&
+	if (!depthTestState) {
+		D3D11_DEPTH_STENCIL_DESC description{};
+		description.DepthEnable = TRUE;
+		description.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+		description.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+		if (SUCCEEDED(device->CreateDepthStencilState(&description, depthTestState.put())))
+			Util::SetResourceName(depthTestState.get(), "RainRendering::ReadOnlyDepthTest");
+	}
+
+	renderPathReady = perFrameCB && dropBuffer && lightClaimBuffer && lightCacheBuffer && dropLocalOffsetBuffer && dropGroupOffsetBuffer &&
 	                  visibleDropIndexBuffer && indirectDrawArgsBuffer && EnsureShaders();
 }
 
@@ -419,7 +444,7 @@ bool RainRendering::CanUseRoofOcclusion() const
 
 bool RainRendering::EnsureShaders()
 {
-	if (rainUpdateCS && rainCountCS && rainPrefixCS && rainScatterCS && rainVS && rainPS)
+	if (rainUpdateCS && rainLightCacheCS && rainApplyLightingCS && rainCountCS && rainPrefixCS && rainScatterCS && rainVS && rainPS)
 		return true;
 	if (shaderCompileAttempted)
 		return false;
@@ -436,60 +461,33 @@ bool RainRendering::EnsureShaders()
 	if (globals::features::skylighting.loaded)
 		defines.emplace_back("RAIN_SKYLIGHTING_OCCLUSION", "");
 
-	auto* updateShader = static_cast<ID3D11ComputeShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainUpdateCS"));
-	auto* countShader = static_cast<ID3D11ComputeShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainCountCS"));
-	auto* prefixShader = static_cast<ID3D11ComputeShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainPrefixCS"));
-	auto* scatterShader = static_cast<ID3D11ComputeShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainScatterCS"));
-	auto* vertexShader = static_cast<ID3D11VertexShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "vs_5_0", "RainVS"));
-	auto* pixelShader = static_cast<ID3D11PixelShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "ps_5_0", "RainPS"));
-	if (!updateShader || !countShader || !prefixShader || !scatterShader || !vertexShader || !pixelShader) {
-		if (updateShader)
-			updateShader->Release();
-		if (countShader)
-			countShader->Release();
-		if (prefixShader)
-			prefixShader->Release();
-		if (scatterShader)
-			scatterShader->Release();
-		if (vertexShader)
-			vertexShader->Release();
-		if (pixelShader)
-			pixelShader->Release();
+	rainUpdateCS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainUpdateCS", "RainRendering::RainUpdateCS");
+	rainLightCacheCS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainLightCacheCS", "RainRendering::RainLightCacheCS");
+	rainApplyLightingCS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainApplyLightingCS", "RainRendering::RainApplyLightingCS");
+	rainCountCS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainCountCS", "RainRendering::RainCountCS");
+	rainPrefixCS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainPrefixCS", "RainRendering::RainPrefixCS");
+	rainScatterCS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "cs_5_0", "RainScatterCS", "RainRendering::RainScatterCS");
+	rainVS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "vs_5_0", "RainVS", "RainRendering::RainVS");
+	rainPS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "ps_5_0", "RainPS", "RainRendering::RainPS");
+	if (!rainUpdateCS || !rainLightCacheCS || !rainApplyLightingCS || !rainCountCS || !rainPrefixCS || !rainScatterCS || !rainVS || !rainPS) {
 		logger::error("[RainRendering] Disabling the render path because its runtime shaders failed to compile");
 		return false;
 	}
-
-	rainUpdateCS.attach(updateShader);
-	rainCountCS.attach(countShader);
-	rainPrefixCS.attach(prefixShader);
-	rainScatterCS.attach(scatterShader);
-	rainVS.attach(vertexShader);
-	rainPS.attach(pixelShader);
-	Util::SetResourceName(rainUpdateCS.get(), "RainRendering::RainUpdateCS");
-	Util::SetResourceName(rainCountCS.get(), "RainRendering::RainCountCS");
-	Util::SetResourceName(rainPrefixCS.get(), "RainRendering::RainPrefixCS");
-	Util::SetResourceName(rainScatterCS.get(), "RainRendering::RainScatterCS");
-	Util::SetResourceName(rainVS.get(), "RainRendering::RainVS");
-	Util::SetResourceName(rainPS.get(), "RainRendering::RainPS");
 	return true;
 }
 
 void RainRendering::ClearShaderCache()
 {
-	rainUpdateCS = nullptr;
-	rainCountCS = nullptr;
-	rainPrefixCS = nullptr;
-	rainScatterCS = nullptr;
-	rainVS = nullptr;
-	rainPS = nullptr;
-	sceneColorDownsampleVS = nullptr;
-	sceneColorDownsamplePS = nullptr;
+	rainUpdateCS.Reset();
+	rainLightCacheCS.Reset();
+	rainApplyLightingCS.Reset();
+	rainCountCS.Reset();
+	rainPrefixCS.Reset();
+	rainScatterCS.Reset();
+	rainVS.Reset();
+	rainPS.Reset();
+	sceneColorDownsampleVS.Reset();
+	sceneColorDownsamplePS.Reset();
 	shaderCompileAttempted = false;
 	renderPathReady = false;
 	rainTextureSRV = nullptr;
@@ -839,23 +837,9 @@ bool RainRendering::EnsureSceneColorShaders()
 	std::vector<std::pair<const char*, const char*>> defines;
 	if (globals::game::isVR)
 		defines.emplace_back("VR", "");
-	auto* vertexShader = static_cast<ID3D11VertexShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "vs_5_0", "RainSceneColorVS"));
-	auto* pixelShader = static_cast<ID3D11PixelShader*>(Util::CompileShader(
-		L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "ps_5_0", "RainSceneColorPS"));
-	if (!vertexShader || !pixelShader) {
-		if (vertexShader)
-			vertexShader->Release();
-		if (pixelShader)
-			pixelShader->Release();
-		return false;
-	}
-
-	sceneColorDownsampleVS.attach(vertexShader);
-	sceneColorDownsamplePS.attach(pixelShader);
-	Util::SetResourceName(sceneColorDownsampleVS.get(), "RainRendering::SceneColorDownsampleVS");
-	Util::SetResourceName(sceneColorDownsamplePS.get(), "RainRendering::SceneColorDownsamplePS");
-	return true;
+	sceneColorDownsampleVS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "vs_5_0", "RainSceneColorVS", "RainRendering::SceneColorDownsampleVS");
+	sceneColorDownsamplePS.Get(L"Data\\Shaders\\RainRendering\\RainRendering.hlsl", defines, "ps_5_0", "RainSceneColorPS", "RainRendering::SceneColorDownsamplePS");
+	return sceneColorDownsampleVS && sceneColorDownsamplePS;
 }
 
 bool RainRendering::EnsureSceneColorCopy(ID3D11Texture2D* a_source, ID3D11RenderTargetView* a_view)
@@ -1061,6 +1045,21 @@ RainRendering::PerFrame RainRendering::BuildPerFrameData(
 	};
 	data.LightColor = float4{ lightColor.x, lightColor.y, lightColor.z, 0.0f };
 	data.CameraData = Util::GetCameraData();
+	constexpr float frustumGuardBand = 1.05f;
+	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	for (uint32_t eyeIndex = 0; eyeIndex < eyeCount; ++eyeIndex) {
+		const auto& viewProjection = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex);
+		const float4 clipW{ viewProjection._41, viewProjection._42, viewProjection._43, viewProjection._44 };
+		for (uint32_t planeIndex = 0; planeIndex < 6; ++planeIndex) {
+			const uint32_t index = eyeIndex * 6 + planeIndex;
+			const auto& row = viewProjection.m[planeIndex / 2];
+			const float4 axis{ row[0], row[1], row[2], row[3] };
+			auto& plane = data.FrustumPlanes[index];
+			plane = planeIndex < 4 ? frustumGuardBand * clipW + (planeIndex % 2 == 0 ? axis : -axis) :
+			                         (planeIndex == 4 ? axis : clipW - axis);
+			data.FrustumPlaneLengths[index] = std::sqrt(plane.x * plane.x + plane.y * plane.y + plane.z * plane.z);
+		}
+	}
 	data.GridAndDebug = {
 		kGridWidth,
 		kGridDepth,
@@ -1105,6 +1104,33 @@ void RainRendering::DrawForcedRainFallback()
 		DrawRain();
 }
 
+void RainRendering::UpdateSharedLighting(uint32_t a_groupCount)
+{
+	auto* context = globals::d3d::context;
+	CS_GPU_PASS("RainRendering::SharedLighting");
+	std::array<ID3D11UnorderedAccessView*, 7> computeUAVs{};
+	context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
+	ID3D11ShaderResourceView* lightingDrops = dropBuffer->SRV();
+	ID3D11ShaderResourceView* claims = lightClaimBuffer->SRV();
+	context->CSSetShaderResources(1, 1, &lightingDrops);
+	context->CSSetShaderResources(41, 1, &claims);
+	computeUAVs[6] = lightCacheBuffer->UAV();
+	context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
+	context->CSSetShader(rainLightCacheCS.get(), nullptr, 0);
+	context->Dispatch(kRainLightCacheSize / kRainComputeGroupSize, 1, 1);
+
+	computeUAVs.fill(nullptr);
+	context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
+	lightingDrops = nullptr;
+	context->CSSetShaderResources(1, 1, &lightingDrops);
+	ID3D11ShaderResourceView* cachedLights = lightCacheBuffer->SRV();
+	context->CSSetShaderResources(42, 1, &cachedLights);
+	computeUAVs[0] = dropBuffer->UAV();
+	context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
+	context->CSSetShader(rainApplyLightingCS.get(), nullptr, 0);
+	context->Dispatch(a_groupCount, 1, 1);
+}
+
 void RainRendering::DrawRain()
 {
 	const uint32_t frame = globals::state->frameCount;
@@ -1127,17 +1153,35 @@ void RainRendering::DrawRain()
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	auto& stableWorldDepth =
 		renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	auto* depthResource = stableWorldDepth.depthSRV ? stableWorldDepth.depthSRV : mainDepth.depthSRV;
+	auto& rainDepth = stableWorldDepth.depthSRV ? stableWorldDepth : mainDepth;
+	auto* depthResource = rainDepth.depthSRV;
+	auto* depthView = rainDepth.readOnlyViews[0];
 	if (!mainTarget.texture || !mainTarget.RTV || !depthResource)
 		return;
 	D3D11_TEXTURE2D_DESC mainDescription{};
 	mainTarget.texture->GetDesc(&mainDescription);
+	if (depthView) {
+		D3D11_DEPTH_STENCIL_VIEW_DESC viewDescription{};
+		depthView->GetDesc(&viewDescription);
+		winrt::com_ptr<ID3D11Resource> depthViewResource;
+		winrt::com_ptr<ID3D11Resource> depthSampleResource;
+		depthView->GetResource(depthViewResource.put());
+		depthResource->GetResource(depthSampleResource.put());
+		auto depthTexture = depthViewResource.try_as<ID3D11Texture2D>();
+		D3D11_TEXTURE2D_DESC depthDescription{};
+		if (depthTexture)
+			depthTexture->GetDesc(&depthDescription);
+		if (!(viewDescription.Flags & D3D11_DSV_READ_ONLY_DEPTH) || depthViewResource.get() != depthSampleResource.get() ||
+			depthDescription.Width != mainDescription.Width || depthDescription.Height != mainDescription.Height ||
+			depthDescription.SampleDesc.Count != mainDescription.SampleDesc.Count || depthDescription.SampleDesc.Quality != mainDescription.SampleDesc.Quality)
+			depthView = nullptr;
+	}
 	const float2 dynamicSize = Util::ConvertToDynamic({ static_cast<float>(mainDescription.Width), static_cast<float>(mainDescription.Height) });
 	if (dynamicSize.x < 2.0f || dynamicSize.y < 1.0f)
 		return;
 
 	SetupResources();
-	if (!perFrameCB || !dropBuffer || !dropLocalOffsetBuffer || !dropGroupOffsetBuffer ||
+	if (!perFrameCB || !dropBuffer || !lightClaimBuffer || !lightCacheBuffer || !dropLocalOffsetBuffer || !dropGroupOffsetBuffer ||
 		!visibleDropIndexBuffer || !indirectDrawArgsBuffer || !EnsureShaders()) {
 		renderPathReady = false;
 		return;
@@ -1183,10 +1227,23 @@ void RainRendering::DrawRain()
 		if (hasRoofOcclusion)
 			computeResources[3] = skylighting.texProbeArray->srv.get();
 		context->CSSetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
-		std::array<ID3D11UnorderedAccessView*, 5> computeUAVs{};
+		std::array<ID3D11UnorderedAccessView*, 7> computeUAVs{};
+		const bool sharedLighting = data.Glassy.x > 0.5f && data.LocalLighting.x > 0.0f;
+		if (sharedLighting) {
+			const UINT emptyClaims[4]{ UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
+			context->ClearUnorderedAccessViewUint(lightClaimBuffer->UAV(), emptyClaims);
+			computeUAVs[5] = lightClaimBuffer->UAV();
+		}
 		computeUAVs[0] = dropBuffer->UAV();
 		context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
-		context->Dispatch(groupCount, 1, 1);
+		{
+			CS_GPU_PASS("RainRendering::SimulateDrops");
+			context->Dispatch(groupCount, 1, 1);
+		}
+		if (sharedLighting) {
+			UpdateSharedLighting(groupCount);
+		}
+		CS_GPU_PASS("RainRendering::CompactDrops");
 
 		computeUAVs.fill(nullptr);
 		context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
@@ -1218,10 +1275,11 @@ void RainRendering::DrawRain()
 	RainPipelineState savedState(context);
 	if (hasSceneColor)
 		DownsampleSceneColor(mainTarget.SRV, depthResource, dynamicSize);
+	CS_GPU_PASS("RainRendering::DrawDrops");
 	ID3D11RenderTargetView* renderTarget = mainTarget.RTV;
-	context->OMSetRenderTargets(1, &renderTarget, nullptr);
+	context->OMSetRenderTargets(1, &renderTarget, depthTestState ? depthView : nullptr);
 	context->OMSetBlendState(blendState.get(), nullptr, UINT_MAX);
-	context->OMSetDepthStencilState(depthStencilState.get(), 0);
+	context->OMSetDepthStencilState(depthView && depthTestState ? depthTestState.get() : depthStencilState.get(), 0);
 	context->RSSetState(rasterizerState.get());
 
 	D3D11_VIEWPORT viewport{ 0.0f, 0.0f, dynamicSize.x, dynamicSize.y, 0.0f, 1.0f };

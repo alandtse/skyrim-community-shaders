@@ -1,4 +1,5 @@
 #include "Common/FrameBuffer.hlsli"
+#include "Common/Hash.hlsli"
 #include "Common/SharedData.hlsli"
 #include "RainRendering/RainConstants.hlsli"
 
@@ -26,6 +27,17 @@ RWStructuredBuffer<uint> RainVisibleDropIndicesRW : register(u3);
 RWByteAddressBuffer RainIndirectArgsRW : register(u4);
 StructuredBuffer<uint> RainCompactionData : register(t39);
 StructuredBuffer<uint> RainGroupOffsets : register(t40);
+struct RainCachedLight
+{
+	float4 Position;
+	float4 IrradianceScattering;
+	float4 Direction;
+};
+RWStructuredBuffer<uint> RainLightClaimsRW : register(u5);
+RWStructuredBuffer<RainCachedLight> RainLightCacheRW : register(u6);
+StructuredBuffer<uint> RainLightClaims : register(t41);
+StructuredBuffer<RainCachedLight> RainLightCache : register(t42);
+
 Texture2D<float> SceneDepth : register(t0);
 Texture2D<float4> SceneColor : register(t2);
 Texture2D<float> HalfResolutionSceneDepth : register(t5);
@@ -85,23 +97,14 @@ RainSceneColorPixelOutput RainSceneColorPS(RainSceneColorVertexOutput input)
 	return output;
 }
 
-uint Hash(uint value)
-{
-	value ^= value >> 16u;
-	value *= 0x7FEB352Du;
-	value ^= value >> 15u;
-	value *= 0x846CA68Bu;
-	return value ^ (value >> 16u);
-}
-
 float Hash01(uint value)
 {
-	return float(Hash(value) >> 8u) * (1.0f / 16777216.0f);
+	return float(Hash::LowBias32(value) >> 8u) * (1.0f / 16777216.0f);
 }
 
 uint HashLattice(int2 lattice, uint seed)
 {
-	return Hash(asuint(lattice.x) ^ Hash(asuint(lattice.y) ^ seed));
+	return Hash::LowBias32(asuint(lattice.x) ^ Hash::LowBias32(asuint(lattice.y) ^ seed));
 }
 
 float ValueNoise(float2 position, uint seed)
@@ -129,10 +132,8 @@ int3 SelectWorldCell(uint3 slot, int3 baseCell, uint3 dimensions)
 		PositiveModulo(baseCell.x, dimension.x),
 		PositiveModulo(baseCell.y, dimension.y),
 		PositiveModulo(baseCell.z, dimension.z));
-	int3 offset = int3(
-		PositiveModulo(int(slot.x) - baseSlot.x, dimension.x),
-		PositiveModulo(int(slot.y) - baseSlot.y, dimension.y),
-		PositiveModulo(int(slot.z) - baseSlot.z, dimension.z));
+	int3 offset = int3(slot) - baseSlot;
+	offset += int3(offset.x < 0 ? dimension.x : 0, offset.y < 0 ? dimension.y : 0, offset.z < 0 ? dimension.z : 0);
 	return baseCell + offset;
 }
 
@@ -142,22 +143,16 @@ float3 SafeNormalize(float3 value, float3 fallback)
 	return lengthSquared > 1e-6f ? value * rsqrt(lengthSquared) : fallback;
 }
 
-void RejectDrop(uint dropIndex, float3 position)
+void RejectDrop(uint dropIndex)
 {
-	RainDrop drop;
-	drop.PositionLength = float4(position, 0.0f);
-	drop.VelocityWidth = 0.0f;
-	drop.ColorOpacity = 0.0f;
-	drop.LightDirection = 0.0f;
-	RainDropsRW[dropIndex] = drop;
+	// Compaction checks only opacity; other fields are valid only for visible drops.
+	RainDropsRW[dropIndex].ColorOpacity.a = 0.0f;
 }
 
-static const float RainFrustumGuardBand = 0.05f;
 static const float RainRefractionDepthFade = 12.0f;
 
-bool RainCapsuleOutsidePlane(float4 plane, float3 startPosition, float3 endPosition, float radius)
+bool RainCapsuleOutsidePlane(float4 plane, float3 startPosition, float3 endPosition, float projectedRadius)
 {
-	float projectedRadius = radius * length(plane.xyz);
 	return dot(plane, float4(startPosition, 1.0f)) < -projectedRadius &&
 	       dot(plane, float4(endPosition, 1.0f)) < -projectedRadius;
 }
@@ -167,19 +162,14 @@ bool RainStreakIntersectsEyeFrustum(float3 position, float3 axis, float halfLeng
 	float3 cameraPosition = FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 	float3 startPosition = position - axis * halfLength - cameraPosition;
 	float3 endPosition = position + axis * halfLength - cameraPosition;
-	row_major float4x4 viewProjection = FrameBuffer::CameraViewProjUnjittered[eyeIndex];
-	float4 clipX = viewProjection[0];
-	float4 clipY = viewProjection[1];
-	float4 clipZ = viewProjection[2];
-	float4 clipW = viewProjection[3];
-	float4 guardedW = clipW * (1.0f + RainFrustumGuardBand);
-
-	return !RainCapsuleOutsidePlane(guardedW + clipX, startPosition, endPosition, radius) &&
-	       !RainCapsuleOutsidePlane(guardedW - clipX, startPosition, endPosition, radius) &&
-	       !RainCapsuleOutsidePlane(guardedW + clipY, startPosition, endPosition, radius) &&
-	       !RainCapsuleOutsidePlane(guardedW - clipY, startPosition, endPosition, radius) &&
-	       !RainCapsuleOutsidePlane(clipZ, startPosition, endPosition, radius) &&
-	       !RainCapsuleOutsidePlane(clipW - clipZ, startPosition, endPosition, radius);
+	[unroll] for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+	{
+		uint index = eyeIndex * 6u + planeIndex;
+		float projectedRadius = radius * RainFrustumPlaneLengths[index / 4u][index % 4u];
+		if (RainCapsuleOutsidePlane(RainFrustumPlanes[index], startPosition, endPosition, projectedRadius))
+			return false;
+	}
+	return true;
 }
 
 bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfLength, float radius)
@@ -191,6 +181,26 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 #else
 	return RainStreakIntersectsEyeFrustum(position, axis, halfLength, radius, 0u);
 #endif
+}
+
+// Must match RainRendering::kRainLightCacheSize, which sizes both cache buffers.
+static const uint RainLightCacheSize = 16384u;
+static const float RainLightCellSize = 128.0f;
+static const float RainIndividualLightDistance = 1024.0f;
+
+int3 RainLightCell(float3 position)
+{
+	return int3(floor(position / RainLightCellSize));
+}
+
+uint RainLightBucket(int3 cell)
+{
+	return Hash::LowBias32(asuint(cell.x) ^ Hash::LowBias32(asuint(cell.y)) ^ Hash::LowBias32(asuint(cell.z) + 0x9E3779B9u)) & (RainLightCacheSize - 1u);
+}
+
+bool RainUsesSharedLighting(float headDistance)
+{
+	return LocalLighting.x > 0.0f && headDistance >= RainIndividualLightDistance && headDistance < LocalLighting.y;
 }
 
 [numthreads(RAIN_COMPUTE_GROUP_SIZE, 1, 1)] void RainUpdateCS(uint3 dispatchThreadID : SV_DispatchThreadID) {
@@ -217,8 +227,8 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 	float3 volumeMinimum = HeadPositionAndTime.xyz - volumeSize * 0.5f;
 	int3 baseCell = int3(floor(volumeMinimum / cellSize));
 	int3 worldCell = SelectWorldCell(slot, baseCell, gridDimensions);
-	uint cellSeed = Hash(layerDropIndex ^ Hash(layerIndex + 0xD7A38E91u) ^ Hash(asuint(worldCell.x)) ^
-						 Hash(asuint(worldCell.y) + 0x9E3779B9u) ^ Hash(asuint(worldCell.z) + 0x85EBCA6Bu));
+	uint cellSeed = Hash::LowBias32(layerDropIndex ^ Hash::LowBias32(layerIndex + 0xD7A38E91u) ^ Hash::LowBias32(asuint(worldCell.x)) ^
+									Hash::LowBias32(asuint(worldCell.y) + 0x9E3779B9u) ^ Hash::LowBias32(asuint(worldCell.z) + 0x85EBCA6Bu));
 	float overheadRadius = 0.0f;
 	float overheadHeight = 0.0f;
 	float overheadBottom = 0.0f;
@@ -236,8 +246,8 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 		int3 overheadBaseCell = int3(floor(overheadMinimum / overheadCellDimensions));
 		worldCell = SelectWorldCell(overheadSlot, overheadBaseCell, overheadDimensions);
 		cellSize = overheadCellDimensions;
-		cellSeed = Hash(layerDropIndex ^ 0xA24BAED5u ^ Hash(asuint(worldCell.x)) ^
-						Hash(asuint(worldCell.y) + 0x9E3779B9u));
+		cellSeed = Hash::LowBias32(layerDropIndex ^ 0xA24BAED5u ^ Hash::LowBias32(asuint(worldCell.x)) ^
+								   Hash::LowBias32(asuint(worldCell.y) + 0x9E3779B9u));
 		fallCycleHeight = overheadHeight;
 	}
 
@@ -247,7 +257,7 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 	float fallDistance = max(HeadPositionAndTime.w, 0.0f) * fallSpeed + initialPhase * fallCycleHeight;
 	uint lifeCycle = uint(floor(fallDistance / fallCycleHeight));
 	float lifeFraction = frac(fallDistance / fallCycleHeight);
-	uint lifeSeed = Hash(cellSeed ^ Hash(lifeCycle + 0x63D83595u));
+	uint lifeSeed = Hash::LowBias32(cellSeed ^ Hash::LowBias32(lifeCycle + 0x63D83595u));
 
 	float3 jitter = float3(
 		Hash01(lifeSeed ^ 0xB5297A4Du),
@@ -279,7 +289,7 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 			layerFade *= smoothstep(innerRadius * (1.0f - LayerRadii.w), innerRadius, distanceFromHead);
 	}
 	if (layerFade <= 0.0f) {
-		RejectDrop(dropIndex, dropPosition);
+		RejectDrop(dropIndex);
 		return;
 	}
 
@@ -311,7 +321,7 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 	float3 streakAxis = SafeNormalize(velocity, float3(0.0f, 0.0f, -1.0f));
 	if (!RainStreakIntersectsActiveFrustum(
 			dropPosition, streakAxis, max(streakLength, 1.0f) * 0.5f, max(streakWidth, 0.05f) * 0.5f)) {
-		RejectDrop(dropIndex, dropPosition);
+		RejectDrop(dropIndex);
 		return;
 	}
 	if (Appearance.w > 0.0f) {
@@ -319,33 +329,42 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 		float closestAlongStreak = clamp(dot(headOffset, streakAxis), -streakLength * 0.5f, streakLength * 0.5f);
 		float distanceToStreak = length(dropPosition + streakAxis * closestAlongStreak - HeadPositionAndTime.xyz);
 		if (distanceToStreak <= Appearance.w + streakWidth * 0.5f) {
-			RejectDrop(dropIndex, dropPosition);
+			RejectDrop(dropIndex);
 			return;
 		}
 	}
 
-	float spatialNoise = ValueNoise(dropPosition.xy / max(DistanceNoise.y, 1.0f), 0xD1B54A35u);
-	float spatialDensity = lerp(1.0f, lerp(0.32f, 1.68f, spatialNoise), saturate(DistanceNoise.z));
+	float spatialDensity = 1.0f;
+	[branch] if (DistanceNoise.z > 0.0f)
+	{
+		float spatialNoise = ValueNoise(dropPosition.xy / max(DistanceNoise.y, 1.0f), 0xD1B54A35u);
+		spatialDensity = lerp(1.0f, lerp(0.32f, 1.68f, spatialNoise), saturate(DistanceNoise.z));
+	}
 
-	const float2 curtainDirection = float2(0.8192319f, 0.5734624f);
-	float2 curtainPerpendicular = float2(-curtainDirection.y, curtainDirection.x);
-	float curtainScale = max(Curtain.x, 1.0f);
-	float2 curtainCoordinate = float2(
-		dot(dropPosition.xy, curtainDirection) / (curtainScale * 0.28f),
-		dot(dropPosition.xy, curtainPerpendicular) / curtainScale);
-	float curtainNoise = ValueNoise(curtainCoordinate, 0x94D049BBu);
-	float curtainShape = pow(saturate(curtainNoise), max(Curtain.z, 0.1f));
-	float curtainMinimum = min(CurtainDensity.x, CurtainDensity.y);
-	float curtainMaximum = max(CurtainDensity.x, CurtainDensity.y);
-	float curtainDensity = lerp(curtainMinimum, curtainMaximum, curtainShape);
-	float curtainFactor = lerp(1.0f, curtainDensity, saturate(Curtain.y));
+	float curtainShape = 0.0f;
+	float curtainFactor = 1.0f;
+	[branch] if (Curtain.y > 0.0f || GridAndDebug.w == 4u)
+	{
+		const float2 curtainDirection = float2(0.8192319f, 0.5734624f);
+		float2 curtainPerpendicular = float2(-curtainDirection.y, curtainDirection.x);
+		float curtainScale = max(Curtain.x, 1.0f);
+		float2 curtainCoordinate = float2(
+			dot(dropPosition.xy, curtainDirection) / (curtainScale * 0.28f),
+			dot(dropPosition.xy, curtainPerpendicular) / curtainScale);
+		float curtainNoise = ValueNoise(curtainCoordinate, 0x94D049BBu);
+		curtainShape = pow(saturate(curtainNoise), max(Curtain.z, 0.1f));
+		float curtainMinimum = min(CurtainDensity.x, CurtainDensity.y);
+		float curtainMaximum = max(CurtainDensity.x, CurtainDensity.y);
+		float curtainDensity = lerp(curtainMinimum, curtainMaximum, curtainShape);
+		curtainFactor = lerp(1.0f, curtainDensity, saturate(Curtain.y));
+	}
 
 	float lodDensity = lerp(0.42f, 1.38f, sqrt(distanceRatio));
 	float density = VolumeSizeAndDensity.w * WeatherFallDepth.x * spatialDensity * curtainFactor * lodDensity;
 	float acceptance = Hash01(lifeSeed ^ 0xC2B2AE35u);
 	float acceptedDensity = isOverheadDrop ? saturate(VolumeSizeAndDensity.w) : saturate(density);
 	if ((GridAndDebug.w == 0u || GridAndDebug.w >= 6u) && acceptance > acceptedDensity) {
-		RejectDrop(dropIndex, dropPosition);
+		RejectDrop(dropIndex);
 		return;
 	}
 
@@ -355,7 +374,7 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 	{
 		roofVisibility = RainRoofOcclusion::Sample(dropPosition, RoofOcclusion.y, RoofOcclusion.z);
 		if (roofVisibility <= 0.001f) {
-			RejectDrop(dropIndex, dropPosition);
+			RejectDrop(dropIndex);
 			return;
 		}
 	}
@@ -369,7 +388,12 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 	float3 rainColor = float3(0.62f, 0.72f, 0.82f) * Appearance.x * lighting;
 	RainLighting::Sample localLight = (RainLighting::Sample)0;
 	if (Glassy.x > 0.5f) {
-		localLight = RainLighting::Evaluate(dropPosition, HeadPositionAndTime.xyz, distanceFromHead);
+		if (RainUsesSharedLighting(distanceFromHead)) {
+			uint previousClaim;
+			InterlockedMin(RainLightClaimsRW[RainLightBucket(RainLightCell(dropPosition))], dropIndex, previousClaim);
+		} else {
+			localLight = RainLighting::Evaluate(dropPosition, HeadPositionAndTime.xyz, distanceFromHead);
+		}
 		rainColor = localLight.Irradiance * Appearance.x;
 	}
 
@@ -397,6 +421,49 @@ bool RainStreakIntersectsActiveFrustum(float3 position, float3 axis, float halfL
 	drop.ColorOpacity = float4(rainColor, saturate(opacity * layerFade));
 	drop.LightDirection = float4(localLight.Direction, localLight.Scattering);
 	RainDropsRW[dropIndex] = drop;
+}
+
+	[numthreads(RAIN_COMPUTE_GROUP_SIZE, 1, 1)] void RainLightCacheCS(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	uint bucket = dispatchThreadID.x;
+	if (bucket >= RainLightCacheSize)
+		return;
+	uint dropIndex = RainLightClaims[bucket];
+	if (dropIndex >= LayerCounts.w)
+		return;
+	float3 position = RainDrops[dropIndex].PositionLength.xyz;
+	RainLighting::Sample light = RainLighting::Evaluate(position, HeadPositionAndTime.xyz, distance(position, HeadPositionAndTime.xyz));
+	RainCachedLight cached;
+	cached.Position = float4(position, 0.0f);
+	cached.IrradianceScattering = float4(light.Irradiance, light.Scattering);
+	cached.Direction = float4(light.Direction, 0.0f);
+	RainLightCacheRW[bucket] = cached;
+}
+
+[numthreads(RAIN_COMPUTE_GROUP_SIZE, 1, 1)] void RainApplyLightingCS(uint3 dispatchThreadID : SV_DispatchThreadID) {
+	uint dropIndex = dispatchThreadID.x;
+	if (dropIndex >= LayerCounts.w)
+		return;
+	if (RainDropsRW[dropIndex].ColorOpacity.a <= 0.0f)
+		return;
+	RainDrop drop = RainDropsRW[dropIndex];
+	float3 position = drop.PositionLength.xyz;
+	float headDistance = distance(position, HeadPositionAndTime.xyz);
+	if (!RainUsesSharedLighting(headDistance))
+		return;
+	int3 cell = RainLightCell(position);
+	RainCachedLight cached = RainLightCache[RainLightBucket(cell)];
+	RainLighting::Sample light;
+	// Hash collisions must not borrow lighting from an unrelated world-space cell.
+	if (all(cell == RainLightCell(cached.Position.xyz))) {
+		light.Irradiance = cached.IrradianceScattering.rgb;
+		light.Scattering = cached.IrradianceScattering.a;
+		light.Direction = cached.Direction.xyz;
+	} else {
+		light = RainLighting::Evaluate(position, HeadPositionAndTime.xyz, headDistance);
+	}
+	RainDropsRW[dropIndex].ColorOpacity.rgb = light.Irradiance * Appearance.x;
+	RainDropsRW[dropIndex].LightDirection = float4(light.Direction, light.Scattering);
 }
 
 groupshared uint RainGroupScan[RAIN_COMPUTE_GROUP_SIZE];
@@ -598,7 +665,7 @@ float2 HalfResolutionScenePixel(float2 pixel, uint eyeIndex, float eyeWidth)
 #	endif
 }
 
-float4 RainPS(RainVertexOutput input) : SV_Target0
+[earlydepthstencil] float4 RainPS(RainVertexOutput input) : SV_Target0
 {
 	float sceneDepth = LinearSceneDepth(input.Position.xy);
 	float intersectionFade = saturate((sceneDepth - input.ViewDepth) / max(WeatherFallDepth.w, 1.0f));
@@ -614,10 +681,8 @@ float4 RainPS(RainVertexOutput input) : SV_Target0
 	[branch] if (Glassy.x > 0.5f)
 	{
 		float resolvedWidth = smoothstep(0.35f, 1.25f, input.ScreenSideAndWidth.z);
-		RainMaterial::Surface water = RainMaterial::Evaluate(input, widthFade * endFade * spawnReveal, resolvedWidth);
+		RainMaterial::Surface water = RainMaterial::Evaluate(input, widthFade * endFade * spawnReveal, resolvedWidth, intersectionFade);
 		float opticalCoverage = input.ColorOpacity.a * water.Opacity * intersectionFade;
-		if (opticalCoverage <= 1e-4f)
-			discard;
 		float surfaceOpacity = saturate(Streak.w);
 		float surfaceFresnel = min(water.Fresnel * surfaceOpacity, RainMaterial::MaximumSurfaceFresnel);
 		float transmission = (1.0f - surfaceFresnel) * (1.0f - Glassy.y * water.Core);

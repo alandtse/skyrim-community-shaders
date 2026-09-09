@@ -26,6 +26,8 @@ cbuffer RainConstants : register(b0)
 	float4 MaterialLighting;
 	float4 RoofOcclusion;
 	float4 VanillaWind;
+	float4 RainFrustumPlanes[12];
+	float4 RainFrustumPlaneLengths[3];
 }
 
 #endif

@@ -7,7 +7,6 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
-#include "Precipitation.h"
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -95,7 +94,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 			if (errors.empty()) {
 				Deferred::Hooks::Install();
 				Hooks::Install();
-				Precipitation::Install();
 				EngineFix::InstallOnPostPostLoadFixes();
 				FrameAnnotations::OnPostPostLoad();
 

@@ -56,7 +56,7 @@ namespace RainMaterial
 	}
 
 	/** @brief Shades one textured drop using a head-centered view shared by both eyes. */
-	Surface Evaluate(RainVertexOutput input, float silhouetteFade, float resolvedWidth)
+	Surface Evaluate(RainVertexOutput input, float silhouetteFade, float resolvedWidth, float intersectionFade)
 	{
 		Surface water = (Surface)0;
 		float3 normalTS = float3(0.0f, 0.0f, 1.0f);
@@ -69,10 +69,13 @@ namespace RainMaterial
 			float2 texelsPerPixel = RainTextureShape.xy * float2(RainTextureShape.z, 1.0f) / projectedSize;
 			mip = max(log2(max(texelsPerPixel.x, texelsPerPixel.y)), 0.0f);
 			float4 normalOpacity = RainNormalOpacity.SampleLevel(RefractionSampler, textureUV, mip);
+			water.Opacity = saturate(normalOpacity.a) * silhouetteFade;
+			if (input.ColorOpacity.a * water.Opacity * intersectionFade <= 1e-4f)
+				discard;
 			float3 textureNormal = normalize(float3((normalOpacity.xy * 2.0f - 1.0f) * TexturedRain.y, max(normalOpacity.z * 2.0f - 1.0f, 0.05f)));
 			normalTS = normalize(lerp(normalTS, textureNormal, detailWeight));
-			water.Opacity = saturate(normalOpacity.a) * silhouetteFade;
 		}
+		else discard;
 		float3 planeNormal = cross(input.StreakSideWorld, input.StreakAxisWorld);
 		planeNormal *= dot(planeNormal, input.HeadViewDirection) < 0.0f ? -1.0f : 1.0f;
 		float3 normalWS = normalize(input.StreakSideWorld * normalTS.x + input.StreakAxisWorld * normalTS.y + planeNormal * normalTS.z);

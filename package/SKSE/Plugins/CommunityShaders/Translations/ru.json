@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "Удалить",
     "feature.feature_overwrites.delete_message": "Удалить '{0}' с диска и убрать пользовательские переопределения без исходных файлов? Сохранённые личные настройки будут сохранены.",
     "feature.feature_overwrites.delete_title": "Удалить переопределение функции?",
-    "feature.feature_overwrites.description": "Управление переопределениями функций из модов. Сохранённые изменения используют отдельные пользовательские файлы.",
+    "feature.feature_overwrites.description": "Управление переопределениями функций из модов и их экспорт.",
     "feature.feature_overwrites.empty": "Сейчас переопределения функций не применяются.",
     "feature.feature_overwrites.export.button": "Экспорт настроек",
     "feature.feature_overwrites.export.count": "Экспорт ({0})",

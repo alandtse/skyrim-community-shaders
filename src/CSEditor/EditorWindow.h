@@ -212,6 +212,8 @@ public:
 	 * @return True if the game calendar is valid and the slider was drawn.
 	 */
 	bool DrawGameHourSlider(const char* label = "Game Time", const char* format = "%.2f");
+	/** @brief Release the slider's temporary lock when its interaction ends or its UI disappears. */
+	void FinishGameHourSliderFrame(bool widgetsDrawn);
 
 	/** @brief Draw the full time controls panel (pause, game time, timescale). */
 	void DrawTimeControls();
@@ -380,6 +382,7 @@ private:
 	static constexpr double kGameHourScrubRefreshIntervalSeconds = 0.1;
 	double lastGameHourScrubRefreshTime = 0.0;
 	bool gameHourScrubRefreshIssued = false;
+	ImGuiID gameHourScrubId = 0;
 
 	// Sorting state
 	enum class SortColumn

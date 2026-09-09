@@ -957,6 +957,11 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 				}
 			}
 
+			const bool favorite = globals::state->IsFeatureFavorite(featureName);
+			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
+					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
+				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
+
 			if (canEditSceneSettings) {
 				if (Util::FlyoutMenuItem(
 						T("feature.scene_manager.name", "Scene Manager"),
@@ -970,11 +975,6 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 					closeFlyout = true;
 				}
 			}
-
-			const bool favorite = globals::state->IsFeatureFavorite(featureName);
-			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
-					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
-				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
 			if (g_featurePreferenceSaveFailed)
 				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 

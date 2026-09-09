@@ -81,7 +81,11 @@ namespace Util::EnvironmentControls
 	void ResetWeather();
 	/// Refresh an edited current weather without releasing an active lock.
 	void RefreshWeather(RE::TESWeather* weather);
-	/// Set the game hour and end any temporary preview; optionally defer sky synchronization while scrubbing.
+	/// Hold the dominant weather during a slider interaction, ending any temporary preview.
+	void BeginGameHourScrub();
+	/// Release the slider's temporary weather lock, preserving any earlier explicit lock.
+	void EndGameHourScrub();
+	/// Set the hour and end any preview; optionally defer sky synchronization while scrubbing.
 	bool SetGameHour(float hour, bool synchronize = true);
 	/// Update the running or saved timescale and end any temporary preview.
 	void SetTimeScale(float timeScale);
@@ -108,7 +112,7 @@ namespace Util::EnvironmentControls
 	void ResetTimeScale();
 	/// Keep time running across loading, sleep/wait and fast-travel menus.
 	void SetTimeRunningForMenu(bool needsRunningTime);
-	/// Lock a weather, hour, or both until stopped; refuse unavailable controls.
+	/// Start or retarget a weather/time lock; time-only previews hold current weather and Stop restores prior controls.
 	bool StartPreview(RE::TESWeather* weather, std::optional<float> hour);
 	/// Release the preview and restore the controls that preceded it, not the old game hour.
 	void StopPreview();

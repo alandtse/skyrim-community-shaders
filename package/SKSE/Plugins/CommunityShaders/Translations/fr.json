@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "Supprimer",
     "feature.feature_overwrites.delete_message": "Supprimer '{0}' du disque et retirer les entrées de remplacement utilisateur orphelines ? Les paramètres personnels enregistrés sont conservés.",
     "feature.feature_overwrites.delete_title": "Supprimer la surcharge de fonctionnalité ?",
-    "feature.feature_overwrites.description": "Gérez les remplacements de paramètres fournis par les mods. Les modifications enregistrées utilisent des fichiers utilisateur distincts.",
+    "feature.feature_overwrites.description": "Gérez et exportez les remplacements de paramètres fournis par les mods.",
     "feature.feature_overwrites.empty": "Aucune surcharge de fonctionnalité n'est actuellement appliquée.",
     "feature.feature_overwrites.export.button": "Exporter les paramètres",
     "feature.feature_overwrites.export.count": "Exporter ({0})",

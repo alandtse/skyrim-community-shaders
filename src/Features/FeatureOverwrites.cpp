@@ -153,7 +153,7 @@ namespace
 
 std::pair<std::string, std::vector<std::string>> FeatureOverwrites::GetFeatureSummary()
 {
-	return { T("feature.feature_overwrites.description", "Manage mod-provided feature overwrites. Saved edits use separate user files."), {} };
+	return { T("feature.feature_overwrites.description", "Manage and export mod-provided feature overwrites."), {} };
 }
 
 void FeatureOverwrites::DrawSettings()

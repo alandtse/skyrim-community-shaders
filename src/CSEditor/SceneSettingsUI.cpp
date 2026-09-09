@@ -2670,8 +2670,12 @@ namespace SceneSettingsUI
 		auto* weather = context->type == SceneSettingsManager::SceneContextType::Weather ?
 		                    RE::TESForm::LookupByID<RE::TESWeather>(context->weatherId) :
 		                    nullptr;
-		if ((weather || hour) && !Util::EnvironmentControls::StartPreview(weather, hour))
-			return false;
+		if (weather || hour) {
+			if (!Util::EnvironmentControls::StartPreview(weather, hour))
+				return false;
+		} else {
+			Util::EnvironmentControls::StopPreview();
+		}
 		s_playingContext = context;
 		if (travel)
 			RE::Console::ExecuteCommand(travel->c_str());
@@ -2683,7 +2687,7 @@ namespace SceneSettingsUI
 		if (!playing)
 			return ImGui::ArrowButton("##FeatureScenePreview", ImGuiDir_Right);
 		const float size = ImGui::GetFrameHeight();
-		const bool pressed = ImGui::Button("##FeatureScenePreview", ImVec2(size, size));
+		const bool pressed = Util::ErrorTextButton("##FeatureScenePreview", ImVec2(size, size));
 		const ImVec2 center = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()).GetCenter();
 		const float halfExtent = ImGui::GetFontSize() * 0.25f;
 		ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(center.x - halfExtent, center.y - halfExtent),
@@ -2954,7 +2958,8 @@ namespace SceneSettingsUI
 
 			ImGui::TableSetColumnIndex(2);
 			if (s_playingContext && s_playingContext != requestedContext)
-				SetFeaturePagePreviewPlaying(false);
+				if (!Util::EnvironmentControls::IsPreviewActive() || !SetFeaturePagePreviewPlaying(true))
+					SetFeaturePagePreviewPlaying(false);
 			const bool playing = Util::EnvironmentControls::IsPreviewActive();
 			const bool canPreview = requestedContext &&
 			                        CanPreviewFeatureSceneContext(

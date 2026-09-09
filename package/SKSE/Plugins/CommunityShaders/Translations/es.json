@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "Eliminar",
     "feature.feature_overwrites.delete_message": "¿Eliminar '{0}' del disco y quitar las entradas de sobrescritura de usuario huérfanas? Se conservan los ajustes personales guardados.",
     "feature.feature_overwrites.delete_title": "¿Eliminar sobrescritura de función?",
-    "feature.feature_overwrites.description": "Gestiona sobrescrituras de funciones proporcionadas por mods. Los cambios guardados usan archivos de usuario separados.",
+    "feature.feature_overwrites.description": "Gestiona y exporta sobrescrituras de funciones proporcionadas por mods.",
     "feature.feature_overwrites.empty": "No se está aplicando ninguna sobrescritura de función.",
     "feature.feature_overwrites.export.button": "Exportar ajustes",
     "feature.feature_overwrites.export.count": "Exportar ({0})",

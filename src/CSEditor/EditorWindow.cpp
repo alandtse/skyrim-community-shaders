@@ -2215,10 +2215,13 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 		return false;
 	float gameHour = calendar->gameHour->value;
 	const bool changed = ImGui::SliderFloat(label, &gameHour, 0.0f, kGameHourMax, format);
+	if (ImGui::IsItemActivated()) {
+		Util::EnvironmentControls::BeginGameHourScrub();
+		gameHourScrubId = ImGui::GetItemID();
+		gameHourScrubRefreshIssued = false;
+	}
 	if (changed)
 		Util::EnvironmentControls::SetGameHour(gameHour, false);
-	if (ImGui::IsItemActivated())
-		gameHourScrubRefreshIssued = false;
 
 	if (changed && ImGui::IsItemActive()) {
 		const double currentTime = ImGui::GetTime();
@@ -2230,9 +2233,22 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 	}
 
 	// Always refresh on release so the final value is reflected even if the throttle swallowed it.
-	if (ImGui::IsItemDeactivatedAfterEdit())
+	if (ImGui::IsItemDeactivatedAfterEdit()) {
 		Util::RequestTimeJumpTransition();
+		gameHourScrubRefreshIssued = false;
+	}
 	return true;
+}
+
+void EditorWindow::FinishGameHourSliderFrame(bool widgetsDrawn)
+{
+	if (gameHourScrubId && (!widgetsDrawn || ImGui::GetActiveID() != gameHourScrubId ||
+							   GImGui->ActiveIdIsAlive != gameHourScrubId)) {
+		Util::EnvironmentControls::EndGameHourScrub();
+		gameHourScrubId = 0;
+		if (gameHourScrubRefreshIssued)
+			Util::RequestTimeJumpTransition();
+	}
 }
 
 void EditorWindow::DrawTimeControls()

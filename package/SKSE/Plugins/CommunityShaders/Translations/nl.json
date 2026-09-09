@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "Verwijderen",
     "feature.feature_overwrites.delete_message": "'{0}' van de schijf verwijderen en verweesde gebruikersoverschrijvingen opruimen? Opgeslagen persoonlijke instellingen blijven behouden.",
     "feature.feature_overwrites.delete_title": "Functieoverschrijving verwijderen?",
-    "feature.feature_overwrites.description": "Beheer functieoverschrijvingen van mods. Opgeslagen wijzigingen gebruiken afzonderlijke gebruikersbestanden.",
+    "feature.feature_overwrites.description": "Beheer en exporteer functieoverschrijvingen van mods.",
     "feature.feature_overwrites.empty": "Er worden momenteel geen functieoverschrijvingen toegepast.",
     "feature.feature_overwrites.export.button": "Instellingen exporteren",
     "feature.feature_overwrites.export.count": "Exporteren ({0})",

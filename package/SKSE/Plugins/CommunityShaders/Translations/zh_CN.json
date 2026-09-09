@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "删除",
     "feature.feature_overwrites.delete_message": "从磁盘删除“{0}”并移除没有对应覆盖的用户条目？已保存的个人设置将被保留。",
     "feature.feature_overwrites.delete_title": "删除功能覆盖文件？",
-    "feature.feature_overwrites.description": "管理模组提供的功能覆盖。保存的修改使用独立的用户文件。",
+    "feature.feature_overwrites.description": "管理并导出模组提供的功能覆盖。",
     "feature.feature_overwrites.empty": "当前没有应用功能覆盖设置。",
     "feature.feature_overwrites.export.button": "导出设置",
     "feature.feature_overwrites.export.count": "导出 ({0})",

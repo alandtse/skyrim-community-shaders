@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "Usuń",
     "feature.feature_overwrites.delete_message": "Usunąć '{0}' z dysku i usunąć osierocone wpisy nadpisań użytkownika? Zapisane ustawienia osobiste zostaną zachowane.",
     "feature.feature_overwrites.delete_title": "Usunąć nadpisanie funkcji?",
-    "feature.feature_overwrites.description": "Zarządzaj nadpisaniami funkcji dostarczanymi przez mody. Zapisane zmiany używają oddzielnych plików użytkownika.",
+    "feature.feature_overwrites.description": "Zarządzaj nadpisaniami funkcji dostarczanymi przez mody i eksportuj je.",
     "feature.feature_overwrites.empty": "Obecnie nie są stosowane żadne nadpisania funkcji.",
     "feature.feature_overwrites.export.button": "Eksportuj ustawienia",
     "feature.feature_overwrites.export.count": "Eksportuj ({0})",

@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "Delete",
     "feature.feature_overwrites.delete_message": "Delete '{0}' from disk and remove orphaned user overwrite entries? Saved personal settings are kept.",
     "feature.feature_overwrites.delete_title": "Delete Feature Overwrite?",
-    "feature.feature_overwrites.description": "Manage mod-provided feature overwrites. Saved edits use separate user files.",
+    "feature.feature_overwrites.description": "Manage and export mod-provided feature overwrites.",
     "feature.feature_overwrites.empty": "No feature overwrites are currently applied.",
     "feature.feature_overwrites.export.button": "Export Settings",
     "feature.feature_overwrites.export.count": "Export ({0})",

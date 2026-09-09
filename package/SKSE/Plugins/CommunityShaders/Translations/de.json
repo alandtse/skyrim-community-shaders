@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "Löschen",
     "feature.feature_overwrites.delete_message": "'{0}' vom Datenträger löschen und verwaiste Benutzer-Überschreibungseinträge entfernen? Gespeicherte persönliche Einstellungen bleiben erhalten.",
     "feature.feature_overwrites.delete_title": "Feature-Überschreibung löschen?",
-    "feature.feature_overwrites.description": "Vom Mod bereitgestellte Feature-Überschreibungen verwalten. Gespeicherte Änderungen verwenden separate Benutzerdateien.",
+    "feature.feature_overwrites.description": "Von Mods bereitgestellte Feature-Überschreibungen verwalten und exportieren.",
     "feature.feature_overwrites.empty": "Derzeit werden keine Feature-Überschreibungen angewendet.",
     "feature.feature_overwrites.export.button": "Einstellungen exportieren",
     "feature.feature_overwrites.export.count": "Exportieren ({0})",

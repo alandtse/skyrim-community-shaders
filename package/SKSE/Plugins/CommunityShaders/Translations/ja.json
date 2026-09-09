@@ -684,7 +684,7 @@
     "feature.feature_overwrites.delete": "削除",
     "feature.feature_overwrites.delete_message": "'{0}' をディスクから削除し、対応する上書きがなくなったユーザー設定項目を削除しますか？ 保存済みの個人設定は保持されます。",
     "feature.feature_overwrites.delete_title": "機能の上書きを削除しますか？",
-    "feature.feature_overwrites.description": "MOD が提供する機能設定の上書きを管理します。保存した変更は別のユーザーファイルを使用します。",
+    "feature.feature_overwrites.description": "MOD が提供する機能設定の上書きを管理・エクスポートします。",
     "feature.feature_overwrites.empty": "現在適用されている機能の上書きはありません。",
     "feature.feature_overwrites.export.button": "設定をエクスポート",
     "feature.feature_overwrites.export.count": "エクスポート ({0})",

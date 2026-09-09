@@ -3473,7 +3473,6 @@ namespace SceneSettingsUI
 				ImGui::TextDisabled("%s", T("feature.scene_manager.unsupported_type", "(unsupported type)"));
 				break;
 			}
-
 	}
 
 	template <class Update, class Commit>

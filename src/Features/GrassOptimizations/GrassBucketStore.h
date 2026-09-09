@@ -69,6 +69,10 @@ inline constexpr uint32_t instanceCountOffset = argsByteOffset + sizeof(uint32_t
 inline constexpr uint32_t kArgsBlockStride = 32;
 inline constexpr uint32_t ArgsByteOffsetForEye(uint32_t eye) { return argsByteOffset + eye * kArgsBlockStride; }
 inline constexpr uint32_t InstanceCountOffsetForEye(uint32_t eye) { return instanceCountOffset + eye * kArgsBlockStride; }
+// StartInstanceLocation is the 5th (last) uint32_t of the D3D11_DRAW_INDEXED_INSTANCED_INDIRECT_ARGS
+// block, 16 bytes past its start.
+inline constexpr uint32_t kStartInstanceLocationOffset = 16;
+inline constexpr uint32_t StartInstanceLocationOffsetForEye(uint32_t eye) { return ArgsByteOffsetForEye(eye) + kStartInstanceLocationOffset; }
 
 /** @brief Contains the instance data, GPU buffers and per-frame cull results for each grass type. */
 struct GrassBucket

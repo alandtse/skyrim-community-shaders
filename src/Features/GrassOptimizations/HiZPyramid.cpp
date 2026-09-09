@@ -5,6 +5,7 @@
 #include "GpuPass.h"
 #include "Profiler.h"
 #include "State.h"
+#include "Utils/D3D.h"
 
 void HiZPyramid::SetupResources()
 {
@@ -125,9 +126,7 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	if (!paramsCB || !globals::game::renderer)
 		return false;
 
-	// graphicsState->screenWidth/Height reads the desktop preview window's resolution on VR, not the
-	// HMD's real render target (see State.cpp's own screenSize comment); use the cached value derived
-	// from the actual kMAIN texture instead, same as every other VR-aware feature.
+	// Not graphicsState->screenWidth/Height: that reads VR's desktop preview resolution, not the HMD's (see State.cpp's screenSize comment).
 	float2 screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
@@ -212,12 +211,8 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 
 		if (usingLiveDepth) {
 			ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
-			for (auto* rtv : rtvs) {
-				if (rtv)
-					rtv->Release();
-			}
-			if (dsv)
-				dsv->Release();
+			Util::SafeReleaseArray(rtvs);
+			Util::SafeRelease(dsv);
 		}
 	}
 

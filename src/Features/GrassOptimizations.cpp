@@ -356,9 +356,7 @@ void GrassOptimizations::UpdateGrass()
 		cp.lodFadeBand = 0.15f;
 
 		const auto& vf = cam->GetRuntimeData2().viewFrustum;
-		// Renderer::GetScreenSize() reads the desktop preview window's resolution on VR, not the
-		// HMD's real render target (see State.cpp's own screenSize comment); use the cached value
-		// derived from the actual kMAIN texture instead, same as every other VR-aware feature.
+		// Not Renderer::GetScreenSize(): that reads VR's desktop preview resolution, not the HMD's (see State.cpp's screenSize comment).
 		const float screenH = globals::state->screenSize.y;
 		cp.meshCostBias = settings.MeshCostBias;
 		cp.projScale = screenH / (2.0f * std::abs(vf.fTop));
@@ -727,6 +725,12 @@ ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 	return cullCS;
 }
 
+static void WriteArgsUint32(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, uint32_t byteOffset, uint32_t value)
+{
+	const D3D11_BOX box{ byteOffset, 0, 0, byteOffset + sizeof(uint32_t), 1, 1 };
+	ctx->UpdateSubresource(buf, 0, &box, &value, 0, 0);
+}
+
 void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 {
 	if (b.cullSlot == UINT32_MAX)
@@ -735,24 +739,18 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 	// Targeted per-eye reset of just the instance-count dword: the args UAV also spans neighboring
 	// fields (StartInstanceLocation, eye 1's IndexCountPerInstance) that are set once from the CPU
 	// and must survive every frame, so a wholesale ClearUnorderedAccessView would corrupt them.
-	const uint32_t zeroCount = 0;
-	const D3D11_BOX eye0CountBox{ InstanceCountOffsetForEye(0), 0, 0, InstanceCountOffsetForEye(0) + sizeof(uint32_t), 1, 1 };
-	ctx->UpdateSubresource(b.argsBuf, 0, &eye0CountBox, &zeroCount, 0, 0);
-	if (globals::game::isVR) {
-		const D3D11_BOX eye1CountBox{ InstanceCountOffsetForEye(1), 0, 0, InstanceCountOffsetForEye(1) + sizeof(uint32_t), 1, 1 };
-		ctx->UpdateSubresource(b.argsBuf, 0, &eye1CountBox, &zeroCount, 0, 0);
-	}
+	WriteArgsUint32(ctx, b.argsBuf, InstanceCountOffsetForEye(0), 0);
+	if (globals::game::isVR)
+		WriteArgsUint32(ctx, b.argsBuf, InstanceCountOffsetForEye(1), 0);
 
 	// The main bin then one triple per LOD tier, matching u0-u8 in GrassCullingCS.
 	ID3D11UnorderedAccessView* uavs[3 + 3 * (size_t)GrassMeshLibrary::LODTier::kCount] = { b.compactedUAV, b.extrasUAV, b.argsUAV };
 	for (size_t tier = 0; tier < (size_t)GrassMeshLibrary::LODTier::kCount; ++tier) {
 		const GrassBucket::LODBin& bin = b.lodBins[tier];
 		if (bin.active) {
-			ctx->UpdateSubresource(bin.argsBuf, 0, &eye0CountBox, &zeroCount, 0, 0);
-			if (globals::game::isVR) {
-				const D3D11_BOX eye1CountBox{ InstanceCountOffsetForEye(1), 0, 0, InstanceCountOffsetForEye(1) + sizeof(uint32_t), 1, 1 };
-				ctx->UpdateSubresource(bin.argsBuf, 0, &eye1CountBox, &zeroCount, 0, 0);
-			}
+			WriteArgsUint32(ctx, bin.argsBuf, InstanceCountOffsetForEye(0), 0);
+			if (globals::game::isVR)
+				WriteArgsUint32(ctx, bin.argsBuf, InstanceCountOffsetForEye(1), 0);
 		}
 		uavs[3 + tier * 3 + 0] = bin.active ? bin.compactedUAV : nullptr;
 		uavs[3 + tier * 3 + 1] = bin.active ? bin.extrasUAV : nullptr;
@@ -1028,19 +1026,12 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 
 	if (!b->argsIndexCountWritten) {
 		const uint32_t indexCount = 3u * geometry->GetTrishapeRuntimeData().triangleCount;
-		const D3D11_BOX argBox{ argsByteOffset, 0, 0, argsByteOffset + sizeof(uint32_t), 1, 1 };
-		ctx->UpdateSubresource(b->argsBuf, 0, &argBox, &indexCount, 0, 0);
+		WriteArgsUint32(ctx, b->argsBuf, argsByteOffset, indexCount);
 		if (globals::game::isVR) {
-			// Eye 1 shares the same mesh, so its IndexCountPerInstance matches eye 0's. StartInstanceLocation
-			// offsets the per-instance vertex stream into the second half of the doubled Compacted buffer
-			// (see CreateBucketCullScratch); it does NOT offset SV_InstanceID, so the VS's InstanceExtras
-			// read still needs EyeIndexCB::eyeSlotBase (set in SetDrawEyeIndex) added explicitly.
-			const uint32_t eye1Offset = ArgsByteOffsetForEye(1);
-			const D3D11_BOX eye1IndexCountBox{ eye1Offset, 0, 0, eye1Offset + sizeof(uint32_t), 1, 1 };
-			ctx->UpdateSubresource(b->argsBuf, 0, &eye1IndexCountBox, &indexCount, 0, 0);
-			const uint32_t startInstanceOffset = eye1Offset + 16;
-			const D3D11_BOX startInstanceBox{ startInstanceOffset, 0, 0, startInstanceOffset + sizeof(uint32_t), 1, 1 };
-			ctx->UpdateSubresource(b->argsBuf, 0, &startInstanceBox, &b->capacityInstances, 0, 0);
+			// Eye 1 shares the same mesh, so IndexCountPerInstance matches eye 0's; see EyeIndexCB's own
+			// comment for why StartInstanceLocation alone isn't enough to point the VS at eye 1's data.
+			WriteArgsUint32(ctx, b->argsBuf, ArgsByteOffsetForEye(1), indexCount);
+			WriteArgsUint32(ctx, b->argsBuf, StartInstanceLocationOffsetForEye(1), b->capacityInstances);
 		}
 		b->argsIndexCountWritten = true;
 	}
@@ -1097,15 +1088,10 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 			continue;
 
 		if (!bin.argsIndexCountWritten) {
-			const D3D11_BOX argBox{ argsByteOffset, 0, 0, argsByteOffset + sizeof(uint32_t), 1, 1 };
-			ctx->UpdateSubresource(bin.argsBuf, 0, &argBox, &lod->indexCount, 0, 0);
+			WriteArgsUint32(ctx, bin.argsBuf, argsByteOffset, lod->indexCount);
 			if (globals::game::isVR) {
-				const uint32_t eye1Offset = ArgsByteOffsetForEye(1);
-				const D3D11_BOX eye1IndexCountBox{ eye1Offset, 0, 0, eye1Offset + sizeof(uint32_t), 1, 1 };
-				ctx->UpdateSubresource(bin.argsBuf, 0, &eye1IndexCountBox, &lod->indexCount, 0, 0);
-				const uint32_t startInstanceOffset = eye1Offset + 16;
-				const D3D11_BOX startInstanceBox{ startInstanceOffset, 0, 0, startInstanceOffset + sizeof(uint32_t), 1, 1 };
-				ctx->UpdateSubresource(bin.argsBuf, 0, &startInstanceBox, &bin.capacityInstances, 0, 0);
+				WriteArgsUint32(ctx, bin.argsBuf, ArgsByteOffsetForEye(1), lod->indexCount);
+				WriteArgsUint32(ctx, bin.argsBuf, StartInstanceLocationOffsetForEye(1), bin.capacityInstances);
 			}
 			bin.argsIndexCountWritten = true;
 		}

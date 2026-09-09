@@ -189,7 +189,7 @@ float WindScalar(float basis, float timer)
 		const float4 clipC = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dvC, 1.0));
 		if (clipC.w > 0.0) {
 			float2 uv = (clipC.xy / clipC.w) * float2(0.5, -0.5) + 0.5;
-			// Same split as Stereo::ConvertToStereoUV; inlined rather than pulling in the include for one line.
+			// Same UV split as Stereo::ConvertToStereoUV -- keep in sync if that changes.
 			if (EyeCount > 1)
 				uv.x = (uv.x + (float)eyeIndex) * 0.5;
 			const float2 tc = uv * HiZSize;

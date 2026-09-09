@@ -120,10 +120,8 @@ cbuffer PerGeometry : register(b2)
 // Two per instance: [0] = origin.xyz + isComplex, [1] = windCur, windPrev, fade, packed flags.
 StructuredBuffer<float4> InstanceExtras : register(t2);
 
-// GRASS_OPTIMIZATIONS draws each eye separately (its survivor lists are already split into
-// per-eye halves by the culling CS), so it signals the eye per draw instead of via SV_InstanceID parity.
 // EyeSlotBase must be added to instanceID manually: StartInstanceLocation advances the per-instance
-// vertex stream but NOT SV_InstanceID, so InstanceExtras (an SRV, not a vertex stream) needs it explicitly.
+// vertex stream but not SV_InstanceID, so InstanceExtras (an SRV, not a vertex stream) needs it explicit.
 cbuffer GrassOptimizationsEyeCB : register(b7)
 {
 	uint CurrentEyeIndex;

@@ -545,7 +545,7 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 	}
 
 	if (ImGui::Button(T(TKEY("reset_weather"), "Reset Weather"))) {
-		sky->ResetWeather();
+		Util::EnvironmentControls::ResetWeather();
 		// Update the selection box to reflect the reset weather without double-applying
 		s_selectedWeatherIdx = FindWeatherIndex(sky->defaultWeather);
 		logger::info("[SceneSelector] Reset weather to default");
@@ -634,14 +634,7 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 				s_selectedWeatherIdx = i;
 				auto selectedWeather = s_filteredWeathers[i];
 
-				if (s_accelerateWeatherChange)
-					sky->ForceWeather(selectedWeather, false);
-				else
-					sky->SetWeather(selectedWeather, true, false);
-
-				// Retarget the lock so Prepass() enforces the new choice instead of reverting it.
-				if (editorWindow->IsWeatherLocked())
-					editorWindow->LockWeather(selectedWeather);
+				Util::EnvironmentControls::ChangeWeather(selectedWeather, s_accelerateWeatherChange);
 
 				Util::ClearComboSearch(kWeatherSearchId);
 				logger::info("[SceneSelector] Changed weather to: {}", Util::FormatWeather(selectedWeather));

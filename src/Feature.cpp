@@ -11,6 +11,7 @@
 #	include "Features/Effects11.h"
 #endif
 #include "Features/ExponentialHeightFog.h"
+#include "Features/FeatureOverwrites.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
 #include "Features/FoliageLighting.h"
@@ -273,6 +274,7 @@ namespace
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
+			&globals::features::featureOverwrites,
 			&globals::features::sceneManager,
 			&globals::features::screenshotFeature,
 			&globals::features::linearLighting,

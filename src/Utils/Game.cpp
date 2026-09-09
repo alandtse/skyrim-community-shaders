@@ -413,3 +413,262 @@ namespace Util
 		WorldToCell(RE::NiPoint2(worldPos.x, worldPos.y), x, y);
 	}
 }  // namespace Util
+
+namespace Util::EnvironmentControls
+{
+	namespace
+	{
+		std::atomic<RE::TESWeather*> lockedWeather{ nullptr };
+		std::atomic_bool weatherLockAvailable{ false };
+		bool timePaused = false;
+		float savedTimeScale = kDefaultTimeScale;
+		bool timeRunningForMenu = false;
+		bool restorePauseAfterMenu = false;
+		constexpr float kHourLockTolerance = 0.001f;
+
+		struct Preview
+		{
+			RE::TESWeather* weather = nullptr;
+			std::optional<float> hour;
+			RE::TESWeather* previousWeather = nullptr;
+			bool previousTimePaused = false;
+			float previousTimeScale = kDefaultTimeScale;
+			float previousSavedTimeScale = kDefaultTimeScale;
+		};
+		std::optional<Preview> preview;
+
+		void ApplyWeatherLock(RE::TESWeather* weather)
+		{
+			const auto* previous = lockedWeather.exchange(weather, std::memory_order_acq_rel);
+			if (!weather && previous)
+				if (auto* sky = globals::game::sky)
+					sky->ReleaseWeatherOverride();
+		}
+
+		void PauseTimeInternal()
+		{
+			if (timePaused)
+				return;
+			if (auto* calendar = globals::game::calendar; calendar && calendar->timeScale) {
+				savedTimeScale = calendar->timeScale->value;
+				calendar->timeScale->value = 0.0f;
+				timePaused = true;
+			}
+		}
+
+		void ResumeTimeInternal()
+		{
+			if (!timePaused)
+				return;
+			if (auto* calendar = globals::game::calendar; calendar && calendar->timeScale) {
+				calendar->timeScale->value = savedTimeScale;
+				timePaused = false;
+			}
+		}
+	}
+
+	void SetWeatherLockAvailable()
+	{
+		weatherLockAvailable.store(true, std::memory_order_release);
+	}
+
+	bool IsWeatherLockAvailable()
+	{
+		return weatherLockAvailable.load(std::memory_order_acquire);
+	}
+
+	RE::TESWeather* GetLockedWeather()
+	{
+		return lockedWeather.load(std::memory_order_acquire);
+	}
+
+	void MaintainLocks()
+	{
+		if (auto* weather = GetLockedWeather()) {
+			if (auto* sky = globals::game::sky) {
+				const bool releasePending = sky->flags.any(RE::Sky::Flags::kReleaseWeatherOverride);
+				if (releasePending || sky->currentWeather != weather || sky->overrideWeather != weather) {
+					sky->flags.reset(RE::Sky::Flags::kReleaseWeatherOverride);
+					sky->ForceWeather(weather, true);
+				}
+			}
+		}
+		if (!preview || !preview->hour || timeRunningForMenu)
+			return;
+		if (auto* calendar = globals::game::calendar; calendar && calendar->gameHour && calendar->timeScale) {
+			calendar->timeScale->value = 0.0f;
+			timePaused = true;
+			if (std::abs(calendar->gameHour->value - *preview->hour) > kHourLockTolerance) {
+				calendar->gameHour->value = *preview->hour;
+				RequestTimeJumpTransition();
+			}
+		}
+	}
+
+	void SetLockedWeather(RE::TESWeather* weather)
+	{
+		StopPreview();
+		ApplyWeatherLock(weather);
+		MaintainLocks();
+	}
+
+	void ChangeWeather(RE::TESWeather* weather, bool instant)
+	{
+		auto* sky = globals::game::sky;
+		if (!sky || !weather)
+			return;
+		const bool wasLocked = GetLockedWeather() != nullptr;
+		StopPreview();
+		if (wasLocked) {
+			ApplyWeatherLock(weather);
+			MaintainLocks();
+		} else if (instant) {
+			sky->ForceWeather(weather, false);
+		} else {
+			sky->SetWeather(weather, true, false);
+		}
+	}
+
+	void ResetWeather()
+	{
+		SetLockedWeather(nullptr);
+		if (auto* sky = globals::game::sky)
+			sky->ResetWeather();
+	}
+
+	void RefreshWeather(RE::TESWeather* weather)
+	{
+		if (auto* sky = globals::game::sky; sky && weather && sky->currentWeather == weather) {
+			sky->ForceWeather(weather, true);
+			if (!GetLockedWeather())
+				sky->ReleaseWeatherOverride();
+			else
+				MaintainLocks();
+		}
+	}
+
+	bool SetGameHour(float hour, bool synchronize)
+	{
+		auto* calendar = globals::game::calendar;
+		if (!calendar || !calendar->gameHour || !std::isfinite(hour) || hour < 0.0f || hour >= kHoursPerDay)
+			return false;
+		StopPreview();
+		calendar->gameHour->value = hour;
+		if (synchronize)
+			RequestTimeJumpTransition();
+		return true;
+	}
+
+	void SetTimeScale(float timeScale)
+	{
+		auto* calendar = globals::game::calendar;
+		if (!calendar || !calendar->timeScale || !std::isfinite(timeScale) || timeScale < 0.0f)
+			return;
+		StopPreview();
+		if (IsTimePaused())
+			savedTimeScale = timeScale;
+		else
+			calendar->timeScale->value = timeScale;
+	}
+
+	bool IsTimePaused()
+	{
+		if (auto* calendar = globals::game::calendar; calendar && calendar->timeScale && calendar->timeScale->value > 0.0f)
+			timePaused = false;
+		return timePaused;
+	}
+
+	float GetSavedTimeScale()
+	{
+		return savedTimeScale;
+	}
+
+	void PauseTime()
+	{
+		StopPreview();
+		if (timeRunningForMenu)
+			restorePauseAfterMenu = true;
+		else
+			PauseTimeInternal();
+	}
+
+	void ResumeTime()
+	{
+		StopPreview();
+		restorePauseAfterMenu = false;
+		ResumeTimeInternal();
+	}
+
+	void ResetTimeScale()
+	{
+		SetTimeScale(kDefaultTimeScale);
+	}
+
+	void SetTimeRunningForMenu(bool needsRunningTime)
+	{
+		auto* calendar = globals::game::calendar;
+		if (!calendar || !calendar->timeScale || timeRunningForMenu == needsRunningTime)
+			return;
+		timeRunningForMenu = needsRunningTime;
+		if (needsRunningTime) {
+			restorePauseAfterMenu = IsTimePaused();
+			if (calendar->timeScale->value == 0.0f) {
+				if (savedTimeScale <= 0.0f)
+					savedTimeScale = kDefaultTimeScale;
+				ResumeTimeInternal();
+				if (calendar->timeScale->value == 0.0f)
+					calendar->timeScale->value = savedTimeScale;
+			}
+		} else {
+			if (restorePauseAfterMenu)
+				PauseTimeInternal();
+			restorePauseAfterMenu = false;
+			MaintainLocks();
+		}
+	}
+
+	bool StartPreview(RE::TESWeather* weather, std::optional<float> hour)
+	{
+		auto* calendar = globals::game::calendar;
+		if ((!weather && !hour) || timeRunningForMenu ||
+			(weather && !globals::game::sky) ||
+			(hour && (!std::isfinite(*hour) || *hour < 0.0f || *hour >= kHoursPerDay ||
+						 !calendar || !calendar->gameHour || !calendar->timeScale)))
+			return false;
+		StopPreview();
+		preview = Preview{ .weather = weather, .hour = hour, .previousWeather = GetLockedWeather(), .previousTimePaused = IsTimePaused(), .previousTimeScale = calendar && calendar->timeScale ? calendar->timeScale->value : kDefaultTimeScale, .previousSavedTimeScale = savedTimeScale };
+		if (weather)
+			ApplyWeatherLock(weather);
+		if (hour)
+			PauseTimeInternal();
+		MaintainLocks();
+		return true;
+	}
+
+	void StopPreview()
+	{
+		if (!preview)
+			return;
+		const auto previous = *preview;
+		preview.reset();
+		if (previous.weather)
+			ApplyWeatherLock(previous.previousWeather);
+		if (previous.hour) {
+			savedTimeScale = previous.previousSavedTimeScale;
+			timePaused = previous.previousTimePaused && !timeRunningForMenu;
+			if (timeRunningForMenu)
+				restorePauseAfterMenu = previous.previousTimePaused;
+			if (auto* calendar = globals::game::calendar; calendar && calendar->timeScale) {
+				calendar->timeScale->value = timeRunningForMenu && previous.previousTimeScale <= 0.0f ?
+				                                 (savedTimeScale > 0.0f ? savedTimeScale : kDefaultTimeScale) :
+				                                 previous.previousTimeScale;
+			}
+		}
+		MaintainLocks();
+	}
+
+	bool IsPreviewActive()
+	{
+		return preview.has_value();
+	}
+}

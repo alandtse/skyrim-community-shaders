@@ -9,6 +9,7 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
 #include "Utils/Game.h"
+#include "Utils/SettingsCatalog.h"
 
 #include <algorithm>
 #include <array>
@@ -85,7 +86,6 @@ namespace
 	constexpr const char* kMetadataEntryTransitionsKey = "entryTransitions";
 	constexpr const char* kMetadataTimeOfDayEnabledKey = "timeOfDayEnabled";
 	constexpr std::string_view kSceneSettingDisplaySeparator = " / ";
-	constexpr std::string_view kImGuiIdSeparator = "##";
 	bool IsLocationTypeKeyword(const RE::BGSKeyword* keyword);
 
 	bool IsSceneSettingPrimitive(const json& value)
@@ -113,67 +113,9 @@ namespace
 		}
 	}
 
-	bool WriteJsonAtomically(const std::filesystem::path& path, const json& data, int indent,
-		std::string_view context)
-	{
-		std::string serialized;
-		try {
-			serialized = data.dump(indent);
-		} catch (const std::exception& e) {
-			logger::error("[SceneSettings] Could not serialize {} '{}': {}", context, path.string(), e.what());
-			return false;
-		}
+	using Util::FileHelpers::WriteJsonAtomically;
 
-		std::error_code ec;
-		if (!path.parent_path().empty()) {
-			std::filesystem::create_directories(path.parent_path(), ec);
-			if (ec) {
-				logger::error("[SceneSettings] Could not create directory for {} '{}': {}",
-					context, path.string(), ec.message());
-				return false;
-			}
-		}
-
-		auto temporaryPath = path;
-		temporaryPath += std::format(".{}.tmp", ::GetCurrentProcessId());
-		{
-			std::ofstream file(temporaryPath, std::ios::binary | std::ios::trunc);
-			if (!file.is_open()) {
-				logger::error("[SceneSettings] Could not open temporary {} file '{}'", context, temporaryPath.string());
-				return false;
-			}
-			file.write(serialized.data(), static_cast<std::streamsize>(serialized.size()));
-			file.flush();
-			if (file.fail()) {
-				logger::error("[SceneSettings] Could not write temporary {} file '{}'", context, temporaryPath.string());
-				file.close();
-				std::filesystem::remove(temporaryPath, ec);
-				return false;
-			}
-			file.close();
-			if (file.fail()) {
-				logger::error("[SceneSettings] Could not close temporary {} file '{}'", context, temporaryPath.string());
-				std::filesystem::remove(temporaryPath, ec);
-				return false;
-			}
-		}
-
-		if (!::MoveFileExW(temporaryPath.c_str(), path.c_str(),
-				MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-			const auto error = ::GetLastError();
-			logger::error("[SceneSettings] Could not replace {} '{}' (Win32 error {})",
-				context, path.string(), error);
-			std::filesystem::remove(temporaryPath, ec);
-			return false;
-		}
-		return true;
-	}
-
-	std::string StripImGuiId(std::string_view label)
-	{
-		return std::string(label.substr(0, label.find(kImGuiIdSeparator)));
-	}
-
+	using Util::Settings::StripImGuiId;
 	std::vector<std::filesystem::path> GetSortedDirectoryPaths(
 		const std::filesystem::path& directory, bool directories, std::string_view context)
 	{
@@ -377,31 +319,7 @@ namespace
 		return displayName;
 	}
 
-	std::vector<std::string> SplitCatalogPath(std::string_view path)
-	{
-		std::vector<std::string> parts;
-		size_t start = 0;
-		while (start < path.size()) {
-			auto end = path.find('/', start);
-			auto part = path.substr(start, end == std::string_view::npos ? path.size() - start : end - start);
-			if (!part.empty()) {
-				std::string decoded(part);
-				for (size_t pos = 0; (pos = decoded.find('~', pos)) != std::string::npos;) {
-					if (pos + 1 < decoded.size() && decoded[pos + 1] == '1')
-						decoded.replace(pos, 2, "/");
-					else if (pos + 1 < decoded.size() && decoded[pos + 1] == '0')
-						decoded.replace(pos, 2, "~");
-					++pos;
-				}
-				parts.push_back(std::move(decoded));
-			}
-			if (end == std::string_view::npos)
-				break;
-			start = end + 1;
-		}
-		return parts;
-	}
-
+	using Util::Settings::SplitCatalogPath;
 	std::string ToCatalogPath(const std::vector<std::string>& path)
 	{
 		std::string result;
@@ -420,39 +338,9 @@ namespace
 		return result;
 	}
 
-	bool IsStructuralDisplayPart(std::string_view part)
-	{
-		std::string normalized;
-		normalized.reserve(part.size());
-		for (const char ch : part)
-			if (std::isalnum(static_cast<unsigned char>(ch)))
-				normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-		return normalized == "settings" || normalized == "values" || normalized == "baseline";
-	}
-
-	std::string NormalizeDisplayPart(std::string part)
-	{
-		part = StripImGuiId(part);
-		if (!part.empty() && std::all_of(part.begin(), part.end(), [](const char ch) {
-				return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
-			}))
-			part = Util::PrettifyIdentifier(part);
-		return part;
-	}
-
-	std::vector<std::string> GetCatalogDisplayPath(const SceneSettingsCatalog::SettingMetadata& setting)
-	{
-		auto parts = SplitCatalogPath(setting.displayPath.empty() ? setting.settingPath : setting.displayPath);
-		const auto keys = SplitCatalogPath(setting.displayPathKeys);
-		for (size_t index = 0; index < parts.size(); ++index) {
-			if (index < keys.size() && keys[index] != "-")
-				parts[index] = T(keys[index], parts[index].c_str());
-			parts[index] = NormalizeDisplayPart(std::move(parts[index]));
-		}
-		std::erase_if(parts, [](const auto& part) { return part.empty() || IsStructuralDisplayPart(part); });
-		return parts;
-	}
-
+	using Util::Settings::IsStructuralDisplayPart;
+	using Util::Settings::NormalizeDisplayPart;
+	using Util::Settings::GetCatalogDisplayPath;
 	std::vector<std::string> GetCatalogSelectorPath(const SceneSettingsCatalog::SettingMetadata& setting)
 	{
 		auto parts = SplitCatalogPath(setting.selectorPath);
@@ -505,18 +393,7 @@ namespace
 		return parts;
 	}
 
-	std::string GetCatalogLeafDisplayName(const SceneSettingsCatalog::SettingMetadata& setting)
-	{
-		if (setting.displayName.empty() && setting.displayNameKey.empty() &&
-			setting.editorSemantic == SceneSettingsCatalog::EditorSemantic::Choice)
-			return T("feature.scene_manager.selection", "Selection");
-
-		auto displayName = StripImGuiId(setting.displayName.empty() ? setting.settingKey : setting.displayName);
-		if (!setting.displayNameKey.empty())
-			displayName = StripImGuiId(T(setting.displayNameKey, displayName.c_str()));
-		return displayName;
-	}
-
+	using Util::Settings::GetCatalogLeafDisplayName;
 	double GetCatalogNumericDisplayScale(const SceneSettingsCatalog::SettingMetadata& setting)
 	{
 		return std::isfinite(setting.displayScale) && setting.displayScale > 0.0 ?

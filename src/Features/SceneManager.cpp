@@ -1,9 +1,11 @@
 #include "SceneManager.h"
 
+#include "CSEditor/SceneSettingsUI.h"
 #include "SceneManagerUI.h"
 #include "SceneSettingsManager.h"
 #include "SceneSettingsUIHooks.h"
 #include "Utils/DevBenchUx.h"
+#include "Utils/Game.h"
 
 std::pair<std::string, std::vector<std::string>> SceneManager::GetFeatureSummary()
 {
@@ -85,6 +87,25 @@ namespace
 
 void SceneManager::RegisterUxActions()
 {
+	FEATURE_QUERY("environmentPreviewState",
+		"Read shared toolbar and OS Editor environment controls. Args: none. Returns playing (toolbar weather/time lock), weather FormID or 0, timePaused, hour and timeScale. Stop restores controls that preceded Play, but does not rewind the game hour or save settings. Loading/sleep/wait/map menus temporarily run time to avoid blocking engine transitions.",
+		([](const Feature*, const json&) -> json {
+			auto* weather = Util::EnvironmentControls::GetLockedWeather();
+			auto* calendar = globals::game::calendar;
+			return { { "playing", Util::EnvironmentControls::IsPreviewActive() },
+				{ "weather", weather ? weather->GetFormID() : 0 }, { "timePaused", Util::EnvironmentControls::IsTimePaused() },
+				{ "hour", calendar && calendar->gameHour ? json(calendar->gameHour->value) : json(nullptr) },
+				{ "timeScale", calendar && calendar->timeScale ? json(calendar->timeScale->value) : json(nullptr) } };
+		}));
+	FEATURE_COMMAND("setEnvironmentPreviewPlaying",
+		"Press the retained feature toolbar's Play/Stop control. Args: playing=boolean, feature=shortName (required for Play). Play uses the toolbar's selected weather/period/location, locks weather and/or time, and can travel to a location. Requires a loaded player cell and an open toolbar for the named feature. Stop is always allowed. No scene settings are saved. Verify with environmentPreviewState; OS menu closure and visiting another page retain the lock, while replacing the toolbar target or using explicit OS Editor environment controls ends the preview.",
+		([](Feature*, const json& args) {
+			const bool playing = args.at("playing").get<bool>();
+			if (playing && !SceneManagerUI::IsFeaturePageEditing(Feature::FindFeatureByShortName(args.at("feature").get<std::string>())))
+				throw std::invalid_argument("Open the feature's Scene Manager toolbar first");
+			if (!SceneSettingsUI::SetFeaturePagePreviewPlaying(playing))
+				throw std::invalid_argument("The selected scene cannot be previewed, or the game is not ready");
+		}));
 	FEATURE_QUERY("featureScenePauseState",
 		"Read count, paused count, and activeOverwrites across both ownership layers for one feature and scene set, plus previewEditing, previewPendingEdits, toolbarOpen, previewOverwritesPaused and previewHasOverwrites for that feature's retained toolbar draft. sceneReady is false during main/loading menus or without a player cell; toolbarActionsLocked reports the loading/overwrite lock for Copy to, Pause and Delete. toolbarOpen means the toolbar is enabled on its owning feature, even while viewing another page or with the OS menu closed. Args: feature=shortName, type=interior|timeOfDay|weather|location, period=Normal|Dawn|Sunrise|Day|Sunset|Dusk|Night (default Normal; named period required for timeOfDay). Weather/location require formKey=SPID; location also requires locationType=Worldspace|Region|LocationType|Location|Cell. Entry pause is independent of feature-wide pause.",
 		([](const Feature*, const json& args) -> json {

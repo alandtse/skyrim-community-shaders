@@ -307,6 +307,9 @@ namespace SceneSettingsUI
 	/// Draw the active feature-page scene toolbar and return whether the page is editing.
 	bool DrawFeaturePageControls(Feature* feature, bool enabled);
 
+	/// Play or stop the selected toolbar scene's shared weather/time lock without saving settings.
+	bool SetFeaturePagePreviewPlaying(bool playing);
+
 	/// Hide the toolbar without saving, discarding, or stopping its scene preview.
 	void HideFeaturePageEditing();
 }

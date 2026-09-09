@@ -1960,14 +1960,6 @@ void EditorWindow::Load()
 // Credits: Isoprovophlex
 namespace
 {
-	// Toggled from the render thread, read by the hooked engine calls.
-	std::atomic<RE::TESWeather*> g_lockedWeather{ nullptr };
-	std::atomic_bool g_weatherLockActive{ false };
-
-	// Set once InstallWeatherLockHooks has actually redirected both call sets; gates the
-	// Lock Weather UI so a failed install can't be engaged as a silent no-op.
-	std::atomic_bool g_weatherLockHooksInstalled{ false };
-
 	constexpr std::uint8_t kCallOpcode = 0xE8;           // CALL rel32
 	constexpr std::uint8_t kJumpOpcode = 0xE9;           // JMP rel32 (tail call)
 	constexpr std::size_t kRelativeInstructionSize = 5;  // opcode + int32 displacement
@@ -1985,7 +1977,7 @@ namespace
 
 	RE::TESWeather* GetActiveLock()
 	{
-		return g_weatherLockActive.load(std::memory_order_acquire) ? g_lockedWeather.load(std::memory_order_acquire) : nullptr;
+		return Util::EnvironmentControls::GetLockedWeather();
 	}
 
 	/** @brief Forces the sky onto the locked weather, claiming the override slot so nothing lerps away from it. */
@@ -2109,102 +2101,59 @@ void EditorWindow::InstallWeatherLockHooks()
 		return;
 	}
 
-	g_weatherLockHooksInstalled.store(true, std::memory_order_release);
+	Util::EnvironmentControls::SetWeatherLockAvailable();
 	logger::info("[CSEditor] Weather lock hooked {} SetWeather and {} ForceWeather call sites", setWeatherSites.size(), forceWeatherSites.size());
 }
 
 bool EditorWindow::AreWeatherLockHooksInstalled()
 {
-	return g_weatherLockHooksInstalled.load(std::memory_order_acquire);
+	return Util::EnvironmentControls::IsWeatherLockAvailable();
 }
 
 void EditorWindow::MaintainWeatherLock()
 {
-	auto* locked = GetActiveLock();
-	auto* sky = globals::game::sky;
-	if (!locked || !sky)
-		return;
-
-	// The engine applies the release on its next sky update, so clear the flag before it lands.
-	const bool releasePending = sky->flags.any(RE::Sky::Flags::kReleaseWeatherOverride);
-	if (!releasePending && sky->currentWeather == locked && sky->overrideWeather == locked)
-		return;
-
-	sky->flags.reset(RE::Sky::Flags::kReleaseWeatherOverride);
-	ReapplyLock(sky, locked);
+	Util::EnvironmentControls::MaintainLocks();
 }
 
 bool EditorWindow::IsWeatherLocked() const
 {
-	return g_weatherLockActive.load(std::memory_order_acquire);
+	return Util::EnvironmentControls::GetLockedWeather() != nullptr;
 }
 
 RE::TESWeather* EditorWindow::GetLockedWeather() const
 {
-	return g_lockedWeather.load(std::memory_order_acquire);
+	return Util::EnvironmentControls::GetLockedWeather();
 }
 
 void EditorWindow::LockWeather(RE::TESWeather* weather)
 {
-	if (!weather)
-		return;
-
-	g_lockedWeather.store(weather, std::memory_order_release);
-	g_weatherLockActive.store(true, std::memory_order_release);
-	MaintainWeatherLock();
-
-	logger::info("Weather locked: {}", weather->GetFormEditorID() ? weather->GetFormEditorID() : "Unknown");
+	if (weather)
+		Util::EnvironmentControls::SetLockedWeather(weather);
 }
 
 void EditorWindow::UnlockWeather()
 {
-	auto* locked = GetActiveLock();
-	if (!locked)
-		return;
-
-	g_weatherLockActive.store(false, std::memory_order_release);
-	g_lockedWeather.store(nullptr, std::memory_order_release);
-
-	if (auto* sky = globals::game::sky)
-		sky->ReleaseWeatherOverride();
-
-	logger::info("Weather unlocked: {}", locked->GetFormEditorID() ? locked->GetFormEditorID() : "Unknown");
+	Util::EnvironmentControls::SetLockedWeather(nullptr);
 }
 
 void EditorWindow::PauseTime()
 {
-	if (timePaused)
-		return;
-	auto calendar = GetCalendar();
-	if (calendar && calendar->timeScale) {
-		savedTimeScale = calendar->timeScale->value;
-		calendar->timeScale->value = 0.0f;
-		timePaused = true;
-		logger::info("Time paused (saved timescale: {})", savedTimeScale);
-	}
+	Util::EnvironmentControls::PauseTime();
 }
 
 void EditorWindow::ResumeTime()
 {
-	if (!timePaused)
-		return;
-	auto calendar = GetCalendar();
-	if (calendar && calendar->timeScale) {
-		calendar->timeScale->value = savedTimeScale;
-		timePaused = false;
-		logger::info("Time resumed (timescale: {})", savedTimeScale);
-	}
+	Util::EnvironmentControls::ResumeTime();
+}
+
+bool EditorWindow::IsTimePaused() const
+{
+	return Util::EnvironmentControls::IsTimePaused();
 }
 
 void EditorWindow::ResetTimeScale()
 {
-	auto calendar = GetCalendar();
-	if (!calendar || !calendar->timeScale)
-		return;
-	if (timePaused)
-		savedTimeScale = kVanillaTimeScale;
-	else
-		calendar->timeScale->value = kVanillaTimeScale;
+	Util::EnvironmentControls::ResetTimeScale();
 	timeScaleSlider = kVanillaTimeScale;
 }
 
@@ -2230,30 +2179,7 @@ namespace
 
 void EditorWindow::SetTimeRunningForMenu(bool a_needsRunningTime)
 {
-	auto calendar = GetCalendar();
-	if (!calendar || !calendar->timeScale)
-		return;
-
-	if (a_needsRunningTime) {
-		if (timeRestoredForMenu || calendar->timeScale->value != 0.0f)
-			return;
-		// Only re-pause afterwards if the pause is ours; a zero timescale we did not set (stale
-		// save, console, other mod) stays restored so it cannot freeze the game again.
-		wasPausedBeforeMenu = timePaused;
-		// A non-positive snapshot would restore straight back to frozen time.
-		if (savedTimeScale <= 0.0f)
-			savedTimeScale = kVanillaTimeScale;
-		if (timePaused)
-			ResumeTime();
-		else
-			calendar->timeScale->value = std::max(savedTimeScale, kVanillaTimeScale);
-		timeRestoredForMenu = true;
-	} else if (timeRestoredForMenu) {
-		if (wasPausedBeforeMenu)
-			PauseTime();
-		timeRestoredForMenu = false;
-		wasPausedBeforeMenu = false;
-	}
+	Util::EnvironmentControls::SetTimeRunningForMenu(a_needsRunningTime);
 }
 
 RE::BSEventNotifyControl EditorWindow::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
@@ -2287,7 +2213,10 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 	auto calendar = GetCalendar();
 	if (!calendar || !calendar->gameHour)
 		return false;
-	const bool changed = ImGui::SliderFloat(label, &calendar->gameHour->value, 0.0f, kGameHourMax, format);
+	float gameHour = calendar->gameHour->value;
+	const bool changed = ImGui::SliderFloat(label, &gameHour, 0.0f, kGameHourMax, format);
+	if (changed)
+		Util::EnvironmentControls::SetGameHour(gameHour, false);
 	if (ImGui::IsItemActivated())
 		gameHourScrubRefreshIssued = false;
 
@@ -2312,10 +2241,6 @@ void EditorWindow::DrawTimeControls()
 	if (!calendar || !calendar->gameHour || !calendar->timeScale)
 		return;
 
-	// An external timescale change (console, other mods, the menu guard) overrides our pause
-	if (timePaused && calendar->timeScale->value > 0.0f)
-		timePaused = false;
-
 	const float framePadX = ImGui::GetStyle().FramePadding.x * 2.0f;
 	const char* resumeTimeText = T(TKEY("resume_time"), "Resume Time");
 	const char* pauseTimeText = T(TKEY("pause_time"), "Pause Time");
@@ -2324,7 +2249,7 @@ void EditorWindow::DrawTimeControls()
 								  ImGui::CalcTextSize(pauseTimeText).x,
 								  ImGui::CalcTextSize(resetSpeedText).x }) +
 	                          framePadX;
-	if (ImGui::Button(timePaused ? resumeTimeText : pauseTimeText, ImVec2(buttonWidth, 0)))
+	if (ImGui::Button(IsTimePaused() ? resumeTimeText : pauseTimeText, ImVec2(buttonWidth, 0)))
 		TogglePause();
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("pause_time_tooltip"), "Pause or resume game time progression"));
@@ -2334,8 +2259,8 @@ void EditorWindow::DrawTimeControls()
 		ImGui::Text("%s", T(TKEY("game_time_tooltip"), "Adjust the current game time"));
 
 	// Sync slider with actual value
-	if (timePaused)
-		timeScaleSlider = std::max(savedTimeScale, kTimeScaleMin);
+	if (IsTimePaused())
+		timeScaleSlider = std::max(Util::EnvironmentControls::GetSavedTimeScale(), kTimeScaleMin);
 	else if (std::abs(calendar->timeScale->value - timeScaleSlider) > 0.01f)
 		timeScaleSlider = calendar->timeScale->value;
 
@@ -2346,10 +2271,10 @@ void EditorWindow::DrawTimeControls()
 		ImGui::Text(T(TKEY("reset_speed_tooltip"), "Reset time speed to vanilla (%.1fx)"), kVanillaTimeScale);
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(timePaused);
+	ImGui::BeginDisabled(IsTimePaused());
 	if (ImGui::SliderFloat("##TimeScale", &timeScaleSlider, kTimeScaleMin, kTimeScaleMax,
 			timeScaleSlider == kVanillaTimeScale ? T(TKEY("vanilla_speed"), "Vanilla Speed") : "", ImGuiSliderFlags_Logarithmic))
-		calendar->timeScale->value = timeScaleSlider;
+		Util::EnvironmentControls::SetTimeScale(timeScaleSlider);
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();

@@ -78,8 +78,9 @@ int main() {
     check(deleted && absent, "Removing the last settings deletes the file after releasing its input handle");
 }
 '''
-        helpers = "\n".join(braced(manager, declaration) for declaration in (
-            "bool WriteJsonAtomically(", "bool IsSceneMetadataKey(",
+        writer = (ROOT / "src/Utils/JsonFile.cpp").read_text(encoding="utf-8")
+        helpers = braced(writer, "bool WriteJsonAtomically(") + "\n" + "\n".join(braced(manager, declaration) for declaration in (
+            "bool IsSceneMetadataKey(",
             "bool ReadBoundedSceneJson(", "bool HasSceneOverwriteContent(",
             "bool RemoveObjectValueAtPath(", "static bool RemoveSettingsFromOverwriteFile("))
         runtime.SceneSettingsRuntimeTests().compile_and_run(

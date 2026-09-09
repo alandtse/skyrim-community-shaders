@@ -2,7 +2,9 @@
 
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <nlohmann/json.hpp>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -72,6 +74,24 @@ public:
 	 */
 	const std::vector<OverrideInfo>& GetOverrides() const { return overrides; }
 
+	/** @brief Captures default/user settings before mod-provided layers are applied. */
+	void CaptureBaseSettings(const json& settings) { userBaseline = settings; }
+	/** @brief Restores only active overwrite-owned values to their underlying user values. */
+	void RestoreBaselines(json& settings) const;
+	/** @brief Captures scene-free values after loading and normalizing the applied layers. */
+	void CaptureAppliedSettings(const json& settings) { appliedSettings = settings; }
+	/** @brief Excludes untouched overwrite values while retaining saved and pending user edits. */
+	void PrepareUserSettings(json& settings);
+	/** @brief Saves companion user files and normal settings without modifying installed overwrites. */
+	bool SaveUserEdits(const json& settings, const std::function<bool()>& saveUserSettings = {});
+	/** @brief Deletes a discovered file and removes its effect from live settings. */
+	bool DeleteFile(const std::string& filePath);
+	/** @brief Exports selected JSON setting paths from one loaded feature. Arrays remain whole. */
+	bool ExportSettings(const std::string& modName, const std::string& featureName,
+		std::span<const std::string> settingPaths, const json& settings);
+	/** @brief Returns whether a discovered file targets loaded feature or global settings. */
+	bool IsApplicable(const OverrideInfo& info) const;
+
 	/**
 	 * @brief Gets overrides for a specific feature
 	 * @param featureName The short name of the feature
@@ -93,14 +113,6 @@ public:
 	 * @return Number of overrides applied
 	 */
 	size_t ReapplyFeatureOverrides(const std::string& featureName, json& featureJson);
-
-	/**
-	 * @brief Enables or disables a specific override
-	 * @param modName Name of the mod
-	 * @param featureName Feature name (empty for global)
-	 * @param isEnabled Whether to enable the override
-	 */
-	void SetOverrideEnabled(const std::string& modName, const std::string& featureName, bool isEnabled);
 
 	/**
 	 * @brief Clears all cached overrides and forces rediscovery
@@ -203,9 +215,9 @@ public:
 
 	/**
 	 * @brief Validates and cleans up user override files
-	 * Deletes .user files whose corresponding override hashes have changed
+	 * Removes unowned entries and deletes empty companion files, including when no overwrites remain.
 	 */
-	void CleanupStaleUserOverrides();
+	bool CleanupStaleUserOverrides();
 
 	/**
 	 * @brief Gets the merged override settings for a feature (all overrides applied, no user modifications)
@@ -265,11 +277,19 @@ private:
 	 * @param override The override JSON to apply
 	 */
 	void MergeJson(json& target, const json& override);
+	json GetLayerData(const OverrideInfo& info) const;
+	std::vector<size_t> GetOrderedOverrides() const;
+	void RebuildOverrideIndex();
+	json ApplyLayers(json settings);
+	json GetPendingEdits(const json& settings);
+	void ReapplyChangedSettings(const json& current, const json& underlying, const json& mask, const json& pending);
 
 	std::vector<OverrideInfo> overrides;
 	std::unordered_map<std::string, std::vector<size_t>> featureOverrideMap;  // Maps feature name to override indices
 	bool enabled = true;
 	bool discovered = false;
+	json userBaseline;
+	json appliedSettings;
 
 	static constexpr const char* GLOBAL_SUFFIX = "_Global.json";
 

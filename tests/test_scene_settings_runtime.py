@@ -1030,6 +1030,8 @@ std::vector<int> GetFeatureSceneContextTypes(const std::string&) { return {1}; }
 void InitializeFeatureSceneTarget(Feature*, int& edit) { edit = 1; }
 std::optional<int> GetFeatureSceneContext(int edit) { return edit; }
 void InitializeFeatureCopyDestination(FeaturePageEditorState&) {}
+bool environmentPlaying = false;
+bool SetFeaturePagePreviewPlaying(bool playing) { environmentPlaying = playing; return true; }
 START_EDITOR
 REQUEST_EDITOR
 DRAW_CONFIRMATION
@@ -1044,6 +1046,7 @@ int main() {
     auto* manager = SceneSettingsManager::GetSingleton();
     check(!BeginFeaturePageEditing(nullptr), "Null feature cannot replace the draft");
     check(BeginFeaturePageEditing(&first) && IsFeaturePageEditing(&first), "Open first toolbar");
+    environmentPlaying = true;
     manager->pending = true; manager->value = 9; manager->overwritesPaused = true;
     DrawFeaturePageEditConfirmation(&second);
     check(IsFeaturePageEditing(&first) && !IsFeaturePageEditing(&second), "Visiting another feature leaves the toolbar on its owner");
@@ -1051,6 +1054,7 @@ int main() {
     const int begins = manager->begins;
     HideFeaturePageEditing();
     check(!IsFeaturePageEditing(&first) && manager->pending && manager->value == 9, "Hiding the toolbar retains the draft preview");
+    check(environmentPlaying, "Hiding the toolbar keeps weather/time preview running");
     check(BeginFeaturePageEditing(&first) && manager->begins == begins, "Reopening same feature resumes without restarting its context");
     check(!BeginFeaturePageEditing(&unsupported) && manager->owner == first.name, "Unsupported target leaves current draft intact");
     check(!BeginFeaturePageEditing(&second) && state.replaceEditor.IsOpen(), "Unsaved changes require confirmation before replacing the editor");
@@ -1061,10 +1065,12 @@ int main() {
     DrawFeaturePageEditConfirmation(&second);
     check(state.pendingFeatureShortName.empty() && manager->pending && manager->value == 9, "Cancel retains unsaved changes");
     check(manager->overwritesPaused && manager->saves == 0, "Cancel preserves overwrite bypass without saving");
+    check(environmentPlaying, "Canceled replacement preserves weather/time preview");
     BeginFeaturePageEditing(&second);
     state.replaceEditor.answer = Util::ConfirmationPopup::Answer::Confirm;
     DrawFeaturePageEditConfirmation(&second);
     check(IsFeaturePageEditing(&second) && !manager->pending && manager->value == 1, "Confirmation discards old draft and opens target");
+    check(!environmentPlaying, "Confirmed replacement releases weather/time preview");
     check(!manager->overwritesPaused && manager->stored == 1 && manager->saves == 0, "Confirmed replacement resumes overwrites without persisting the discarded draft");
     const int draws = Util::ConfirmationPopup::draws;
     check(BeginFeaturePageEditing(&third), "Clean draft switches immediately");

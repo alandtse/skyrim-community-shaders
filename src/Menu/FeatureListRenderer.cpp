@@ -14,6 +14,8 @@
 #include "FeatureConstraints.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/CSUtility.h"
+#include "Features/FeatureOverwrites.h"
 #include "Features/SceneManagerUI.h"
 #include "Fonts.h"
 #include "Globals.h"
@@ -460,8 +462,16 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	if (globals::features::csEditor.IsInMenu() && globals::features::csEditor.loaded)
 		menuList.push_back(&globals::features::csEditor);
 	for (Feature* feat : sortedFeatureList) {
-		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() == FeatureCategories::kUtility && feat != &globals::features::csEditor && !isFavorite(feat))
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() == FeatureCategories::kUtility &&
+			feat != &globals::features::csEditor && feat != &globals::features::featureOverwrites && !isFavorite(feat))
 			menuList.push_back(feat);
+	}
+	if (globals::features::featureOverwrites.loaded && !isFavorite(&globals::features::featureOverwrites)) {
+		const auto utility = std::ranges::find_if(menuList, [](const auto& item) {
+			const auto* feature = std::get_if<Feature*>(&item);
+			return feature && *feature == &globals::features::csUtility;
+		});
+		menuList.insert(utility, &globals::features::featureOverwrites);
 	}
 
 	auto favorites = sortedFeatureList | std::ranges::views::filter([&isFavorite](Feature* feat) {

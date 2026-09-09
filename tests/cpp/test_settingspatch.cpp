@@ -7,6 +7,34 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+TEST_CASE("Export selection retains only selected complete setting paths", "[settingspatch]")
+{
+	const json values{ { "Group", { { "Pick", 2 }, { "Skip", false } } }, { "Vector", { 1, 2, 3 } },
+		{ "0", { { "1", 4 } } }, { "a/b", { { "~key", true } } }, { "_metadata", { { "description", "skip" } } } };
+	REQUIRE(Util::Settings::SelectSettingPaths(values, { "/Group/Pick", "/Vector" }) ==
+			json{ { "Group", { { "Pick", 2 } } }, { "Vector", { 1, 2, 3 } } });
+	REQUIRE(Util::Settings::SelectSettingPaths(values, { "/0/1", "/a~1b/~0key" }) ==
+			json{ { "0", { { "1", 4 } } }, { "a/b", { { "~key", true } } } });
+	REQUIRE(Util::Settings::SelectSettingPaths(values, { "/Vector/0", "/Group", "/_metadata/description" }).empty());
+	REQUIRE(Util::Settings::SelectSettingPaths(values, {}).empty());
+}
+
+TEST_CASE("Restoring overwrite baselines retains unrelated user changes", "[settingspatch]")
+{
+	json values{ { "Group", { { "Owned", 4.0 }, { "Unowned", 6.0 }, { "Extra", true } } } };
+	const json baseline{ { "Group", { { "Owned", 1.0 }, { "Unowned", 2.0 } } } };
+	const json mask{ { "Group", { { "Owned", 4.0 }, { "Extra", true } } } };
+	Util::Settings::RestoreSettings(values, baseline, mask);
+	REQUIRE(values == json{ { "Group", { { "Owned", 1.0 }, { "Unowned", 6.0 } } } });
+}
+
+TEST_CASE("Selecting legacy values preserves only currently owned keys", "[settingspatch]")
+{
+	const json legacy{ { "Group", { { "Owned", 4.0 }, { "Orphan", 6.0 } } }, { "Other", true } };
+	const json mask{ { "Group", { { "Owned", 1.0 } } } };
+	REQUIRE(Util::Settings::SelectSettings(legacy, mask) == json{ { "Group", { { "Owned", 4.0 } } } });
+}
+
 TEST_CASE("BuildUserOverride ignores values outside the mod override", "[settingspatch]")
 {
 	const json current{

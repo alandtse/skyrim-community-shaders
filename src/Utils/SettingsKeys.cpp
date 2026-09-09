@@ -2,12 +2,75 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 // Separate translation unit from SettingsPatch.cpp: these helpers use pure
 // nlohmann::json recursion with no Feature dependency, so they can compile
 // (and be unit-tested) without the engine headers ApplyPatch needs.
 namespace Util::Settings
 {
+	json SelectSettingPaths(const json& values, const std::vector<std::string>& paths)
+	{
+		const std::set<std::string> selected(paths.begin(), paths.end());
+		const auto visit = [&](auto&& self, const json& node, const json::json_pointer& parent) -> json {
+			json result = json::object();
+			if (!node.is_object())
+				return result;
+			for (const auto& [key, value] : node.items()) {
+				if (key.starts_with('_'))
+					continue;
+				const auto path = parent / key;
+				if (value.is_object()) {
+					auto nested = self(self, value, path);
+					if (!nested.empty())
+						result[key] = std::move(nested);
+				} else if (selected.contains(path.to_string())) {
+					result[key] = value;
+				}
+			}
+			return result;
+		};
+		return visit(visit, values, json::json_pointer{});
+	}
+
+	json SelectSettings(const json& values, const json& mask)
+	{
+		json selected = json::object();
+		if (!values.is_object() || !mask.is_object())
+			return selected;
+		for (const auto& [key, masked] : mask.items()) {
+			const auto value = values.find(key);
+			if (value == values.end())
+				continue;
+			if (masked.is_object() && value->is_object()) {
+				auto nested = SelectSettings(*value, masked);
+				if (!nested.empty())
+					selected[key] = std::move(nested);
+			} else {
+				selected[key] = *value;
+			}
+		}
+		return selected;
+	}
+
+	void RestoreSettings(json& target, const json& source, const json& mask)
+	{
+		if (!target.is_object() || !mask.is_object())
+			return;
+		for (const auto& [key, masked] : mask.items()) {
+			const auto value = source.is_object() ? source.find(key) : source.end();
+			if (masked.is_object() && target.contains(key) && target[key].is_object()) {
+				RestoreSettings(target[key], value != source.end() ? *value : json::object(), masked);
+				if (target[key].empty() && value == source.end())
+					target.erase(key);
+			} else if (value != source.end()) {
+				target[key] = *value;
+			} else {
+				target.erase(key);
+			}
+		}
+	}
+
 	json BuildUserOverride(const json& a_current, const json& a_override)
 	{
 		json userOverride = json::object();

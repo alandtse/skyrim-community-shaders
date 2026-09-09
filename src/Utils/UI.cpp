@@ -50,6 +50,15 @@
 
 namespace Util
 {
+	void DrawSelectionButtons(std::span<uint8_t> selected, const char* selectAll, const char* selectNone)
+	{
+		if (ImGui::SmallButton(selectAll))
+			std::ranges::fill(selected, uint8_t{ 1 });
+		ImGui::SameLine();
+		if (ImGui::SmallButton(selectNone))
+			std::ranges::fill(selected, uint8_t{ 0 });
+	}
+
 	static ImVec2 g_screenScaleRatio = { 1.0f, 1.0f };
 	static ImVec2 g_displaySize = { 0.0f, 0.0f };
 

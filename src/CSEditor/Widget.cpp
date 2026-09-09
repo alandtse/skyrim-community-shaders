@@ -7,6 +7,7 @@
 #include "EditorWindow.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 #include "Utils/UI.h"
 #include "WeatherUtils.h"
 #include "imgui_internal.h"
@@ -291,19 +292,14 @@ bool Widget::BeginWidgetWindow()
 
 void Widget::ForceWeatherReinit(RE::TESWeather* weather)
 {
-	auto* sky = globals::game::sky;
-	if (weather && sky && sky->currentWeather == weather) {
-		sky->ForceWeather(weather, true);
-		sky->ReleaseWeatherOverride();
-	}
+	Util::EnvironmentControls::RefreshWeather(weather);
 }
 
 void Widget::ForceCurrentWeatherReinit()
 {
 	auto* sky = globals::game::sky;
 	if (sky && sky->currentWeather) {
-		sky->ForceWeather(sky->currentWeather, true);
-		sky->ReleaseWeatherOverride();
+		Util::EnvironmentControls::RefreshWeather(sky->currentWeather);
 	}
 }
 

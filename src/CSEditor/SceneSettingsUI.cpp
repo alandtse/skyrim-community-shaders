@@ -2626,54 +2626,69 @@ namespace SceneSettingsUI
 		return GetCellTravelCommand(cell);
 	}
 
-	static void PreviewFeatureSceneContext(const SceneSettingsManager::SceneContextId& context,
-		const std::optional<std::string>& locationTravelCommand)
-	{
-		if (context.type == SceneSettingsManager::SceneContextType::Location) {
-			if (locationTravelCommand)
-				RE::Console::ExecuteCommand(locationTravelCommand->c_str());
-		}
-		if (context.type == SceneSettingsManager::SceneContextType::TimeOfDay ||
-			((context.type == SceneSettingsManager::SceneContextType::Weather || context.type == SceneSettingsManager::SceneContextType::Location) &&
-				context.period != Period::Count)) {
-			const auto periodIndex = static_cast<int>(context.period);
-			if (periodIndex >= 0 && periodIndex < kPeriodCount) {
-				if (auto* calendar = globals::game::calendar; calendar && calendar->gameHour) {
-					float hour = (SceneSettingsManager::kPeriodHours[periodIndex][0] +
-									 SceneSettingsManager::kPeriodHours[periodIndex][1]) *
-					             0.5f;
-					if (hour >= 24.0f)
-						hour -= 24.0f;
-					calendar->gameHour->value = hour;
-					Util::RequestTimeJumpTransition();
-				}
-			}
-		}
-		if (context.type != SceneSettingsManager::SceneContextType::Weather)
-			return;
-		const auto& weatherTargets = GetSceneWeatherTargets();
-		auto selected = std::ranges::find_if(weatherTargets, [&](const auto* weather) {
-			return weather->GetFormID() == context.weatherId;
-		});
-		if (selected != weatherTargets.end())
-			if (auto* sky = globals::game::sky)
-				sky->ForceWeather(*selected, false);
-	}
+	static std::optional<SceneSettingsManager::SceneContextId> s_playingContext;
 
 	static bool CanPreviewFeatureSceneContext(
 		const SceneSettingsManager::SceneContextId& context,
 		const std::optional<std::string>& locationTravelCommand)
 	{
-		if (context.type == SceneSettingsManager::SceneContextType::Interior)
+		if (context.type == SceneSettingsManager::SceneContextType::Interior || context.allPeriods)
 			return false;
-		if (context.type == SceneSettingsManager::SceneContextType::Location)
-			return locationTravelCommand.has_value();
+		if (context.type == SceneSettingsManager::SceneContextType::Location && !locationTravelCommand)
+			return false;
 		if ((context.type == SceneSettingsManager::SceneContextType::TimeOfDay ||
 				context.period != Period::Count) &&
-			(!globals::game::calendar || !globals::game::calendar->gameHour))
+			(!globals::game::calendar || !globals::game::calendar->gameHour || !globals::game::calendar->timeScale ||
+				static_cast<unsigned>(context.period) >= kPeriodCount))
 			return false;
 		return context.type != SceneSettingsManager::SceneContextType::Weather ||
-		       (globals::game::sky && context.weatherId != 0);
+		       (globals::game::sky && RE::TESForm::LookupByID<RE::TESWeather>(context.weatherId));
+	}
+
+	bool SetFeaturePagePreviewPlaying(bool playing)
+	{
+		if (!playing) {
+			Util::EnvironmentControls::StopPreview();
+			s_playingContext.reset();
+			return true;
+		}
+		if (!SceneSettingsManager::GetSingleton()->IsSceneReady())
+			return false;
+		auto& state = s_featurePageEditor;
+		const auto context = GetFeatureSceneContext(state.edit);
+		std::optional<std::string> travel;
+		if (context && context->type == SceneSettingsManager::SceneContextType::Location)
+			if (const auto* target = GetSelectedFeatureLocationTarget(state.edit, state.locationPicker))
+				travel = GetLocationTravelCommand(*target);
+		if (!context || !CanPreviewFeatureSceneContext(*context, travel))
+			return false;
+		std::optional<float> hour;
+		if (context->period != Period::Count) {
+			const auto& hours = SceneSettingsManager::kPeriodHours[static_cast<int>(context->period)];
+			hour = std::fmod((hours[0] + hours[1]) * 0.5f, Util::EnvironmentControls::kHoursPerDay);
+		}
+		auto* weather = context->type == SceneSettingsManager::SceneContextType::Weather ?
+		                    RE::TESForm::LookupByID<RE::TESWeather>(context->weatherId) :
+		                    nullptr;
+		if ((weather || hour) && !Util::EnvironmentControls::StartPreview(weather, hour))
+			return false;
+		s_playingContext = context;
+		if (travel)
+			RE::Console::ExecuteCommand(travel->c_str());
+		return true;
+	}
+
+	static bool DrawPreviewButton(bool playing)
+	{
+		if (!playing)
+			return ImGui::ArrowButton("##FeatureScenePreview", ImGuiDir_Right);
+		const float size = ImGui::GetFrameHeight();
+		const bool pressed = ImGui::Button("##FeatureScenePreview", ImVec2(size, size));
+		const ImVec2 center = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()).GetCenter();
+		const float halfExtent = ImGui::GetFontSize() * 0.25f;
+		ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(center.x - halfExtent, center.y - halfExtent),
+			ImVec2(center.x + halfExtent, center.y + halfExtent), ImGui::GetColorU32(ImGuiCol_Text));
+		return pressed;
 	}
 
 	static void InitializeFeatureCopyDestination(FeaturePageEditorState& state)
@@ -2727,6 +2742,7 @@ namespace SceneSettingsUI
 
 	static bool StartFeaturePageEditing(Feature* feature)
 	{
+		SetFeaturePagePreviewPlaying(false);
 		SceneSettingsManager::GetSingleton()->EndFeatureSceneEdit(false);
 		auto& state = s_featurePageEditor;
 		state = {};
@@ -2937,15 +2953,19 @@ namespace SceneSettingsUI
 					locationTravelCommand = GetLocationTravelCommand(*target);
 
 			ImGui::TableSetColumnIndex(2);
+			if (s_playingContext && s_playingContext != requestedContext)
+				SetFeaturePagePreviewPlaying(false);
+			const bool playing = Util::EnvironmentControls::IsPreviewActive();
 			const bool canPreview = requestedContext &&
 			                        CanPreviewFeatureSceneContext(
 										*requestedContext, locationTravelCommand);
-			ImGui::BeginDisabled(!canPreview);
-			const bool previewPressed = ImGui::ArrowButton(
-				"##FeatureScenePreview", ImGuiDir_Right);
+			ImGui::BeginDisabled(!playing && !canPreview);
+			const bool previewPressed = DrawPreviewButton(playing);
 			ImGui::EndDisabled();
-			if (previewPressed && requestedContext)
-				PreviewFeatureSceneContext(*requestedContext, locationTravelCommand);
+			Util::AddTooltip(playing ? T("feature.scene_manager.edit.stop_preview", "Stop preview and release weather/time locks") :
+									   T("feature.scene_manager.edit.play_preview", "Preview the selected scene and lock its weather/time"));
+			if (previewPressed)
+				SetFeaturePagePreviewPlaying(!playing);
 
 			ImGui::TableSetColumnIndex(3);
 			ImGui::BeginDisabled(!state.activeContext || !manager->HasPendingFeatureSceneEdits());
@@ -4739,11 +4759,9 @@ namespace SceneSettingsUI
 		ImGui::TextUnformatted(T("feature.scene_manager.export.select_settings", "Select settings to export as overwrite files:"));
 		ImGui::Spacing();
 
-		if (ImGui::SmallButton(T("feature.scene_manager.action.select_all", "Select All")))
-			std::fill(state.selected.begin(), state.selected.end(), uint8_t(1));
-		ImGui::SameLine();
-		if (ImGui::SmallButton(T("feature.scene_manager.action.select_none", "Select None")))
-			std::fill(state.selected.begin(), state.selected.end(), uint8_t(0));
+		Util::DrawSelectionButtons(state.selected,
+			T("feature.scene_manager.action.select_all", "Select All"),
+			T("feature.scene_manager.action.select_none", "Select None"));
 
 		ImGui::Spacing();
 		if (ImGui::BeginChild("##ExportList", ImVec2(-FLT_MIN, C::Em(C::SCENE_ADD_LIST_HEIGHT_EM)), ImGuiChildFlags_Borders)) {

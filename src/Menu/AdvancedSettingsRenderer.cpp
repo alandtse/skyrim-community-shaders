@@ -6,7 +6,6 @@
 #include <imgui_stdlib.h>
 #include <thread>
 
-#include "CSEditor/EditorWindow.h"
 #include "FeatureIssues.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Features/RemoteControl.h"
@@ -19,6 +18,7 @@
 #include "State.h"
 #include "Util.h"
 #include "Utils/Format.h"
+#include "Utils/Game.h"
 #include "Utils/UI.h"
 
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
@@ -1046,10 +1046,10 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 				RE::Console::ExecuteCommand("player.setav speedmult 1000");
 				RE::Console::ExecuteCommand("tgm");
 				RE::Console::ExecuteCommand("tcl");
-				EditorWindow::GetSingleton()->PauseTime();
-				RE::Console::ExecuteCommand("set gamehour to 12");
+				Util::EnvironmentControls::SetGameHour(12.0f);
+				Util::EnvironmentControls::PauseTime();
 				RE::Console::ExecuteCommand("coc whiterun");
-				RE::Console::ExecuteCommand("fw 81a");
+				Util::EnvironmentControls::ChangeWeather(RE::TESForm::LookupByID<RE::TESWeather>(0x81a), true);
 			}
 		}
 	}

@@ -3,6 +3,7 @@
 #include "Buffer.h"
 
 #include "LightEditor.h"
+#include "Utils/Game.h"
 #include "Weather/CellLightingWidget.h"
 #include "Weather/ImageSpaceWidget.h"
 #include "Weather/LensFlareWidget.h"
@@ -74,7 +75,7 @@ public:
 	float viewportBottomY = 0.0f;
 
 	// Time control constants
-	static constexpr float kVanillaTimeScale = 20.0f;
+	static constexpr float kVanillaTimeScale = Util::EnvironmentControls::kDefaultTimeScale;
 	static constexpr float kGameHourMax = 23.99f;
 	static constexpr float kTimeScaleMin = 0.1f;
 	static constexpr float kTimeScaleMax = 4000.0f;
@@ -179,13 +180,13 @@ public:
 	void ResumeTime();
 
 	/** @brief Toggle between paused and resumed time states. */
-	inline void TogglePause() { timePaused ? ResumeTime() : PauseTime(); }
+	inline void TogglePause() { IsTimePaused() ? ResumeTime() : PauseTime(); }
 
 	/** @brief Reset the timescale to the vanilla default (20x). */
 	void ResetTimeScale();
 
 	/** @brief Returns true if in-game time is currently paused. */
-	bool IsTimePaused() const { return timePaused; }
+	bool IsTimePaused() const;
 
 	/**
 	 * @brief Restores time around menus the engine cannot complete with a zero timescale, and
@@ -374,11 +375,7 @@ private:
 	Widget* lastFocusedWidget = nullptr;
 
 	// Time control state
-	bool timePaused = false;
-	float savedTimeScale = kVanillaTimeScale;
 	float timeScaleSlider = kVanillaTimeScale;
-	bool timeRestoredForMenu = false;
-	bool wasPausedBeforeMenu = false;
 	// Each refresh recomputes the whole terrain shadow map, so scrubbing is throttled well below frame rate.
 	static constexpr double kGameHourScrubRefreshIntervalSeconds = 0.1;
 	double lastGameHourScrubRefreshTime = 0.0;

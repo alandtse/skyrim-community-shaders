@@ -254,6 +254,9 @@ namespace Util
 		bool dontAskCheckbox = false;
 	};
 
+	/** @brief Draws shared Select All/None buttons for a checkbox selection list. */
+	void DrawSelectionButtons(std::span<uint8_t> selected, const char* selectAll, const char* selectNone);
+
 	/**
 	 * RAII wrapper for styled ImGui buttons that automatically applies and restores styling.
 	 * Use this to ensure consistent button styling without forgetting to pop styles.

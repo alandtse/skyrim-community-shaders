@@ -571,9 +571,9 @@ void GrassBucketStore::AppendNewSlices(GrassBucket& bucket, ID3D11DeviceContext*
 	bucket.firstNewSlice = UINT32_MAX;
 }
 
-// The widest allocation is kGrassStride bytes per instance, so a larger capacity wraps its ByteWidth
-// and silently under-allocates. Bounding capacityInstances here also bounds EnsureLODBin's cap.
-constexpr uint32_t kMaxBucketInstances = UINT32_MAX / kGrassStride;
+// The VR extras buffer doubles the per-instance footprint, so bound by the widest allocation to
+// avoid ByteWidth overflow. Bounding capacityInstances here also bounds EnsureLODBin's cap.
+constexpr uint32_t kMaxBucketInstances = UINT32_MAX / (kGrassStride * 2);
 
 bool GrassBucketStore::EnsureBucketCapacity(GrassBucket& b, uint32_t needed, ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t preserveInstances)
 {

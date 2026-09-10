@@ -3,6 +3,7 @@
 #include "GrassLighting.h"
 #include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
+#include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.grass_optimizations."
 
@@ -313,15 +314,18 @@ void GrassOptimizations::UpdateGrass()
 	const bool isVR = globals::game::isVR;
 
 	RE::NiFrustumPlanes frustum{};
-	ComputeFrustumPlanes(frustum, isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum, cam->world);
+	RE::NiTransform eye0Transform = cam->world;
+	if (isVR)
+		eye0Transform.translate = Util::GetEyePosition(0);
+	ComputeFrustumPlanes(frustum, isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum, eye0Transform);
 	const RE::NiPoint3 camPos = cam->world.translate;
 	const __m128 camPosV = _mm_setr_ps(camPos.x, camPos.y, camPos.z, 0.0f);
 
-	// cam->world is shared on purpose: the eye offset is applied downstream via
-	// FrameBuffer::CameraPosAdjust[eyeIndex], not here, so don't add it to this transform too.
 	RE::NiFrustumPlanes frustum1{};
 	if (isVR) {
-		ComputeFrustumPlanes(frustum1, cam->GetVRRuntimeData().viewFrustumArray[1], cam->world);
+		RE::NiTransform eye1Transform = cam->world;
+		eye1Transform.translate = Util::GetEyePosition(1);
+		ComputeFrustumPlanes(frustum1, cam->GetVRRuntimeData().viewFrustumArray[1], eye1Transform);
 	}
 
 	FrustumSoA frustumSoAs[2];

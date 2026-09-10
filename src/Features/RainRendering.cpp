@@ -61,6 +61,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainRefractionDistance,
 	RainStreakVariation,
 	RainLocalLightResponse,
+	RainLocalLightDistance,
+	EnableRainLightCache,
 	RainTexturePath,
 	RainTextureNormalStrength,
 	RainTextureReflectionStrength,
@@ -552,6 +554,8 @@ void RainRendering::NormalizeSettings()
 	settings.EnableRainRoofOcclusion = settings.EnableRainRoofOcclusion ? 1u : 0u;
 	settings.EnableRainWind = settings.EnableRainWind ? 1u : 0u;
 	settings.EnableRainRefraction = settings.EnableRainRefraction ? 1u : 0u;
+	settings.EnableRainLightCache = settings.EnableRainLightCache ? 1u : 0u;
+	settings.RainLocalLightDistance = ClampFinite(settings.RainLocalLightDistance, kLocalLightDistanceRange.minimum, kLocalLightDistanceRange.maximum, defaults.RainLocalLightDistance);
 	if (settings.RainTexturePath.empty())
 		settings.RainTexturePath = kDefaultRainTexturePath;
 
@@ -673,7 +677,7 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 		                          .f;
 		if (std::isfinite(gravity) && gravity > 0.0f)
 			sample.gravity = gravity;
-		if (const auto* rainEmitter = GetRainEmitter(a_precipitation)) {
+		if (const auto* rainEmitter = Precipitation::GetRainEmitter(a_precipitation)) {
 			const auto& wind = rainEmitter->windVelocity;
 			const float verticalGravity = std::abs(rainEmitter->gravityVelocity.z);
 			if (std::isfinite(wind.x) && std::isfinite(wind.y) &&
@@ -714,18 +718,6 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 	state.windSlope = (currentSample.windSlope * currentIntensity + previousSample.windSlope * previousIntensity) /
 	                  combinedIntensity;
 	return state;
-}
-
-const RE::BSParticleShaderRainEmitter* RainRendering::GetRainEmitter(const RE::BSGeometry* a_precipitation)
-{
-	if (!a_precipitation)
-		return nullptr;
-
-	const auto* particleProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(
-		a_precipitation->GetGeometryRuntimeData().shaderProperty.get());
-	return particleProperty ?
-	           skyrim_cast<RE::BSParticleShaderRainEmitter*>(particleProperty->particleEmitter) :
-	           nullptr;
 }
 
 RainRendering::CommonBuffer RainRendering::GetCommonBufferData() const
@@ -979,11 +971,12 @@ void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2
 		ClampFinite(settings.RainTextureUVWidth, kTextureUVWidthRange.minimum, kTextureUVWidthRange.maximum, defaults.RainTextureUVWidth), 0.0f };
 	a_data.MaterialLighting = float4{ ClampFinite(settings.RainHighlightRoughness, kHighlightRoughnessRange.minimum, kHighlightRoughnessRange.maximum, defaults.RainHighlightRoughness),
 		ClampFinite(settings.RainLightScattering, kUnitRange.minimum, kUnitRange.maximum, defaults.RainLightScattering),
-		ClampFinite(settings.RainSceneRefractionMix, kUnitRange.minimum, kUnitRange.maximum, defaults.RainSceneRefractionMix), 0.0f };
+		ClampFinite(settings.RainSceneRefractionMix, kUnitRange.minimum, kUnitRange.maximum, defaults.RainSceneRefractionMix), settings.EnableRainLightCache ? 1.0f : 0.0f };
 	const auto& lightLimitFix = globals::features::lightLimitFix;
 	if (glassy && lightLimitFix.loaded && lightLimitFix.lights && lightLimitFix.lightGrid && lightLimitFix.lightIndexList) {
 		a_data.LocalLighting = float4{ ClampFinite(settings.RainLocalLightResponse, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainLocalLightResponse),
-			a_data.Refraction.x, std::max(lightLimitFix.lightsNear, 0.1f), std::max(lightLimitFix.lightsFar, lightLimitFix.lightsNear + 1.0f) };
+			ClampFinite(settings.RainLocalLightDistance, kLocalLightDistanceRange.minimum, kLocalLightDistanceRange.maximum, defaults.RainLocalLightDistance),
+			std::max(lightLimitFix.lightsNear, 0.1f), std::max(lightLimitFix.lightsFar, lightLimitFix.lightsNear + 1.0f) };
 		a_data.LightGrid = { lightLimitFix.clusterSize[0], lightLimitFix.clusterSize[1], lightLimitFix.clusterSize[2], lightLimitFix.lightCount };
 	}
 }
@@ -1180,7 +1173,6 @@ void RainRendering::DrawRain()
 	if (dynamicSize.x < 2.0f || dynamicSize.y < 1.0f)
 		return;
 
-	SetupResources();
 	if (!perFrameCB || !dropBuffer || !lightClaimBuffer || !lightCacheBuffer || !dropLocalOffsetBuffer || !dropGroupOffsetBuffer ||
 		!visibleDropIndexBuffer || !indirectDrawArgsBuffer || !EnsureShaders()) {
 		renderPathReady = false;
@@ -1228,7 +1220,7 @@ void RainRendering::DrawRain()
 			computeResources[3] = skylighting.texProbeArray->srv.get();
 		context->CSSetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
 		std::array<ID3D11UnorderedAccessView*, 7> computeUAVs{};
-		const bool sharedLighting = data.Glassy.x > 0.5f && data.LocalLighting.x > 0.0f;
+		const bool sharedLighting = data.Glassy.x > 0.5f && data.LocalLighting.x > 0.0f && data.MaterialLighting.w > 0.5f;
 		if (sharedLighting) {
 			const UINT emptyClaims[4]{ UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
 			context->ClearUnorderedAccessViewUint(lightClaimBuffer->UAV(), emptyClaims);

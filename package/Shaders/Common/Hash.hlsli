@@ -3,6 +3,8 @@
 
 namespace Hash
 {
+	static const float InverseUint24Range = 1.0f / 16777216.0f;
+
 	/** @brief Mixes a 32-bit integer deterministically for procedural seeds. */
 	uint LowBias32(uint value)
 	{
@@ -11,6 +13,12 @@ namespace Hash
 		value ^= value >> 15u;
 		value *= 0x846CA68Bu;
 		return value ^ (value >> 16u);
+	}
+
+	/** @brief Hashes an integer into the half-open range [0, 1). */
+	float Float01(uint value)
+	{
+		return float(LowBias32(value) >> 8u) * InverseUint24Range;
 	}
 }
 

@@ -71,8 +71,10 @@ namespace RainLighting
 			if (lightIndex >= min(RainLightGrid.w, lightCount))
 				continue;
 			LightLimitFix::Light light = RainLights[lightIndex];
-			// These light types need directional/room data that the airborne pass does not carry.
-			if ((light.lightFlags & (LightLimitFix::LightFlags::Disabled | LightLimitFix::LightFlags::PortalStrict | LightLimitFix::LightFlags::Spot)) != 0u)
+			if ((light.lightFlags & (LightLimitFix::LightFlags::Disabled | LightLimitFix::LightFlags::Spot)) != 0u)
+				continue;
+			// Room-restricted lights need per-drop room membership before they can illuminate rain.
+			if ((light.lightFlags & LightLimitFix::LightFlags::PortalStrict) != 0u && any(light.roomFlags != 0u))
 				continue;
 			float3 toLight = light.positionWS[eyeIndex].xyz - relativePosition;
 			float lightDistance = length(toLight);
@@ -90,7 +92,7 @@ namespace RainLighting
 			float weight = Color::RGBToLuminance(irradiance);
 			illumination += irradiance;
 			weightedDirection += lightDirection * weight;
-			weightedScattering += (0.25f + forwardScatter) * weight;
+			weightedScattering += forwardScatter * weight;
 			totalWeight += weight;
 		}
 		result.Irradiance = min(illumination, 16.0f.xxx) * LocalLighting.x * (1.0f - smoothstep(LocalLighting.y * 0.65f, LocalLighting.y, headDistance));

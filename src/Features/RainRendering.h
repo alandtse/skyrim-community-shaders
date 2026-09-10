@@ -54,6 +54,7 @@ private:
 	static constexpr SettingRange<float> kHighlightRoughnessRange{ 0.08f, 0.6f };
 	static constexpr SettingRange<float> kTextureUVWidthRange{ 0.1f, 1.0f };
 	static constexpr SettingRange<float> kRefractionDistanceRange{ 256.0f, 6000.0f };
+	static constexpr SettingRange<float> kLocalLightDistanceRange{ 256.0f, 30000.0f };
 	static constexpr SettingRange<float> kRoofFadeStartRange{ 0.0f, 0.99f };
 	static constexpr SettingRange<float> kRuntimeFarDistanceRange{ 1000.0f, 50000.0f };
 	static constexpr SettingRange<float> kRuntimeFallSpeedRange{ 100.0f, 10000.0f };
@@ -122,6 +123,8 @@ public:
 		float RainRefractionDistance = 6000.0f;
 		float RainStreakVariation = 0.75f;
 		float RainLocalLightResponse = 1.5f;
+		float RainLocalLightDistance = 6000.0f;
+		uint EnableRainLightCache = 1;
 		std::string RainTexturePath = kDefaultRainTexturePath;
 		float RainTextureNormalStrength = 2.0f;
 		float RainTextureReflectionStrength = 1.0f;
@@ -202,7 +205,7 @@ public:
 
 	std::string GetName() override { return "Rain Rendering"; }
 	std::string GetShortName() override { return "RainRendering"; }
-	std::string GetDisplayName() override { return "Airborne Rain"; }
+	std::string GetDisplayName() override { return T("feature.rain_rendering.name", "Airborne Rain"); }
 	std::string_view GetCategory() const override { return FeatureCategories::kSky; }
 	std::string_view GetShaderDefineName() override { return "RAIN_RENDERING"; }
 	bool HasShaderDefine(RE::BSShader::Type a_shaderType) override { return a_shaderType == RE::BSShader::Type::Particle; }
@@ -270,7 +273,6 @@ private:
 	std::array<uint32_t, 4> GetLayerDropCounts() const;
 	float4 GetLayerRadii(float a_farDistance) const;
 	WeatherRainState GetWeatherRainState() const;
-	static const RE::BSParticleShaderRainEmitter* GetRainEmitter(const RE::BSGeometry* a_precipitation);
 	float3 GetRainLightColor() const;
 	bool EnsureShaders();
 	bool EnsureRainSampler();

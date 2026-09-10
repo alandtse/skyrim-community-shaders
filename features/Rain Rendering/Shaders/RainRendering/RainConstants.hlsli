@@ -1,6 +1,8 @@
 #ifndef RAIN_CONSTANTS_HLSLI
 #define RAIN_CONSTANTS_HLSLI
 
+static const float RainMinimumOpticalCoverage = 1e-4f;
+
 cbuffer RainConstants : register(b0)
 {
 	float4 HeadPositionAndTime;

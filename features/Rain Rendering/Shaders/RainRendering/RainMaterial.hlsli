@@ -16,6 +16,8 @@ namespace RainMaterial
 	static const float UnresolvedWaterFresnel = 0.08f;
 	static const float LensDeflectionScale = 2.0f;
 	static const float MaximumSurfaceFresnel = 0.35f;
+	static const float HighlightAxialCurvature = 0.65f;
+	static const float HighlightTailResponse = 0.08f;
 
 	/** @brief Filtered water shape and light response in the shared world-space streak basis. */
 	struct Surface
@@ -55,6 +57,13 @@ namespace RainMaterial
 		return Color::IrradianceToLinear(lightColor) * Appearance.x * Appearance.y;
 	}
 
+	float TransmittedHighlight(float3 normal, float3 viewDirection, float3 lightDirection, float roughness)
+	{
+		float3 transmittedDirection = refract(-viewDirection, normal, 1.0f / WaterIndexOfRefraction);
+		float alignment = saturate(dot(transmittedDirection, lightDirection));
+		return pow(alignment, lerp(64.0f, 8.0f, roughness));
+	}
+
 	/** @brief Shades one textured drop using a head-centered view shared by both eyes. */
 	Surface Evaluate(RainVertexOutput input, float silhouetteFade, float resolvedWidth, float intersectionFade)
 	{
@@ -70,7 +79,7 @@ namespace RainMaterial
 			mip = max(log2(max(texelsPerPixel.x, texelsPerPixel.y)), 0.0f);
 			float4 normalOpacity = RainNormalOpacity.SampleLevel(RefractionSampler, textureUV, mip);
 			water.Opacity = saturate(normalOpacity.a) * silhouetteFade;
-			if (input.ColorOpacity.a * water.Opacity * intersectionFade <= 1e-4f)
+			if (input.ColorOpacity.a * water.Opacity * intersectionFade <= RainMinimumOpticalCoverage)
 				discard;
 			float3 textureNormal = normalize(float3((normalOpacity.xy * 2.0f - 1.0f) * TexturedRain.y, max(normalOpacity.z * 2.0f - 1.0f, 0.05f)));
 			normalTS = normalize(lerp(normalTS, textureNormal, detailWeight));
@@ -111,22 +120,29 @@ namespace RainMaterial
 		// Broaden highlights on narrow ribbons so their curved normals do not create subpixel flashes.
 		float pixelWidth = max(input.ScreenSideAndWidth.z * 2.0f, 1.0f);
 		roughness = sqrt(saturate(roughness * roughness + 0.25f / (pixelWidth * pixelWidth)));
+		float axialCoordinate = input.StreakCoordinate.x * 2.0f - 1.0f;
+		float axialProfile = saturate(1.0f - axialCoordinate * axialCoordinate);
+		float highlightProfile = lerp(HighlightTailResponse, 1.0f, axialProfile * axialProfile * axialProfile);
+		float resolvedLength = saturate(input.ScreenAlongAndLength.z * 0.5f);
+		highlightProfile = lerp(HighlightTailResponse + (1.0f - HighlightTailResponse) * (16.0f / 35.0f), highlightProfile, resolvedLength);
+		float3 highlightNormal = normalize(normalWS + input.StreakAxisWorld * axialCoordinate * HighlightAxialCurvature * detailWeight);
 		float3 localIrradiance = max(input.ColorOpacity.rgb, 0.0f);
 		float directionConfidence = saturate(dot(input.LightDirection.xyz, input.LightDirection.xyz));
 		float3 localDirection = SafeNormalize(input.LightDirection.xyz, input.HeadViewDirection);
-		float3 localHighlight = DirectHighlight(normalWS, input.HeadViewDirection, localDirection, roughness) * directionConfidence;
+		float3 localHighlight = DirectHighlight(highlightNormal, input.HeadViewDirection, localDirection, roughness) * directionConfidence * highlightProfile;
 		float3 localDirectLighting = localIrradiance * localHighlight * TexturedRain.z;
+		float localTransmission = TransmittedHighlight(highlightNormal, input.HeadViewDirection, localDirection, roughness) * directionConfidence * highlightProfile;
 		float3 localScatteredLighting =
-			localIrradiance * MaterialLighting.y * input.LightDirection.w * water.Core * (1.0f - water.Fresnel);
+			localIrradiance * MaterialLighting.y * input.LightDirection.w * localTransmission * (1.0f - water.Fresnel);
 		water.LocalLighting = localDirectLighting + localScatteredLighting;
 		float3 sunDirection = SafeNormalize(SharedData::DirLightDirection.xyz, float3(0.0f, 0.0f, 1.0f));
-		float3 sunHighlight = DirectHighlight(normalWS, input.HeadViewDirection, sunDirection, roughness);
-		float sunScattering = 0.1f + pow(saturate(dot(-sunDirection, input.HeadViewDirection)), 4.0f);
+		float3 sunHighlight = DirectHighlight(highlightNormal, input.HeadViewDirection, sunDirection, roughness) * highlightProfile;
+		float sunScattering = TransmittedHighlight(highlightNormal, input.HeadViewDirection, sunDirection, roughness) * highlightProfile;
 		float3 directionalIrradiance = DirectionalIrradiance();
 		float3 directionalDirectLighting = directionalIrradiance * sunHighlight * TexturedRain.z;
 		water.DirectLighting = localDirectLighting + directionalDirectLighting;
 		water.ScatteredLighting = localScatteredLighting +
-		                          directionalIrradiance * MaterialLighting.y * sunScattering * water.Core * (1.0f - water.Fresnel);
+		                          directionalIrradiance * MaterialLighting.y * sunScattering * (1.0f - water.Fresnel);
 		return water;
 	}
 }

@@ -1,6 +1,7 @@
 #include "WetnessEffects.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "Precipitation.h"
 #include "SceneSelector.h"
 
 #define I18N_KEY_PREFIX "feature.wetness_effects."
@@ -716,16 +717,7 @@ float WetnessEffects::GetRainIntensity(RE::NiPointer<RE::BSGeometry> precipObjec
 		return 0.0f;
 	}
 
-	auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
-	auto shaderProp = effect.get();
-	auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-
-	if (!particleShaderProperty || !particleShaderProperty->particleEmitter) {
-		return 0.0f;
-	}
-
-	auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
-	if (!rain->emitterType.any(RE::BSParticleShaderEmitter::EMITTER_TYPE::kRain)) {
+	if (!Precipitation::GetRainEmitter(precipObject.get())) {
 		return 0.0f;
 	}
 
@@ -852,11 +844,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 						if (!precipObject) {
 							precipObject = precip->lastPrecip;
 						}
-						if (precipObject) {
-							auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
-							auto shaderProp = effect.get();
-							auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-							auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
+						if (auto* rain = Precipitation::GetRainEmitter(precipObject.get())) {
 							data.OcclusionViewProj = rain->occlusionProjection;
 						}
 					}

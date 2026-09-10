@@ -554,11 +554,9 @@ void Skylighting::RenderOcclusion()
 		CS_GPU_PASS("Skylighting::PrecipitationMask");
 		auto precipitationObject = precipitation->currentPrecip ? precipitation->currentPrecip : precipitation->lastPrecip;
 		if (precipitationObject) {
-			auto* particleProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(
-				precipitationObject->GetGeometryRuntimeData().shaderProperty.get());
-			if (particleProperty && particleProperty->particleEmitter) {
+			if (auto* rainEmitter = Precipitation::GetRainEmitter(precipitationObject.get())) {
 				precipitation->SetupMask();
-				precipitation->RenderMask(static_cast<RE::BSParticleShaderRainEmitter*>(particleProperty->particleEmitter));
+				precipitation->RenderMask(rainEmitter);
 			}
 		}
 	}

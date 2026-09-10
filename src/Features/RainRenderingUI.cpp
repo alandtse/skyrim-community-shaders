@@ -217,6 +217,12 @@ void RainRendering::DrawWaterMaterialSettings()
 		ImGui::SliderFloat(T(TKEY("local_light_response"), "Local Light Response"), &settings.RainLocalLightResponse, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("local_light_response_tooltip"), "Reuses the light grid once per drop for colored scattering and an intensity-weighted highlight direction. Separate from cubemap reflections. Unshadowed approximation; spot and portal-restricted lights are excluded."));
+		ImGui::SliderFloat(T(TKEY("local_light_distance"), "Local Lighting Distance"), &settings.RainLocalLightDistance, kLocalLightDistanceRange.minimum, kLocalLightDistanceRange.maximum, "%.0f units");
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("local_light_distance_tooltip"), "Maximum distance from the camera for local rain lighting, independent of Glassy Detail Distance. Lighting fades over the final 35%. Each light still has its own radius."));
+		DrawFlagCheckbox(T(TKEY("light_cache"), "Use Light Field Cache"), settings.EnableRainLightCache);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("light_cache_tooltip"), "Shares lighting between distant drops. Turn off to evaluate local lights separately at each drop for comparison; this can increase GPU cost. Nearby drops are always evaluated separately."));
 		ImGui::SliderFloat(T(TKEY("highlight_roughness"), "Water Highlight Roughness"), &settings.RainHighlightRoughness, kHighlightRoughnessRange.minimum, kHighlightRoughnessRange.maximum, "%.2f");
 		ImGui::SliderFloat(T(TKEY("light_scattering"), "Light Scattering"), &settings.RainLightScattering, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
 		ImGui::BeginDisabled(!settings.EnableRainRefraction);

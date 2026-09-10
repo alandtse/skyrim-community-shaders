@@ -1,6 +1,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Hash.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/StereoSampling.hlsli"
 #include "RainRendering/RainConstants.hlsli"
 
 #include "RainRendering/RainLighting.hlsli"
@@ -97,11 +98,6 @@ RainSceneColorPixelOutput RainSceneColorPS(RainSceneColorVertexOutput input)
 	return output;
 }
 
-float Hash01(uint value)
-{
-	return float(Hash::LowBias32(value) >> 8u) * (1.0f / 16777216.0f);
-}
-
 uint HashLattice(int2 lattice, uint seed)
 {
 	return Hash::LowBias32(asuint(lattice.x) ^ Hash::LowBias32(asuint(lattice.y) ^ seed));
@@ -112,10 +108,10 @@ float ValueNoise(float2 position, uint seed)
 	int2 lattice = int2(floor(position));
 	float2 offset = frac(position);
 	float2 blend = offset * offset * (3.0f - 2.0f * offset);
-	float value00 = Hash01(HashLattice(lattice, seed));
-	float value10 = Hash01(HashLattice(lattice + int2(1, 0), seed));
-	float value01 = Hash01(HashLattice(lattice + int2(0, 1), seed));
-	float value11 = Hash01(HashLattice(lattice + int2(1, 1), seed));
+	float value00 = Hash::Float01(HashLattice(lattice, seed));
+	float value10 = Hash::Float01(HashLattice(lattice + int2(1, 0), seed));
+	float value01 = Hash::Float01(HashLattice(lattice + int2(0, 1), seed));
+	float value11 = Hash::Float01(HashLattice(lattice + int2(1, 1), seed));
 	return lerp(lerp(value00, value10, blend.x), lerp(value01, value11, blend.x), blend.y);
 }
 
@@ -200,7 +196,7 @@ uint RainLightBucket(int3 cell)
 
 bool RainUsesSharedLighting(float headDistance)
 {
-	return LocalLighting.x > 0.0f && headDistance >= RainIndividualLightDistance && headDistance < LocalLighting.y;
+	return MaterialLighting.w > 0.5f && LocalLighting.x > 0.0f && headDistance >= RainIndividualLightDistance && headDistance < LocalLighting.y;
 }
 
 [numthreads(RAIN_COMPUTE_GROUP_SIZE, 1, 1)] void RainUpdateCS(uint3 dispatchThreadID : SV_DispatchThreadID) {
@@ -253,15 +249,15 @@ bool RainUsesSharedLighting(float headDistance)
 
 	float fallSpeed = max(WeatherFallDepth.y, 1.0f);
 	float2 lateralVelocity = VanillaWind.xy * fallSpeed * VanillaWind.z;
-	float initialPhase = Hash01(cellSeed ^ 0xA511E9B3u);
+	float initialPhase = Hash::Float01(cellSeed ^ 0xA511E9B3u);
 	float fallDistance = max(HeadPositionAndTime.w, 0.0f) * fallSpeed + initialPhase * fallCycleHeight;
 	uint lifeCycle = uint(floor(fallDistance / fallCycleHeight));
 	float lifeFraction = frac(fallDistance / fallCycleHeight);
 	uint lifeSeed = Hash::LowBias32(cellSeed ^ Hash::LowBias32(lifeCycle + 0x63D83595u));
 
 	float3 jitter = float3(
-		Hash01(lifeSeed ^ 0xB5297A4Du),
-		Hash01(lifeSeed ^ 0x68E31DA4u),
+		Hash::Float01(lifeSeed ^ 0xB5297A4Du),
+		Hash::Float01(lifeSeed ^ 0x68E31DA4u),
 		0.0f);
 	float3 dropPosition = (float3(worldCell) + jitter) * cellSize;
 	if (isOverheadDrop)
@@ -306,7 +302,8 @@ bool RainUsesSharedLighting(float headDistance)
 	float lodWidth = lerp(1.30f, 0.52f, smoothstep(0.08f, 1.0f, distanceRatio));
 	float streakLength = (Streak.x + speed * Streak.y) * lodLength;
 	float streakWidth = Streak.z * lodWidth;
-	float streakVariation = lerp(1.0f, lerp(0.55f, 1.45f, Hash01(lifeSeed ^ 0x917AC53Du)), Refraction.z);
+	float lengthSample = Hash::Float01(lifeSeed ^ 0x917AC53Du);
+	float streakVariation = lerp(1.0f, lerp(0.25f, 1.60f, lengthSample * lengthSample), Refraction.z);
 	streakLength *= streakVariation;
 	streakWidth *= lerp(1.0f, streakVariation, 0.35f);
 	if (GridAndDebug.w == 1u) {
@@ -361,7 +358,7 @@ bool RainUsesSharedLighting(float headDistance)
 
 	float lodDensity = lerp(0.42f, 1.38f, sqrt(distanceRatio));
 	float density = VolumeSizeAndDensity.w * WeatherFallDepth.x * spatialDensity * curtainFactor * lodDensity;
-	float acceptance = Hash01(lifeSeed ^ 0xC2B2AE35u);
+	float acceptance = Hash::Float01(lifeSeed ^ 0xC2B2AE35u);
 	float acceptedDensity = isOverheadDrop ? saturate(VolumeSizeAndDensity.w) : saturate(density);
 	if ((GridAndDebug.w == 0u || GridAndDebug.w >= 6u) && acceptance > acceptedDensity) {
 		RejectDrop(dropIndex);
@@ -655,16 +652,6 @@ float LinearSceneDepth(float2 pixel)
 	return RainCameraData.w / max(-rawSceneDepth * RainCameraData.z + RainCameraData.x, 1e-4f);
 }
 
-float2 HalfResolutionScenePixel(float2 pixel, uint eyeIndex, float eyeWidth)
-{
-#	ifdef VR
-	float targetEyeWidth = ceil(eyeWidth * 0.5f);
-	return float2((pixel.x - eyeIndex * eyeWidth) * 0.5f + eyeIndex * targetEyeWidth, pixel.y * 0.5f);
-#	else
-	return pixel * 0.5f;
-#	endif
-}
-
 [earlydepthstencil] float4 RainPS(RainVertexOutput input) : SV_Target0
 {
 	float sceneDepth = LinearSceneDepth(input.Position.xy);
@@ -719,9 +706,9 @@ float2 HalfResolutionScenePixel(float2 pixel, uint eyeIndex, float eyeWidth)
 			float2 halfMaximum = float2(
 				min((input.EyeIndex + 1u) * targetEyeWidth, float(halfWidth)) - 0.5f,
 				min(ceil(ScreenSize.y * 0.5f), float(halfHeight)) - 0.5f);
-			float2 halfPixel = clamp(HalfResolutionScenePixel(pixel, input.EyeIndex, eyeWidth), halfMinimum, halfMaximum);
+			float2 halfPixel = clamp(StereoSampling::MapPixelToHalfResolution(pixel, input.EyeIndex, eyeWidth), halfMinimum, halfMaximum);
 			float2 refractedHalfPixel = clamp(
-				HalfResolutionScenePixel(refractedPixel, input.EyeIndex, eyeWidth), halfMinimum, halfMaximum);
+				StereoSampling::MapPixelToHalfResolution(refractedPixel, input.EyeIndex, eyeWidth), halfMinimum, halfMaximum);
 			// Each stored depth is the nearest source sample; test all bilinear contributors conservatively.
 			float2 sampleBase = floor(refractedHalfPixel - 0.5f) + 0.5f;
 			float refractedDepth = min(min(

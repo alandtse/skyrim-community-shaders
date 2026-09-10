@@ -50,3 +50,25 @@ void Precipitation::RenderOriginal()
 {
 	Main_RenderPrecipitation::func();
 }
+
+RE::BSParticleShaderRainEmitter* Precipitation::GetRainEmitter(RE::BSGeometry* a_precipitation)
+{
+	return const_cast<RE::BSParticleShaderRainEmitter*>(
+		GetRainEmitter(static_cast<const RE::BSGeometry*>(a_precipitation)));
+}
+
+const RE::BSParticleShaderRainEmitter* Precipitation::GetRainEmitter(const RE::BSGeometry* a_precipitation)
+{
+	if (!a_precipitation)
+		return nullptr;
+
+	const auto* particleProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(
+		a_precipitation->GetGeometryRuntimeData().shaderProperty.get());
+	if (!particleProperty || !particleProperty->particleEmitter)
+		return nullptr;
+
+	const auto* emitter = particleProperty->particleEmitter;
+	return emitter->emitterType.any(RE::BSParticleShaderEmitter::EMITTER_TYPE::kRain) ?
+	           static_cast<const RE::BSParticleShaderRainEmitter*>(emitter) :
+	           nullptr;
+}

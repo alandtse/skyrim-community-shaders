@@ -277,7 +277,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 	}
 	GetProjectionLimits(*camera).minimumNear = std::min(savedMinimum, settings.MinimumNearClip);
 	appliedNear = controller.current;
-	if (std::chrono::duration<float>(now - lastLog).count() >= kLogInterval) {
+	if (globals::state && globals::state->IsDeveloperMode() && std::chrono::duration<float>(now - lastLog).count() >= kLogInterval) {
 		logger::debug("VR dynamic near clip: near={:.4f}, target={:.4f}, relevant L/R={:.3f}/{:.3f}, absolute L/R={:.3f}/{:.3f}, {}",
 			appliedNear, targetNear, nearest[0], nearest[1], absoluteNearest[0], absoluteNearest[1], status);
 		lastLog = now;
@@ -312,7 +312,7 @@ bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 		         !requestMatches  ? "Engine near differs; adapting from rendered depth" :
 		                            "Active (cached frame projection differs)";
 		const auto now = Clock::now();
-		if (std::chrono::duration<float>(now - lastProjectionLog).count() >= kLogInterval) {
+		if (globals::state && globals::state->IsDeveloperMode() && std::chrono::duration<float>(now - lastProjectionLog).count() >= kLogInterval) {
 			logger::warn("VR dynamic near clip: {}; requested={:.6g}, engine={:.6g}, far={:.6g}, frustum L/R={:.6g}/{:.6g}, projection L/R={:.6g}/{:.6g}, jittered L/R={:.6g}/{:.6g}, cached L/R={:.6g}/{:.6g}; native Z/W L=[{:.6g},{:.6g},{:.6g},{:.6g}], R=[{:.6g},{:.6g},{:.6g},{:.6g}]",
 				status, appliedNear, observedEngineNear, cameraData.x, camera.viewFrustumArray[0].fNear, camera.viewFrustumArray[1].fNear,
 				observedNear[0], observedNear[1], jitteredNear[0], jitteredNear[1], cachedNear[0], cachedNear[1],
@@ -483,6 +483,8 @@ void VRDynamicNearClip::CaptureDepth(const RE::NiCamera* camera, ID3D11ShaderRes
 
 void VRDynamicNearClip::DrawValues()
 {
+	if (!globals::state || !globals::state->IsDeveloperMode())
+		return;
 	ImGui::TextUnformatted(status);
 	if (controlledCamera)
 		ImGui::Text("Near %.4f | target %.4f", appliedNear, targetNear);
@@ -512,16 +514,18 @@ void VRDynamicNearClip::DrawSettings()
 		ImGui::SliderFloat(T("feature.vr.near_clip.minimum", "Minimum near clip"), &settings.MinimumNearClip, 0.01f, settings.NormalNearClip, "%.3f", ImGuiSliderFlags_Logarithmic);
 		ImGui::SliderFloat(T("feature.vr.near_clip.scale", "Near distance scale"), &settings.NearDistanceScale, 0.05f, 1.0f, "%.2f");
 		ImGui::SliderFloat(T("feature.vr.near_clip.restore", "Restore speed (per second)"), &settings.RestoreSpeed, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-		ImGui::Checkbox(T("feature.vr.near_clip.readout", "Show near clip headset readout"), &settings.DynamicNearClipReadout);
 		ImGui::TextWrapped("%s", T("feature.vr.near_clip.help", "Distances use Skyrim units. Both eyes share the smaller required near distance. The central depth probe cannot see transparent surfaces or geometry already clipped between samples."));
-		DrawValues();
+		if (globals::state && globals::state->IsDeveloperMode()) {
+			ImGui::Checkbox(T("feature.vr.near_clip.readout", "Show near clip headset readout"), &settings.DynamicNearClipReadout);
+			DrawValues();
+		}
 	}
 	settings.ClampToValidRanges();
 }
 
 void VRDynamicNearClip::DrawReadout()
 {
-	if (!globals::features::vr.settings.DynamicNearClipReadout)
+	if (!globals::state || !globals::state->IsDeveloperMode() || !globals::features::vr.settings.DynamicNearClipReadout)
 		return;
 	const float margin = ImGui::GetFontSize();
 	ImGui::SetNextWindowPos({ ImGui::GetIO().DisplaySize.x - margin, margin }, ImGuiCond_Always, { 1.0f, 0.0f });

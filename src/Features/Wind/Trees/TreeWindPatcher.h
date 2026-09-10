@@ -22,8 +22,6 @@ namespace TreeWindPatcher
 		float maximumDisplacementPercent = 3.0f;
 		float trunkGustInfluence = 0.5f;
 		float leafGustInfluence = 0.99f;
-		float springStrength = 1.0f;
-		float springDamping = 0.7f;
 		float transientWindInfluence = 2.01f;
 		float leafTransientWindInfluence = 5.0f;
 		float leafTransientFlutterMaximum = 20.0f;
@@ -45,8 +43,6 @@ namespace TreeWindPatcher
 		float maximumDisplacementPercent = 3.0f;
 		float trunkGustInfluence = 0.5f;
 		float leafGustInfluence = 0.99f;
-		float springStrength = 1.0f;
-		float springDamping = 0.7f;
 		float transientWindInfluence = 2.01f;
 		float leafTransientWindInfluence = 5.0f;
 		float leafTransientFlutterMaximum = 20.0f;
@@ -78,7 +74,6 @@ namespace TreeWindPatcher
 	[[nodiscard]] bool SetRule(std::size_t a_index, float a_bend, float a_leafAmbient,
 		float a_upperBendRange, float a_maximumDisplacementPercent,
 		float a_trunkGustInfluence, float a_leafGustInfluence,
-		float a_springStrength, float a_springDamping,
 		float a_transientWindInfluence, float a_leafTransientWindInfluence,
 		float a_leafTransientFlutterMaximum,
 		float a_transientMaximumBendMultiplier);
@@ -87,7 +82,6 @@ namespace TreeWindPatcher
 	[[nodiscard]] bool SetRule(std::string_view a_mesh, float a_bend, float a_leafAmbient,
 		float a_upperBendRange, float a_maximumDisplacementPercent,
 		float a_trunkGustInfluence, float a_leafGustInfluence,
-		float a_springStrength, float a_springDamping,
 		float a_transientWindInfluence, float a_leafTransientWindInfluence,
 		float a_leafTransientFlutterMaximum,
 		float a_transientMaximumBendMultiplier);

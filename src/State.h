@@ -67,9 +67,7 @@ public:
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
 	float timer = 0;
-	float previousTimer = 0;
 	float windFieldFrameTime = 0.0f;
-	float previousWindFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldAdvectionSpeed = 0.0f;
 	float windFieldGustTravelDistance = 0.0f;
@@ -78,23 +76,17 @@ public:
 	float3 ambientWindVelocity = {};
 	float3 windFieldSelectedVelocity = {};
 	float3 previousWindFieldSelectedVelocity = {};
-	float3 twoFramesAgoWindFieldSelectedVelocity = {};
 	WindField::Field windFieldCurrent{};
 	WindField::Field previousWindFieldCurrent{};
-	WindField::Field twoFramesAgoWindFieldCurrent{};
 	WindField::Field windFieldTransition{};
 	WindField::Field previousWindFieldTransition{};
-	WindField::Field twoFramesAgoWindFieldTransition{};
 	float windFieldTransitionElapsed = 0.0f;
 	float windFieldTransitionBlend = 1.0f;
 	float previousWindFieldTransitionBlend = 1.0f;
-	float twoFramesAgoWindFieldTransitionBlend = 1.0f;
 	bool windFieldTransitionActive = false;
 	float windFieldSelectedSpeed = 0.0f;
 	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
-	float2 trunkWindVector = {};
-	float2 previousTrunkWindVector = {};
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -488,34 +480,24 @@ public:
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
-		float TrunkWindTimer;
-		float TrunkWindPreviousTimer;
-		float pad0;
-
-		float2 TrunkWindVector;
-		float2 TrunkWindPreviousVector;
-
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float2 WindPadding0;
+		float pad0;
 
 		float TreeWindUpperBendRange;
 		float TreeWindMaximumDisplacementPercent;
 		float TreeBendModelSensitivity;
 		float TreeLeafModelSensitivity;
 
-		float TreeWindSpringStrength;
-		float TreeWindSpringDamping;
 		float TreeTransientWindInfluence;
 		float TrunkWindBendSensitivity;
-
 		float TreeLeafBaseWindFlutterGain;
 		uint EnableAmbientGrassWind;
+
 		float GrassWindBendProfile;
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
 		float GrassWindSensitivity;
-		float2 WindPadding1;
 
 		float TreeWindBoundsBase;
 		float TreeWindBoundsHeight;
@@ -535,18 +517,12 @@ public:
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
 			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
-			       TrunkWindTimer == other.TrunkWindTimer && TrunkWindPreviousTimer == other.TrunkWindPreviousTimer &&
-			       TrunkWindVector.x == other.TrunkWindVector.x && TrunkWindVector.y == other.TrunkWindVector.y &&
-			       TrunkWindPreviousVector.x == other.TrunkWindPreviousVector.x &&
-			       TrunkWindPreviousVector.y == other.TrunkWindPreviousVector.y &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
 			       OverrideWindIntensity == other.OverrideWindIntensity &&
 			       TreeWindUpperBendRange == other.TreeWindUpperBendRange &&
 			       TreeWindMaximumDisplacementPercent == other.TreeWindMaximumDisplacementPercent &&
 			       TreeBendModelSensitivity == other.TreeBendModelSensitivity &&
 			       TreeLeafModelSensitivity == other.TreeLeafModelSensitivity &&
-			       TreeWindSpringStrength == other.TreeWindSpringStrength &&
-			       TreeWindSpringDamping == other.TreeWindSpringDamping &&
 			       TreeTransientWindInfluence == other.TreeTransientWindInfluence &&
 			       TreeLeafTransientWindInfluence == other.TreeLeafTransientWindInfluence &&
 			       TreeLeafTransientFlutterMaximum == other.TreeLeafTransientFlutterMaximum &&
@@ -571,13 +547,14 @@ public:
 			       TreeWindProbeTop.z == other.TreeWindProbeTop.z;
 		}
 	};
-	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 100);
-	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 108);
-	static_assert(offsetof(PermutationCB, TreeTransientMaximumBendMultiplier) == 144);
-	static_assert(offsetof(PermutationCB, TreeLeafTransientWindInfluence) == 148);
-	static_assert(offsetof(PermutationCB, TreeLeafTransientFlutterMaximum) == 152);
-	static_assert(offsetof(PermutationCB, TreeWindProbeBase) == 160);
-	static_assert(offsetof(PermutationCB, TreeWindProbeTop) == 176);
+	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 60);
+	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 68);
+	static_assert(offsetof(PermutationCB, TreeTransientMaximumBendMultiplier) == 96);
+	static_assert(offsetof(PermutationCB, TreeLeafTransientWindInfluence) == 100);
+	static_assert(offsetof(PermutationCB, TreeLeafTransientFlutterMaximum) == 104);
+	static_assert(offsetof(PermutationCB, TreeWindProbeBase) == 112);
+	static_assert(offsetof(PermutationCB, TreeWindProbeTop) == 128);
+	static_assert(sizeof(PermutationCB) == 144);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;
@@ -613,12 +590,9 @@ public:
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
-		float4 WindFieldDebug;         // xy: base weather velocity, z: reserved, w: previous frame time
-		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: accumulated gust travel
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
 		float4 WindFieldPreviousAmbient;
-		float4 WindFieldTwoFramesAgoAmbient;
 		WindField::Field WindFieldCurrent;
 		WindField::Field WindFieldPrevious;
 		WindField::Field WindFieldTransition;
@@ -635,12 +609,9 @@ public:
 	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldDebug) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldDebugOptions) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTuning) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldCurrent) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPrevious) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTransition) % 16 == 0);

@@ -167,8 +167,6 @@ json Wind::GetDiagnostics()
 									   { "maximumDisplacementPercent", universalValues.maximumDisplacementPercent },
 									   { "trunkGustInfluence", universalValues.trunkGustInfluence },
 									   { "leafGustInfluence", universalValues.leafGustInfluence },
-									   { "springStrength", universalValues.springStrength },
-									   { "springDamping", universalValues.springDamping },
 									   { "transientWindInfluence", universalValues.transientWindInfluence },
 									   { "leafTransientWindInfluence", universalValues.leafTransientWindInfluence },
 									   { "leafTransientFlutterMaximum", universalValues.leafTransientFlutterMaximum },
@@ -200,10 +198,6 @@ void Wind::RegisterUxActions()
 				values.trunkGustInfluence = args["trunkGustInfluence"].get<float>();
 			if (args.contains("leafGustInfluence") && args["leafGustInfluence"].is_number())
 				values.leafGustInfluence = args["leafGustInfluence"].get<float>();
-			if (args.contains("springStrength") && args["springStrength"].is_number())
-				values.springStrength = args["springStrength"].get<float>();
-			if (args.contains("springDamping") && args["springDamping"].is_number())
-				values.springDamping = args["springDamping"].get<float>();
 			if (args.contains("transientWindInfluence") && args["transientWindInfluence"].is_number())
 				values.transientWindInfluence = args["transientWindInfluence"].get<float>();
 			if (args.contains("leafTransientWindInfluence") && args["leafTransientWindInfluence"].is_number())
@@ -217,7 +211,7 @@ void Wind::RegisterUxActions()
 	FEATURE_COMMAND("setTreeWindRule",
 		"Apply live per-model tree wind tuning. Params: mesh (string), bendSensitivity and leafAmbientSensitivity (0-4), "
 		"upperBendRange (5-100), maximumDisplacementPercent (0-10), trunkGustInfluence and leafGustInfluence (0-2), "
-		"springStrength (0.05-4), springDamping (0.55-1), transientWindInfluence, leafTransientWindInfluence, "
+		"transientWindInfluence, leafTransientWindInfluence, "
 		"leafTransientFlutterMaximum (0-20), and transientMaximumBendMultiplier (0-5).",
 		[](Feature*, const json& args) {
 			if (!args.contains("mesh") || !args["mesh"].is_string() ||
@@ -227,8 +221,6 @@ void Wind::RegisterUxActions()
 				!args.contains("maximumDisplacementPercent") || !args["maximumDisplacementPercent"].is_number() ||
 				!args.contains("trunkGustInfluence") || !args["trunkGustInfluence"].is_number() ||
 				!args.contains("leafGustInfluence") || !args["leafGustInfluence"].is_number() ||
-				!args.contains("springStrength") || !args["springStrength"].is_number() ||
-				!args.contains("springDamping") || !args["springDamping"].is_number() ||
 				!args.contains("transientWindInfluence") || !args["transientWindInfluence"].is_number() ||
 				!args.contains("leafTransientWindInfluence") || !args["leafTransientWindInfluence"].is_number() ||
 				!args.contains("leafTransientFlutterMaximum") || !args["leafTransientFlutterMaximum"].is_number() ||
@@ -239,8 +231,7 @@ void Wind::RegisterUxActions()
 			if (!TreeWindPatcher::SetRule(args["mesh"].get<std::string>(), args["bendSensitivity"].get<float>(),
 					args["leafAmbientSensitivity"].get<float>(), args["upperBendRange"].get<float>(),
 					args["maximumDisplacementPercent"].get<float>(), args["trunkGustInfluence"].get<float>(),
-					args["leafGustInfluence"].get<float>(), args["springStrength"].get<float>(),
-					args["springDamping"].get<float>(), args["transientWindInfluence"].get<float>(),
+					args["leafGustInfluence"].get<float>(), args["transientWindInfluence"].get<float>(),
 					args["leafTransientWindInfluence"].get<float>(),
 					args["leafTransientFlutterMaximum"].get<float>(),
 					args["transientMaximumBendMultiplier"].get<float>())) {
@@ -296,8 +287,6 @@ void Wind::RegisterUxActions()
 						{ "maximumDisplacementPercent", rule.maximumDisplacementPercent },
 						{ "trunkGustInfluence", rule.trunkGustInfluence },
 						{ "leafGustInfluence", rule.leafGustInfluence },
-						{ "springStrength", rule.springStrength },
-						{ "springDamping", rule.springDamping },
 						{ "transientWindInfluence", rule.transientWindInfluence },
 						{ "leafTransientWindInfluence", rule.leafTransientWindInfluence },
 						{ "leafTransientFlutterMaximum", rule.leafTransientFlutterMaximum },

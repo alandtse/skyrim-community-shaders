@@ -683,7 +683,7 @@ void Wind::DrawTreeMeshRulesTable()
 				if (changed) {
 					(void)TreeWindPatcher::SetRule(ruleIndex, bend, leafAmbient, upperBendRange,
 						maximumDisplacementPercent, rule.trunkGustInfluence, rule.leafGustInfluence,
-						rule.springStrength, rule.springDamping, transientWindInfluence, leafTransientWindInfluence,
+						transientWindInfluence, leafTransientWindInfluence,
 						leafTransientFlutterMaximum,
 						transientMaximumBendMultiplier);
 					uiState.treeWindSaveStatus.clear();

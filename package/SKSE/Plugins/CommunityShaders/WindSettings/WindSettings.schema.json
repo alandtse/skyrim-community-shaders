@@ -61,21 +61,9 @@
                         "minimum": 0.0,
                         "maximum": 2.0
                     },
-                    "springStrength": {
-                        "type": "number",
-                        "default": 1.0,
-                        "minimum": 0.05,
-                        "maximum": 4.0
-                    },
-                    "springDamping": {
-                        "type": "number",
-                        "default": 0.7,
-                        "minimum": 0.55,
-                        "maximum": 1.0
-                    },
                     "transientWindInfluence": {
                         "type": "number",
-                        "default": 0.2,
+                        "default": 2.01,
                         "minimum": 0.0,
                         "maximum": 5.0
                     },
@@ -87,13 +75,13 @@
                     },
                     "leafTransientFlutterMaximum": {
                         "type": "number",
-                        "default": 10.0,
+                        "default": 20.0,
                         "minimum": 0.0,
                         "maximum": 20.0
                     },
                     "transientMaximumBendMultiplier": {
                         "type": "number",
-                        "default": 1.01,
+                        "default": 2.5,
                         "minimum": 0.0,
                         "maximum": 5.0
                     }

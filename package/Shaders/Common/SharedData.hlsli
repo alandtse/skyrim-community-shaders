@@ -40,12 +40,9 @@ namespace SharedData
 		float4 HDRData;
 		float RefractionScale;
 		float3 pad1;
-		float4 WindFieldDebug;         // xy: base weather velocity, z: reserved, w: previous frame time
-		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: gust travel
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;
 		float4 WindFieldPreviousAmbient;
-		float4 WindFieldTwoFramesAgoAmbient;
 		WindField::Field WindFieldCurrent;
 		WindField::Field WindFieldPrevious;
 		WindField::Field WindFieldTransition;

@@ -273,8 +273,6 @@ namespace
 			previousTreeWindProbeTop = state->permutationData.TreeWindProbeTop;
 			previousTreeWindTrunkGustInfluence = state->permutationData.TreeWindTrunkGustInfluence;
 			previousTreeLeafGustInfluence = state->permutationData.TreeLeafGustInfluence;
-			previousTreeWindSpringStrength = state->permutationData.TreeWindSpringStrength;
-			previousTreeWindSpringDamping = state->permutationData.TreeWindSpringDamping;
 			previousTreeTransientWindInfluence = state->permutationData.TreeTransientWindInfluence;
 			previousTreeLeafTransientWindInfluence = state->permutationData.TreeLeafTransientWindInfluence;
 			previousTreeLeafTransientFlutterMaximum = state->permutationData.TreeLeafTransientFlutterMaximum;
@@ -287,8 +285,6 @@ namespace
 			state->permutationData.TreeWindMaximumDisplacementPercent = sensitivities.maximumDisplacementPercent;
 			state->permutationData.TreeWindTrunkGustInfluence = sensitivities.trunkGustInfluence;
 			state->permutationData.TreeLeafGustInfluence = sensitivities.leafGustInfluence;
-			state->permutationData.TreeWindSpringStrength = sensitivities.springStrength;
-			state->permutationData.TreeWindSpringDamping = sensitivities.springDamping;
 			state->permutationData.TreeTransientWindInfluence = sensitivities.transientWindInfluence;
 			state->permutationData.TreeLeafTransientWindInfluence = sensitivities.leafTransientWindInfluence;
 			state->permutationData.TreeLeafTransientFlutterMaximum = sensitivities.leafTransientFlutterMaximum;
@@ -325,8 +321,6 @@ namespace
 				state->permutationData.TreeWindProbeTop = previousTreeWindProbeTop;
 				state->permutationData.TreeWindTrunkGustInfluence = previousTreeWindTrunkGustInfluence;
 				state->permutationData.TreeLeafGustInfluence = previousTreeLeafGustInfluence;
-				state->permutationData.TreeWindSpringStrength = previousTreeWindSpringStrength;
-				state->permutationData.TreeWindSpringDamping = previousTreeWindSpringDamping;
 				state->permutationData.TreeTransientWindInfluence = previousTreeTransientWindInfluence;
 				state->permutationData.TreeLeafTransientWindInfluence = previousTreeLeafTransientWindInfluence;
 				state->permutationData.TreeLeafTransientFlutterMaximum = previousTreeLeafTransientFlutterMaximum;
@@ -349,8 +343,6 @@ namespace
 		float4 previousTreeWindProbeTop{};
 		float previousTreeWindTrunkGustInfluence = 0.5f;
 		float previousTreeLeafGustInfluence = 0.99f;
-		float previousTreeWindSpringStrength = 1.0f;
-		float previousTreeWindSpringDamping = 0.7f;
 		float previousTreeTransientWindInfluence = 0.2f;
 		float previousTreeLeafTransientWindInfluence = 5.0f;
 		float previousTreeLeafTransientFlutterMaximum = 10.0f;

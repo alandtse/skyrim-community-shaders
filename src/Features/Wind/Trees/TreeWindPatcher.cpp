@@ -38,8 +38,6 @@ namespace TreeWindPatcher
 		constexpr float kDefaultMaximumDisplacementPercent = 3.0f;
 		constexpr float kDefaultTrunkGustInfluence = 0.5f;
 		constexpr float kDefaultLeafGustInfluence = 0.99f;
-		constexpr float kDefaultSpringStrength = 1.0f;
-		constexpr float kDefaultSpringDamping = 0.7f;
 		constexpr float kDefaultTransientWindInfluence = 2.01f;
 		constexpr float kDefaultLeafTransientWindInfluence = 5.0f;
 		constexpr float kDefaultLeafTransientFlutterMaximum = 20.0f;
@@ -58,8 +56,6 @@ namespace TreeWindPatcher
 			MaximumDisplacementPercent,
 			TrunkGustInfluence,
 			LeafGustInfluence,
-			SpringStrength,
-			SpringDamping,
 			TransientWindInfluence,
 			LeafTransientWindInfluence,
 			LeafTransientFlutterMaximum,
@@ -91,8 +87,6 @@ namespace TreeWindPatcher
 			float maximumDisplacementPercent = kDefaultMaximumDisplacementPercent;
 			float trunkGustInfluence = kDefaultTrunkGustInfluence;
 			float leafGustInfluence = kDefaultLeafGustInfluence;
-			float springStrength = kDefaultSpringStrength;
-			float springDamping = kDefaultSpringDamping;
 			float transientWindInfluence = kDefaultTransientWindInfluence;
 			float leafTransientWindInfluence = kDefaultLeafTransientWindInfluence;
 			float leafTransientFlutterMaximum = kDefaultLeafTransientFlutterMaximum;
@@ -111,8 +105,6 @@ namespace TreeWindPatcher
 			std::atomic<float> maximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 			std::atomic<float> trunkGustInfluence{ kDefaultTrunkGustInfluence };
 			std::atomic<float> leafGustInfluence{ kDefaultLeafGustInfluence };
-			std::atomic<float> springStrength{ kDefaultSpringStrength };
-			std::atomic<float> springDamping{ kDefaultSpringDamping };
 			std::atomic<float> transientWindInfluence{ kDefaultTransientWindInfluence };
 			std::atomic<float> leafTransientWindInfluence{ kDefaultLeafTransientWindInfluence };
 			std::atomic<float> leafTransientFlutterMaximum{ kDefaultLeafTransientFlutterMaximum };
@@ -123,8 +115,6 @@ namespace TreeWindPatcher
 			std::atomic<float> persistedMaximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 			std::atomic<float> persistedTrunkGustInfluence{ kDefaultTrunkGustInfluence };
 			std::atomic<float> persistedLeafGustInfluence{ kDefaultLeafGustInfluence };
-			std::atomic<float> persistedSpringStrength{ kDefaultSpringStrength };
-			std::atomic<float> persistedSpringDamping{ kDefaultSpringDamping };
 			std::atomic<float> persistedTransientWindInfluence{ kDefaultTransientWindInfluence };
 			std::atomic<float> persistedLeafTransientWindInfluence{ kDefaultLeafTransientWindInfluence };
 			std::atomic<float> persistedLeafTransientFlutterMaximum{ kDefaultLeafTransientFlutterMaximum };
@@ -142,8 +132,6 @@ namespace TreeWindPatcher
 		std::atomic<float> universalMaximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 		std::atomic<float> universalTrunkGustInfluence{ kDefaultTrunkGustInfluence };
 		std::atomic<float> universalLeafGustInfluence{ kDefaultLeafGustInfluence };
-		std::atomic<float> universalSpringStrength{ kDefaultSpringStrength };
-		std::atomic<float> universalSpringDamping{ kDefaultSpringDamping };
 		std::atomic<float> universalTransientWindInfluence{ kDefaultTransientWindInfluence };
 		std::atomic<float> universalLeafTransientWindInfluence{ kDefaultLeafTransientWindInfluence };
 		std::atomic<float> universalLeafTransientFlutterMaximum{ kDefaultLeafTransientFlutterMaximum };
@@ -195,8 +183,6 @@ namespace TreeWindPatcher
 			       ValuesDiffer(a_rule.maximumDisplacementPercent.load(std::memory_order_relaxed), a_rule.persistedMaximumDisplacementPercent.load(std::memory_order_relaxed)) ||
 			       ValuesDiffer(a_rule.trunkGustInfluence.load(std::memory_order_relaxed), a_rule.persistedTrunkGustInfluence.load(std::memory_order_relaxed)) ||
 			       ValuesDiffer(a_rule.leafGustInfluence.load(std::memory_order_relaxed), a_rule.persistedLeafGustInfluence.load(std::memory_order_relaxed)) ||
-			       ValuesDiffer(a_rule.springStrength.load(std::memory_order_relaxed), a_rule.persistedSpringStrength.load(std::memory_order_relaxed)) ||
-			       ValuesDiffer(a_rule.springDamping.load(std::memory_order_relaxed), a_rule.persistedSpringDamping.load(std::memory_order_relaxed)) ||
 			       ValuesDiffer(a_rule.transientWindInfluence.load(std::memory_order_relaxed), a_rule.persistedTransientWindInfluence.load(std::memory_order_relaxed)) ||
 			       ValuesDiffer(a_rule.leafTransientWindInfluence.load(std::memory_order_relaxed),
 					   a_rule.persistedLeafTransientWindInfluence.load(std::memory_order_relaxed)) ||
@@ -217,8 +203,6 @@ namespace TreeWindPatcher
 				a_rule.trunkGustInfluence.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			a_rule.persistedLeafGustInfluence.store(
 				a_rule.leafGustInfluence.load(std::memory_order_relaxed), std::memory_order_relaxed);
-			a_rule.persistedSpringStrength.store(a_rule.springStrength.load(std::memory_order_relaxed), std::memory_order_relaxed);
-			a_rule.persistedSpringDamping.store(a_rule.springDamping.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			a_rule.persistedTransientWindInfluence.store(
 				a_rule.transientWindInfluence.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			a_rule.persistedLeafTransientWindInfluence.store(
@@ -342,10 +326,6 @@ namespace TreeWindPatcher
 						ReadFloat(entry, "trunkGustInfluence", TreeWindSettings::kGustInfluence, a_filePath, ruleIndex);
 					const auto leafGustInfluence =
 						ReadFloat(entry, "leafGustInfluence", TreeWindSettings::kGustInfluence, a_filePath, ruleIndex);
-					const auto springStrength = ReadFloat(entry, "springStrength",
-						TreeWindSettings::kSpringStrength, a_filePath, ruleIndex);
-					const auto springDamping = ReadFloat(entry, "springDamping",
-						TreeWindSettings::kSpringDamping, a_filePath, ruleIndex);
 					const auto transientWindInfluence = ReadFloat(entry, "transientWindInfluence",
 						TreeWindSettings::kTransientInfluence, a_filePath, ruleIndex);
 					const auto leafTransientWindInfluence = ReadFloat(entry, "leafTransientWindInfluence",
@@ -365,10 +345,6 @@ namespace TreeWindPatcher
 						ResponseParameter::TrunkGustInfluence, rule, a_filePath, a_conflicts);
 					MergeValue(leafGustInfluence, rule.leafGustInfluence,
 						ResponseParameter::LeafGustInfluence, rule, a_filePath, a_conflicts);
-					MergeValue(springStrength, rule.springStrength,
-						ResponseParameter::SpringStrength, rule, a_filePath, a_conflicts);
-					MergeValue(springDamping, rule.springDamping,
-						ResponseParameter::SpringDamping, rule, a_filePath, a_conflicts);
 					MergeValue(transientWindInfluence, rule.transientWindInfluence,
 						ResponseParameter::TransientWindInfluence, rule, a_filePath, a_conflicts);
 					MergeValue(leafTransientWindInfluence, rule.leafTransientWindInfluence,
@@ -457,8 +433,6 @@ namespace TreeWindPatcher
 				rule->maximumDisplacementPercent.store(merged.maximumDisplacementPercent, std::memory_order_relaxed);
 				rule->trunkGustInfluence.store(merged.trunkGustInfluence, std::memory_order_relaxed);
 				rule->leafGustInfluence.store(merged.leafGustInfluence, std::memory_order_relaxed);
-				rule->springStrength.store(merged.springStrength, std::memory_order_relaxed);
-				rule->springDamping.store(merged.springDamping, std::memory_order_relaxed);
 				rule->transientWindInfluence.store(merged.transientWindInfluence, std::memory_order_relaxed);
 				rule->leafTransientWindInfluence.store(merged.leafTransientWindInfluence, std::memory_order_relaxed);
 				rule->leafTransientFlutterMaximum.store(merged.leafTransientFlutterMaximum, std::memory_order_relaxed);
@@ -469,8 +443,6 @@ namespace TreeWindPatcher
 				rule->persistedMaximumDisplacementPercent.store(merged.maximumDisplacementPercent, std::memory_order_relaxed);
 				rule->persistedTrunkGustInfluence.store(merged.trunkGustInfluence, std::memory_order_relaxed);
 				rule->persistedLeafGustInfluence.store(merged.leafGustInfluence, std::memory_order_relaxed);
-				rule->persistedSpringStrength.store(merged.springStrength, std::memory_order_relaxed);
-				rule->persistedSpringDamping.store(merged.springDamping, std::memory_order_relaxed);
 				rule->persistedTransientWindInfluence.store(merged.transientWindInfluence, std::memory_order_relaxed);
 				rule->persistedLeafTransientWindInfluence.store(
 					merged.leafTransientWindInfluence, std::memory_order_relaxed);
@@ -789,8 +761,6 @@ namespace TreeWindPatcher
 			sensitivities.maximumDisplacementPercent = universalMaximumDisplacementPercent.load(std::memory_order_relaxed);
 			sensitivities.trunkGustInfluence = universalTrunkGustInfluence.load(std::memory_order_relaxed);
 			sensitivities.leafGustInfluence = universalLeafGustInfluence.load(std::memory_order_relaxed);
-			sensitivities.springStrength = universalSpringStrength.load(std::memory_order_relaxed);
-			sensitivities.springDamping = universalSpringDamping.load(std::memory_order_relaxed);
 			sensitivities.transientWindInfluence = universalTransientWindInfluence.load(std::memory_order_relaxed);
 			sensitivities.leafTransientWindInfluence =
 				universalLeafTransientWindInfluence.load(std::memory_order_relaxed);
@@ -817,8 +787,6 @@ namespace TreeWindPatcher
 				sensitivities.maximumDisplacementPercent = rule.maximumDisplacementPercent.load(std::memory_order_relaxed);
 				sensitivities.trunkGustInfluence = rule.trunkGustInfluence.load(std::memory_order_relaxed);
 				sensitivities.leafGustInfluence = rule.leafGustInfluence.load(std::memory_order_relaxed);
-				sensitivities.springStrength = rule.springStrength.load(std::memory_order_relaxed);
-				sensitivities.springDamping = rule.springDamping.load(std::memory_order_relaxed);
 				sensitivities.transientWindInfluence = rule.transientWindInfluence.load(std::memory_order_relaxed);
 				sensitivities.leafTransientWindInfluence =
 					rule.leafTransientWindInfluence.load(std::memory_order_relaxed);
@@ -850,8 +818,6 @@ namespace TreeWindPatcher
 		const float maximumDisplacementPercent = rule.maximumDisplacementPercent.load(std::memory_order_relaxed);
 		const float trunkGustInfluence = rule.trunkGustInfluence.load(std::memory_order_relaxed);
 		const float leafGustInfluence = rule.leafGustInfluence.load(std::memory_order_relaxed);
-		const float springStrength = rule.springStrength.load(std::memory_order_relaxed);
-		const float springDamping = rule.springDamping.load(std::memory_order_relaxed);
 		const float transientWindInfluence = rule.transientWindInfluence.load(std::memory_order_relaxed);
 		const float leafTransientWindInfluence = rule.leafTransientWindInfluence.load(std::memory_order_relaxed);
 		const float leafTransientFlutterMaximum = rule.leafTransientFlutterMaximum.load(std::memory_order_relaxed);
@@ -866,8 +832,6 @@ namespace TreeWindPatcher
 			maximumDisplacementPercent,
 			trunkGustInfluence,
 			leafGustInfluence,
-			springStrength,
-			springDamping,
 			transientWindInfluence,
 			leafTransientWindInfluence,
 			leafTransientFlutterMaximum,
@@ -878,8 +842,6 @@ namespace TreeWindPatcher
 				ValuesDiffer(maximumDisplacementPercent, rule.persistedMaximumDisplacementPercent.load(std::memory_order_relaxed)) ||
 				ValuesDiffer(trunkGustInfluence, rule.persistedTrunkGustInfluence.load(std::memory_order_relaxed)) ||
 				ValuesDiffer(leafGustInfluence, rule.persistedLeafGustInfluence.load(std::memory_order_relaxed)) ||
-				ValuesDiffer(springStrength, rule.persistedSpringStrength.load(std::memory_order_relaxed)) ||
-				ValuesDiffer(springDamping, rule.persistedSpringDamping.load(std::memory_order_relaxed)) ||
 				ValuesDiffer(transientWindInfluence, rule.persistedTransientWindInfluence.load(std::memory_order_relaxed)) ||
 				ValuesDiffer(leafTransientWindInfluence,
 					rule.persistedLeafTransientWindInfluence.load(std::memory_order_relaxed)) ||
@@ -893,7 +855,6 @@ namespace TreeWindPatcher
 	bool SetRule(std::size_t a_index, float a_bend, float a_leafAmbient,
 		float a_upperBendRange, float a_maximumDisplacementPercent,
 		float a_trunkGustInfluence, float a_leafGustInfluence,
-		float a_springStrength, float a_springDamping,
 		float a_transientWindInfluence, float a_leafTransientWindInfluence,
 		float a_leafTransientFlutterMaximum,
 		float a_transientMaximumBendMultiplier)
@@ -910,10 +871,6 @@ namespace TreeWindPatcher
 			a_trunkGustInfluence, TreeWindSettings::kGustInfluence, kDefaultTrunkGustInfluence);
 		a_leafGustInfluence = ClampFiniteOrDefault(
 			a_leafGustInfluence, TreeWindSettings::kGustInfluence, kDefaultLeafGustInfluence);
-		a_springStrength = ClampFiniteOrDefault(
-			a_springStrength, TreeWindSettings::kSpringStrength, kDefaultSpringStrength);
-		a_springDamping = ClampFiniteOrDefault(
-			a_springDamping, TreeWindSettings::kSpringDamping, kDefaultSpringDamping);
 		a_transientWindInfluence = ClampFiniteOrDefault(a_transientWindInfluence,
 			TreeWindSettings::kTransientInfluence, kDefaultTransientWindInfluence);
 		a_leafTransientWindInfluence = ClampFiniteOrDefault(a_leafTransientWindInfluence,
@@ -928,8 +885,6 @@ namespace TreeWindPatcher
 		runtimeRules[a_index]->maximumDisplacementPercent.store(a_maximumDisplacementPercent, std::memory_order_relaxed);
 		runtimeRules[a_index]->trunkGustInfluence.store(a_trunkGustInfluence, std::memory_order_relaxed);
 		runtimeRules[a_index]->leafGustInfluence.store(a_leafGustInfluence, std::memory_order_relaxed);
-		runtimeRules[a_index]->springStrength.store(a_springStrength, std::memory_order_relaxed);
-		runtimeRules[a_index]->springDamping.store(a_springDamping, std::memory_order_relaxed);
 		runtimeRules[a_index]->transientWindInfluence.store(a_transientWindInfluence, std::memory_order_relaxed);
 		runtimeRules[a_index]->leafTransientWindInfluence.store(
 			a_leafTransientWindInfluence, std::memory_order_relaxed);
@@ -943,7 +898,6 @@ namespace TreeWindPatcher
 	bool SetRule(std::string_view a_mesh, float a_bend, float a_leafAmbient,
 		float a_upperBendRange, float a_maximumDisplacementPercent,
 		float a_trunkGustInfluence, float a_leafGustInfluence,
-		float a_springStrength, float a_springDamping,
 		float a_transientWindInfluence, float a_leafTransientWindInfluence,
 		float a_leafTransientFlutterMaximum,
 		float a_transientMaximumBendMultiplier)
@@ -952,7 +906,7 @@ namespace TreeWindPatcher
 		const auto ruleIt = ruleIds.find(normalized);
 		return ruleIt != ruleIds.end() && SetRule(static_cast<std::size_t>(ruleIt->second) - 1, a_bend, a_leafAmbient,
 											  a_upperBendRange, a_maximumDisplacementPercent, a_trunkGustInfluence, a_leafGustInfluence,
-											  a_springStrength, a_springDamping, a_transientWindInfluence, a_leafTransientWindInfluence,
+											  a_transientWindInfluence, a_leafTransientWindInfluence,
 											  a_leafTransientFlutterMaximum,
 											  a_transientMaximumBendMultiplier);
 	}
@@ -974,12 +928,6 @@ namespace TreeWindPatcher
 			std::memory_order_relaxed);
 		universalLeafGustInfluence.store(ClampFiniteOrDefault(a_values.leafGustInfluence,
 											 TreeWindSettings::kGustInfluence, kDefaultLeafGustInfluence),
-			std::memory_order_relaxed);
-		universalSpringStrength.store(ClampFiniteOrDefault(a_values.springStrength,
-										  TreeWindSettings::kSpringStrength, kDefaultSpringStrength),
-			std::memory_order_relaxed);
-		universalSpringDamping.store(ClampFiniteOrDefault(a_values.springDamping,
-										 TreeWindSettings::kSpringDamping, kDefaultSpringDamping),
 			std::memory_order_relaxed);
 		universalTransientWindInfluence.store(ClampFiniteOrDefault(a_values.transientWindInfluence,
 												  TreeWindSettings::kTransientInfluence, kDefaultTransientWindInfluence),
@@ -1006,8 +954,6 @@ namespace TreeWindPatcher
 		values.maximumDisplacementPercent = universalMaximumDisplacementPercent.load(std::memory_order_relaxed);
 		values.trunkGustInfluence = universalTrunkGustInfluence.load(std::memory_order_relaxed);
 		values.leafGustInfluence = universalLeafGustInfluence.load(std::memory_order_relaxed);
-		values.springStrength = universalSpringStrength.load(std::memory_order_relaxed);
-		values.springDamping = universalSpringDamping.load(std::memory_order_relaxed);
 		values.transientWindInfluence = universalTransientWindInfluence.load(std::memory_order_relaxed);
 		values.leafTransientWindInfluence = universalLeafTransientWindInfluence.load(std::memory_order_relaxed);
 		values.leafTransientFlutterMaximum = universalLeafTransientFlutterMaximum.load(std::memory_order_relaxed);
@@ -1025,8 +971,6 @@ namespace TreeWindPatcher
 			rule->maximumDisplacementPercent.store(rule->persistedMaximumDisplacementPercent.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			rule->trunkGustInfluence.store(rule->persistedTrunkGustInfluence.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			rule->leafGustInfluence.store(rule->persistedLeafGustInfluence.load(std::memory_order_relaxed), std::memory_order_relaxed);
-			rule->springStrength.store(rule->persistedSpringStrength.load(std::memory_order_relaxed), std::memory_order_relaxed);
-			rule->springDamping.store(rule->persistedSpringDamping.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			rule->transientWindInfluence.store(rule->persistedTransientWindInfluence.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			rule->leafTransientWindInfluence.store(
 				rule->persistedLeafTransientWindInfluence.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -1126,8 +1070,6 @@ namespace TreeWindPatcher
 					rule->persistedMaximumDisplacementPercent);
 				writeChanged("trunkGustInfluence", rule->trunkGustInfluence, rule->persistedTrunkGustInfluence);
 				writeChanged("leafGustInfluence", rule->leafGustInfluence, rule->persistedLeafGustInfluence);
-				writeChanged("springStrength", rule->springStrength, rule->persistedSpringStrength);
-				writeChanged("springDamping", rule->springDamping, rule->persistedSpringDamping);
 				writeChanged("transientWindInfluence", rule->transientWindInfluence,
 					rule->persistedTransientWindInfluence);
 				writeChanged("leafTransientWindInfluence", rule->leafTransientWindInfluence,

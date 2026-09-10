@@ -19,12 +19,10 @@ In-game edits remain live until saved or reverted. Saving writes only changed pr
             "maximumDisplacementPercent": 3,
             "trunkGustInfluence": 0.5,
             "leafGustInfluence": 0.99,
-            "springStrength": 1.0,
-            "springDamping": 0.7,
-            "transientWindInfluence": 0.2,
+            "transientWindInfluence": 2.01,
             "leafTransientWindInfluence": 5.0,
-            "leafTransientFlutterMaximum": 10.0,
-            "transientMaximumBendMultiplier": 1.01
+            "leafTransientFlutterMaximum": 20.0,
+            "transientMaximumBendMultiplier": 2.5
         }
     ]
 }
@@ -40,13 +38,11 @@ The coded defaults are:
 -   `maximumDisplacementPercent`: `3` (`0`–`10` percent)
 -   `trunkGustInfluence`: `0.5` (`0.0`–`2.0`)
 -   `leafGustInfluence`: `0.99` (`0.0`–`2.0`)
--   `springStrength`: `1.0` (`0.05`–`4.0`)
--   `springDamping`: `0.7` (`0.55`–`1.0`)
--   `transientWindInfluence`: `0.2` (`0.0`–`5.0`), scaling trunk response to short-lived impulses such as Unrelenting Force
+-   `transientWindInfluence`: `2.01` (`0.0`–`5.0`), scaling trunk response to short-lived impulses such as Unrelenting Force
 -   `leafTransientWindInfluence`: `5.0` (`0.0`–`5.0`), scaling leaf response to short-lived impulses independently of the trunk
--   `leafTransientFlutterMaximum`: `10.0` (`0.0`–`20.0`), capping only the transient contribution to vanilla leaf flutter for each mesh
--   `transientMaximumBendMultiplier`: `1.01` (`0.0`–`5.0`), capping the trunk response to those impulses
+-   `leafTransientFlutterMaximum`: `20.0` (`0.0`–`20.0`), capping only the transient contribution to vanilla leaf flutter for each mesh
+-   `transientMaximumBendMultiplier`: `2.5` (`0.0`–`5.0`), capping the trunk response to those impulses
 
 Mesh matching is case-insensitive and accepts either slash style. The in-game Global Override is runtime-only and can temporarily replace every per-tree response for testing.
 
-Tree spring state is simulated entirely on the GPU. `springStrength` selects a structural frequency from approximately `0.25`–`1.2 Hz`; `springDamping` controls how much the trunk recoils after the wind target changes. Grass and leaf flutter continue to use the unfiltered wind so fast-moving gust fronts retain their detail.
+Tree spring state is simulated entirely on the GPU using the global Wind settings. Grass and leaf flutter continue to use the unfiltered wind so fast-moving gust fronts retain their detail.

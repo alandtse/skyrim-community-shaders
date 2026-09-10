@@ -101,33 +101,24 @@ namespace Permutation
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
-		float TrunkWindTimer;
-		float TrunkWindPreviousTimer;
-
-		float2 TrunkWindVector;
-		float2 TrunkWindPreviousVector;
-
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float2 WindPadding0;
+		float pad0;
 
 		float TreeWindUpperBendRange;
 		float TreeWindMaximumDisplacementPercent;
 		float TreeBendModelSensitivity;
 		float TreeLeafModelSensitivity;
 
-		float TreeWindSpringStrength;
-		float TreeWindSpringDamping;
 		float TreeTransientWindInfluence;
 		float TrunkWindBendSensitivity;
-
 		float TreeLeafBaseWindFlutterGain;
 		uint EnableAmbientGrassWind;
+
 		float GrassWindBendProfile;
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
 		float GrassWindSensitivity;
-		float2 WindPadding1;
 
 		float TreeWindBoundsBase;
 		float TreeWindBoundsHeight;

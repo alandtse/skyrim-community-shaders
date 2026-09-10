@@ -573,21 +573,25 @@ void GrassBucketStore::AppendNewSlices(GrassBucket& bucket, ID3D11DeviceContext*
 
 // The VR extras buffer doubles the per-instance footprint, so bound by the widest allocation to
 // avoid ByteWidth overflow. Bounding capacityInstances here also bounds EnsureLODBin's cap.
-constexpr uint32_t kMaxBucketInstances = UINT32_MAX / (kGrassStride * 2);
+inline uint32_t MaxBucketInstances()
+{
+	return UINT32_MAX / (kGrassStride * (globals::game::isVR ? 2u : 1u));
+}
 
 bool GrassBucketStore::EnsureBucketCapacity(GrassBucket& b, uint32_t needed, ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t preserveInstances)
 {
 	if (b.capacityInstances >= needed && b.instanceBuf)
 		return true;
 
-	if (needed > kMaxBucketInstances) {
-		logger::error("[GRASS OPTIMIZATIONS] bucket capacity rejected: needed={} max={}", needed, kMaxBucketInstances);
+	const uint32_t maxInstances = MaxBucketInstances();
+	if (needed > maxInstances) {
+		logger::error("[GRASS OPTIMIZATIONS] bucket capacity rejected: needed={} max={}", needed, maxInstances);
 		return false;
 	}
 
 	uint32_t cap = b.capacityInstances ? b.capacityInstances : 4096;
 	while (cap < needed)
-		cap = std::min(cap * 2, kMaxBucketInstances);
+		cap = std::min(cap * 2, maxInstances);
 
 	// Hold the old instance/origin buffers across the reallocation so the data up to preserve can be copied to the new buffers on the GPU.
 	const uint32_t preserve = std::min(preserveInstances, b.capacityInstances);

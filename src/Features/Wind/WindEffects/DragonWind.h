@@ -31,10 +31,10 @@ public:
 		float wingbeatPropagationSpeed = 2200.0f;
 		float wingbeatDecayTime = 1.12f;
 		float wingbeatFallbackCooldown = 0.10f;
-		ImpactProfile normalImpact{ 1.0f, 1400.0f, 240.0f, 1800.0f };
+		ImpactProfile normalImpact{ 1.5f, 1400.0f, 240.0f, 1800.0f };
 		ImpactProfile forcefulImpact{ 1.8f, 2200.0f, 360.0f, 2200.0f };
 		ImpactProfile crashImpact{ 3.0f, 3200.0f, 500.0f, 2600.0f };
-		float impactDecayTime = 1.5f;
+		float impactDecayTime = 2.0f;
 		float impactDeduplicationTime = 0.3f;
 	};
 

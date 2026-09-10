@@ -188,7 +188,8 @@
                 "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
                 "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
                 "FFX_FI": "OFF",
-                "FFX_OF": "OFF"
+                "FFX_OF": "OFF",
+                "CMAKE_CXX_FLAGS": "/arch:AVX"
             },
             "inherits": "skyrim-linux-clangcl"
         }

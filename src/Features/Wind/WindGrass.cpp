@@ -104,7 +104,7 @@ void Wind::ClearShaderCache()
 	treeState.springFieldComputeShader.Reset();
 }
 
-void Wind::UpdateGrassWindSpring()
+void Wind::UpdateGrassWindSpring(bool a_compute)
 {
 	if (!grassState.springConstantBuffer)
 		return;
@@ -243,7 +243,6 @@ void Wind::UpdateGrassWindSpring()
 	}
 
 	ID3D11Buffer* springBuffer = grassState.springConstantBuffer->CB();
-	context->VSSetConstantBuffers(kGrassWindSpringVertexConstantBufferSlot, 1, &springBuffer);
 	std::array<ID3D11ShaderResourceView*, kGrassWindSpringQualityRangeCount> currentSpringSrvs{};
 	std::array<ID3D11ShaderResourceView*, kGrassWindSpringQualityRangeCount> previousSpringSrvs{};
 	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
@@ -251,10 +250,18 @@ void Wind::UpdateGrassWindSpring()
 		currentSpringSrvs[qualityIndex] = grassState.springResponseTextures[qualityIndex][currentTextureIndex]->srv.get();
 		previousSpringSrvs[qualityIndex] = grassState.springResponseTextures[qualityIndex][currentTextureIndex ^ 1u]->srv.get();
 	}
-	context->VSSetShaderResources(105, static_cast<UINT>(currentSpringSrvs.size()), currentSpringSrvs.data());
-	context->VSSetShaderResources(108, static_cast<UINT>(previousSpringSrvs.size()), previousSpringSrvs.data());
 	ID3D11SamplerState* samplers[]{ grassState.springSampler.get() };
-	context->VSSetSamplers(14, ARRAYSIZE(samplers), samplers);
+	if (a_compute) {
+		context->CSSetConstantBuffers(kGrassWindSpringVertexConstantBufferSlot, 1, &springBuffer);
+		context->CSSetShaderResources(105, static_cast<UINT>(currentSpringSrvs.size()), currentSpringSrvs.data());
+		context->CSSetShaderResources(108, static_cast<UINT>(previousSpringSrvs.size()), previousSpringSrvs.data());
+		context->CSSetSamplers(14, ARRAYSIZE(samplers), samplers);
+	} else {
+		context->VSSetConstantBuffers(kGrassWindSpringVertexConstantBufferSlot, 1, &springBuffer);
+		context->VSSetShaderResources(105, static_cast<UINT>(currentSpringSrvs.size()), currentSpringSrvs.data());
+		context->VSSetShaderResources(108, static_cast<UINT>(previousSpringSrvs.size()), previousSpringSrvs.data());
+		context->VSSetSamplers(14, ARRAYSIZE(samplers), samplers);
+	}
 }
 
 ID3D11ShaderResourceView* Wind::GetGrassWindSpringDebugSRV() const

@@ -1,37 +1,7 @@
+#include "GrassCollision/GrassCollisionField.hlsli"
+
 namespace GrassCollision
 {
-	Texture2D<float4> Deformation : register(t100);
-	Texture2D<float4> PreviousDeformation : register(t101);
-	SamplerState DeformationSampler : register(s15);
-
-	const static uint TEXTURE_SIZE = 1024;
-	const static float WORLD_SIZE = 8192.0;
-
-	float2 GetFieldUV(float2 worldPosition, float2 positionOffset, uint2 arrayOrigin, out bool isValid)
-	{
-		float2 logicalUV = (worldPosition - positionOffset) / WORLD_SIZE + 0.5;
-		isValid = all(logicalUV >= 0.0) && all(logicalUV <= 1.0);
-		return frac(logicalUV + float2(arrayOrigin) / TEXTURE_SIZE);
-	}
-
-	float4 SampleCurrentDeformation(float2 worldPosition)
-	{
-		bool isValid;
-		float2 uv = GetFieldUV(
-			worldPosition, SharedData::grassCollisionData.PosOffset,
-			SharedData::grassCollisionData.ArrayOrigin, isValid);
-		return isValid ? Deformation.SampleLevel(DeformationSampler, uv, 0.0) : float4(0.0, 0.0, 0.0, 0.0);
-	}
-
-	float4 SamplePreviousDeformation(float2 worldPosition)
-	{
-		bool isValid;
-		float2 uv = GetFieldUV(
-			worldPosition, SharedData::grassCollisionData.PreviousPosOffset,
-			SharedData::grassCollisionData.PreviousArrayOrigin, isValid);
-		return isValid ? PreviousDeformation.SampleLevel(DeformationSampler, uv, 0.0) : float4(0.0, 0.0, 0.0, 0.0);
-	}
-
 	float3 CalculateDisplacement(
 		float3 modelPosition, float3 instanceRoot, float4 fieldSample, float bendWeight,
 		float compressionWeight,
@@ -60,15 +30,12 @@ namespace GrassCollision
 		return deformedPosition - relativePosition;
 	}
 
-	void ApplyDeformation(
-		VS_INPUT input, float3 currentPosition, float3 previousPosition,
+	void ApplySampledDeformation(
+		VS_INPUT input, float3 currentPosition, float3 previousPosition, float3 instanceRoot,
+		float4 currentField, float4 previousField, float4x4 worldMatrix, float4x4 previousWorldMatrix,
 		out float3 displacement, out float3 previousDisplacement,
 		out float3 bendAxis, out float bendAngle)
 	{
-		float3 currentRootWorld = mul(World[0], float4(input.InstanceData1.xyz, 1.0)).xyz;
-		float3 previousRootWorld = mul(PreviousWorld[0], float4(input.InstanceData1.xyz, 1.0)).xyz;
-		float currentNearFactor = smoothstep(4096.0, 0.0, length(currentRootWorld));
-		float previousNearFactor = smoothstep(4096.0, 0.0, length(previousRootWorld));
 		float normalizedHeight = saturate(input.Color.w);
 		float bendWeight = normalizedHeight * normalizedHeight;
 		float compressionReach = max(SharedData::grassCollisionData.CompressionHeight, 0.1);
@@ -83,15 +50,31 @@ namespace GrassCollision
 		compressionWeight *= 1.0 - smoothstep(
 									   maximumCompressibleHeight - heightFade, maximumCompressibleHeight, bladeHeight);
 
-		float4 currentField = SampleCurrentDeformation(currentRootWorld.xy);
-		float4 previousField = SamplePreviousDeformation(previousRootWorld.xy);
 		displacement = CalculateDisplacement(
-			currentPosition, input.InstanceData1.xyz, currentField, bendWeight, compressionWeight,
-			currentNearFactor, World[0], bendAxis, bendAngle);
+			currentPosition, instanceRoot, currentField, bendWeight, compressionWeight,
+			currentField.w, worldMatrix, bendAxis, bendAngle);
 		float3 previousBendAxis;
 		float previousBendAngle;
 		previousDisplacement = CalculateDisplacement(
-			previousPosition, input.InstanceData1.xyz, previousField, bendWeight, compressionWeight,
-			previousNearFactor, PreviousWorld[0], previousBendAxis, previousBendAngle);
+			previousPosition, instanceRoot, previousField, bendWeight, compressionWeight,
+			previousField.w, previousWorldMatrix, previousBendAxis, previousBendAngle);
 	}
+
+#ifndef GRASS_OPTIMIZATIONS
+	void ApplyDeformation(
+		VS_INPUT input, float3 currentPosition, float3 previousPosition,
+		out float3 displacement, out float3 previousDisplacement,
+		out float3 bendAxis, out float bendAngle)
+	{
+		float3 currentRootWorld = mul(World[0], float4(input.InstanceData1.xyz, 1.0)).xyz;
+		float3 previousRootWorld = mul(PreviousWorld[0], float4(input.InstanceData1.xyz, 1.0)).xyz;
+		float4 currentField = SampleCurrentDeformation(currentRootWorld.xy);
+		float4 previousField = SamplePreviousDeformation(previousRootWorld.xy);
+		currentField.w = smoothstep(4096.0, 0.0, length(currentRootWorld));
+		previousField.w = smoothstep(4096.0, 0.0, length(previousRootWorld));
+		ApplySampledDeformation(input, currentPosition, previousPosition, input.InstanceData1.xyz,
+			currentField, previousField, World[0], PreviousWorld[0],
+			displacement, previousDisplacement, bendAxis, bendAngle);
+	}
+#endif
 }

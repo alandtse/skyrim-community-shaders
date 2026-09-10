@@ -342,13 +342,23 @@ void GrassCollision::Update()
 		prevCellID = cellID;
 		fieldInitialized = true;
 
-		const uint previousTextureIndex = currentTextureIndex ^ 1;
-		ID3D11ShaderResourceView* srvs[] = {
-			deformationTextures[currentTextureIndex]->srv.get(),
-			deformationTextures[previousTextureIndex]->srv.get()
-		};
+		BindDeformationResources();
+	}
+}
+
+void GrassCollision::BindDeformationResources(bool a_compute)
+{
+	auto* context = globals::d3d::context;
+	ID3D11ShaderResourceView* srvs[] = {
+		deformationTextures[currentTextureIndex]->srv.get(),
+		deformationTextures[currentTextureIndex ^ 1]->srv.get()
+	};
+	ID3D11SamplerState* samplers[] = { deformationSampler.get() };
+	if (a_compute) {
+		context->CSSetShaderResources(100, ARRAYSIZE(srvs), srvs);
+		context->CSSetSamplers(15, ARRAYSIZE(samplers), samplers);
+	} else {
 		context->VSSetShaderResources(100, ARRAYSIZE(srvs), srvs);
-		ID3D11SamplerState* samplers[] = { deformationSampler.get() };
 		context->VSSetSamplers(15, ARRAYSIZE(samplers), samplers);
 	}
 }

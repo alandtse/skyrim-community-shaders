@@ -79,8 +79,8 @@ struct Wind : Feature
 	[[nodiscard]] float GetEffectiveWindGustScale() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustScale : settings.windFieldGustScale; }
 	[[nodiscard]] float GetEffectiveWindGustAmplitude() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAmplitude : settings.windFieldGustAmplitude; }
 	[[nodiscard]] float GetEffectiveWindGustAdvectionMultiplier() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier; }
-	/** Updates and binds the persistent grass response field once per rendered frame. */
-	void UpdateGrassWindSpring();
+	/** Updates the grass response field once per frame and binds it to vertex or culling compute shaders. */
+	void UpdateGrassWindSpring(bool a_compute = false);
 	/** Updates and binds the persistent structural tree response field once per rendered frame. */
 	void UpdateTreeWindSpring();
 	/** Recreates one grass response-field texture pair at the requested resolution. */

@@ -152,6 +152,8 @@ public:
 	 * Called once per frame from the grass shader setup geometry hook.
 	 */
 	void Update();
+	/** @brief Binds the current and previous deformation fields to vertex or culling compute shaders. */
+	void BindDeformationResources(bool a_compute = false);
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;

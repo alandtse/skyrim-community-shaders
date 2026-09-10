@@ -313,7 +313,7 @@ void GrassOptimizations::UpdateGrass()
 	const bool isVR = globals::game::isVR;
 
 	RE::NiFrustumPlanes frustum{};
-	ComputeFrustumPlanes(frustum, cam->GetRuntimeData2().viewFrustum, cam->world);
+	ComputeFrustumPlanes(frustum, isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum, cam->world);
 	const RE::NiPoint3 camPos = cam->world.translate;
 	const __m128 camPosV = _mm_setr_ps(camPos.x, camPos.y, camPos.z, 0.0f);
 
@@ -355,7 +355,7 @@ void GrassOptimizations::UpdateGrass()
 		cp.lodMinKeep = settings.MinDensity;
 		cp.lodFadeBand = 0.15f;
 
-		const auto& vf = cam->GetRuntimeData2().viewFrustum;
+		const auto& vf = isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum;
 		// Not Renderer::GetScreenSize(): that reads VR's desktop preview resolution, not the HMD's (see State.cpp's screenSize comment).
 		// Must match HiZPyramid::Build()'s ConvertToDynamic call: ProjScale feeds the HiZ mip-level
 		// selection in GrassCullingCS.hlsl, so using the undynamic screen height there over-culls

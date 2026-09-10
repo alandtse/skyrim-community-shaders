@@ -12,6 +12,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "ProfilingRenderer.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "menu.performance."
@@ -322,6 +323,13 @@ void PerformanceRenderer::Render(Feature* host)
 		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_overlay"), "Overlay"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##PerformanceOverlayContent", ImVec2(0, 0), false))
 				globals::features::performanceOverlay.DrawSettings();
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
+		if (MenuFonts::BeginTabItemWithFont(T("menu.features.profiling", "Profiling"), Menu::FontRole::Subheading)) {
+			if (ImGui::BeginChild("##PerformanceProfilingContent", ImVec2(0, 0), false))
+				ProfilingRenderer::RenderStatistics();
 			ImGui::EndChild();
 			ImGui::EndTabItem();
 		}

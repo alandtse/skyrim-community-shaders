@@ -34,6 +34,8 @@ file_common_defines:
         CSHADER: *id001
         PSHADER: *id002
         VSHADER: *id002
+    DynamicNearClipCS.hlsl:
+        CSHADER: *id001
     Effect.hlsl:
         CSHADER: *id001
         PSHADER: *id002
@@ -351,6 +353,16 @@ shaders:
                     defines: *id013
                   - entry: DistantTree:Vertex:10001
                     defines: *id014
+    - file: DynamicNearClipCS.hlsl
+      configs:
+          CSHADER:
+              common_defines:
+                  - D3DCOMPILE_DEBUG
+                  - D3DCOMPILE_SKIP_OPTIMIZATION
+                  - VR
+              entries:
+                  - entry: main
+                    defines: *id001
     - file: Effect.hlsl
       configs:
           PSHADER:

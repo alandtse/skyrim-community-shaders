@@ -37,6 +37,7 @@
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
+#include "Utils/SettingsPatch.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
 #include "WeatherManager.h"
@@ -703,6 +704,7 @@ void State::SaveToJson(nlohmann::json& settings)
 		disabledFeaturesJson[featureName] = isDisabled;
 	}
 	settings["Disable at Boot"] = disabledFeaturesJson;
+	settings["Favorites"] = favoriteFeatures;
 
 	settings["Version"] = Plugin::VERSION.string();
 
@@ -719,6 +721,14 @@ void State::LoadFromJson(nlohmann::json& settings)
 {
 	std::lock_guard<std::mutex> lock(m_mutex);
 	const auto shaderCache = globals::shaderCache;
+
+	favoriteFeatures.clear();
+	if (const auto favorites = settings.find("Favorites"); favorites != settings.end() && favorites->is_object()) {
+		for (const auto& [featureName, favorite] : favorites->items()) {
+			if (favorite.is_boolean())
+				favoriteFeatures[featureName] = favorite.get<bool>();
+		}
+	}
 
 	// Load Menu settings
 	if (settings.contains("Menu") && settings["Menu"].is_object()) {
@@ -864,6 +874,72 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 		}
 #endif
 	}
+}
+
+bool State::SaveFeaturePreference(const json& patch)
+{
+	const auto configPath = GetConfigPath(ConfigMode::USER);
+	try {
+		json settings = json::object();
+		if (std::filesystem::exists(configPath)) {
+			std::ifstream input(configPath);
+			input >> settings;
+			if (!settings.is_object())
+				return false;
+		}
+		settings.merge_patch(patch);
+		const auto serializedSettings = settings.dump(1);
+		std::filesystem::create_directories(Util::PathHelpers::GetCommunityShaderPath());
+
+		auto* overrides = SettingsOverrideManager::GetSingleton();
+		const auto globalOverrides = overrides->GetMergedOverrideSettings("Global", json::object());
+		auto originalGlobal = globalOverrides;
+		if (overrides->HasUserOverride("Global") && !overrides->LoadUserOverride("Global", originalGlobal))
+			return false;
+		auto updatedGlobal = originalGlobal;
+		updatedGlobal.merge_patch(patch);
+		const bool overrideChanged = Util::Settings::BuildUserOverride(originalGlobal, globalOverrides) !=
+		                             Util::Settings::BuildUserOverride(updatedGlobal, globalOverrides);
+		if (overrideChanged && !overrides->PersistUserOverride("Global", updatedGlobal, globalOverrides)) {
+			overrides->PersistUserOverride("Global", originalGlobal, globalOverrides);
+			return false;
+		}
+		if (!WriteConfigAtomically(configPath, serializedSettings)) {
+			if (overrideChanged)
+				overrides->PersistUserOverride("Global", originalGlobal, globalOverrides);
+			return false;
+		}
+		return true;
+	} catch (const std::exception& e) {
+		logger::error("Could not save feature preference to {}: {}", configPath, e.what());
+		return false;
+	}
+}
+
+bool State::SetFeatureBootEnabled(const std::string& featureName, bool enabled)
+{
+	if (!SaveFeaturePreference(json{ { "Disable at Boot", { { featureName, !enabled } } } }))
+		return false;
+	SetFeatureDisabled(featureName, !enabled);
+	globals::shaderCache->MarkExpectedFeatureFlip();
+	return true;
+}
+
+bool State::SetFeatureFavorite(const std::string& featureName, bool favorite)
+{
+	const auto* feature = Feature::FindFeatureByShortName(featureName);
+	if (!feature || !feature->IsInMenu() || feature == &globals::features::csEditor)
+		return false;
+	if (!SaveFeaturePreference(json{ { "Favorites", { { featureName, favorite } } } }))
+		return false;
+	favoriteFeatures[featureName] = favorite;
+	return true;
+}
+
+bool State::IsFeatureFavorite(const std::string& featureName) const
+{
+	const auto favorite = favoriteFeatures.find(featureName);
+	return favorite != favoriteFeatures.end() && favorite->second;
 }
 
 bool State::ValidateCache(CSimpleIniA& a_ini)

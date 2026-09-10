@@ -41,6 +41,7 @@ TEST_CASE("VR near clip release is independent of headset refresh rate", "[vr][n
 	const auto afterOneSecond = [&](int refreshRate) {
 		VRNearClipController controller;
 		controller.Reset(settings);
+		controller.current = settings.MinimumNearClip;
 		for (int frame = 0; frame < refreshRate; ++frame)
 			controller.Update(settings.NormalNearClip, 1.0f / refreshRate, true, settings);
 		return controller.current;

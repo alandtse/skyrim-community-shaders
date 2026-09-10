@@ -1,7 +1,8 @@
 #pragma once
 
+#include "Menu.h"
+
 #include <functional>
-#include <map>
 #include <string>
 #include <variant>
 #include <vector>
@@ -11,7 +12,7 @@ struct Feature;
 /**
  * @brief Renders the two-column feature list and settings panel in the main menu.
  *
- * The left column shows a searchable, categorized list of built-in pages and
+ * The left column shows a searchable, alphabetical list of built-in pages and
  * installed features. The right column displays the settings UI for whichever
  * item is currently selected.
  */
@@ -22,15 +23,16 @@ public:
 	struct BuiltInMenu
 	{
 		std::string name;  // translated display text
-		// Untranslated identifier for IsCoreMenu(); empty for non-core entries (e.g. Feature Issues).
+		// Untranslated identifier used for page navigation.
 		std::string canonicalId;
 		std::function<void()> func;
 	};
 
-	/** @brief Represents a collapsible category header in the feature list. */
+	/** @brief Represents a section header in the feature list. */
 	struct CategoryHeader
 	{
 		std::string name;
+		int count = 0;
 	};
 
 	/** @brief Variant type representing any entry in the menu list. */
@@ -44,19 +46,19 @@ public:
 	 * and right-column settings content.
 	 *
 	 * @param footerHeight Height reserved for the footer area below the list.
+	 * @param sidebar Sidebar visibility, animation progress, and expanded width.
 	 * @param selectedMenu Index of the currently selected menu item (updated on selection change).
 	 * @param featureSearch Current search filter string (updated by the search input).
 	 * @param pendingFeatureSelection Name of a feature to auto-select (cleared after processing).
-	 * @param categoryExpansionStates Map of category name to expanded/collapsed state.
 	 * @param drawGeneralSettings Callback that renders the General settings page content.
 	 * @param drawAdvancedSettings Callback that renders the Advanced settings page content.
 	 */
 	static void RenderFeatureList(
 		float footerHeight,
+		Menu::SidebarState& sidebar,
 		size_t& selectedMenu,
 		std::string& featureSearch,
 		std::string& pendingFeatureSelection,
-		std::map<std::string, bool>& categoryExpansionStates,
 		const std::function<void()>& drawGeneralSettings,
 		const std::function<void()>& drawAdvancedSettings);
 
@@ -65,7 +67,6 @@ private:
 	{
 		size_t listId;
 		size_t& selectedMenuRef;
-		std::map<std::string, bool>& categoryExpansionStates;
 
 		void operator()(const BuiltInMenu& menu);
 		void operator()(const std::string& label);
@@ -102,8 +103,6 @@ private:
 	};
 
 	static std::vector<MenuFuncInfo> BuildMenuList(
-		const std::string& featureSearch,
-		std::map<std::string, bool>& categoryExpansionStates,
 		const std::function<void()>& drawGeneralSettings,
 		const std::function<void()>& drawAdvancedSettings);
 
@@ -115,8 +114,7 @@ private:
 	static void RenderLeftColumn(
 		const std::vector<MenuFuncInfo>& menuList,
 		size_t& selectedMenu,
-		std::string& featureSearch,
-		std::map<std::string, bool>& categoryExpansionStates);
+		std::string& featureSearch);
 
 	static void RenderRightColumn(
 		const std::vector<MenuFuncInfo>& menuList,

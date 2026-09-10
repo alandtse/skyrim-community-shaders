@@ -1027,5 +1027,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	mainDepth.depthSRV = depthSRVBackup;
+	auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	zPrepassCopy.depthSRV = prepassSRVBackup;
 }
 #undef I18N_KEY_PREFIX

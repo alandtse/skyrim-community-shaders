@@ -1141,6 +1141,7 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
+
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1152,6 +1153,7 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
+
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1163,6 +1165,7 @@ namespace Hooks
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
+
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 

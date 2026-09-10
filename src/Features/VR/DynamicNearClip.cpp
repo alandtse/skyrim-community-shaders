@@ -287,6 +287,8 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 {
 	const auto& camera = controlledCamera->GetVRRuntimeData();
+	if (camera.unk1C8 != 2 || !camera.viewFrustumArray)
+		return false;
 	observedEngineNear = cameraData.y;
 	bool depthConsistent = std::isfinite(cameraData.x) && std::isfinite(cameraData.y) &&
 	                       cameraData.y > 0.0f && cameraData.x > cameraData.y;
@@ -331,7 +333,7 @@ void VRDynamicNearClip::SetupResources()
 		return;
 	try {
 		probeShader = nullptr;
-		probeShader.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\DynamicNearClipCS.hlsl", {}, "cs_5_0")));
+		probeShader.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DynamicNearClipCS.hlsl", {}, "cs_5_0")));
 		if (!probeShader) {
 			Fail("Depth probe shader unavailable; using the engine near plane");
 			return;
@@ -393,7 +395,6 @@ void VRDynamicNearClip::FinishWorldDepth()
 	auto* terrainDepth = terrain.loaded && terrain.settings.Enabled && globals::shaderCache->IsEnabled() ? terrain.terrainDepth.depthSRV : nullptr;
 	if (depth)
 		CaptureDepth(controlledCamera.get(), depth, terrainDepth);
-	captureFrame = globals::state->frameCount;
 	collectingWorldDepth = false;
 }
 

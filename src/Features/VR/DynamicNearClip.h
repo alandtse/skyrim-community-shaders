@@ -54,9 +54,9 @@ private:
 		uint32_t width;
 		uint32_t height;
 		uint32_t hasTerrainDepth;
-		float padding[9]{};
+		float padding = 0.0f;
 	};
-	static_assert(sizeof(ProbeConstants) == 64);
+	static_assert(sizeof(ProbeConstants) == 32);
 	static_assert(sizeof(EyeDepth) == 16);
 
 	void RestoreCamera();

@@ -87,9 +87,11 @@ void SettingManager::RegisterSettingInternal(Setting& setting)
 		cat.settingOrder.push_back(setting.key);
 		allSettings.push_back(setting);
 	} else {
-		// Update existing setting info but keep the same ID
+		// Preserve currentValue too (not just lastSavedValue) -- re-registration must not
+		// silently discard an unsaved UI edit by resetting it to the fresh default.
 		uint32_t existingID = it->second;
 		setting.id = existingID;
+		setting.currentValue = allSettings[existingID].currentValue;
 		setting.lastSavedValue = allSettings[existingID].lastSavedValue;
 		allSettings[existingID] = setting;
 	}

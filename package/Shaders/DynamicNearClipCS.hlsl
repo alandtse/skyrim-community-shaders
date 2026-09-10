@@ -2,6 +2,8 @@ Texture2D<float> SceneDepth : register(t0);
 Texture2D<float> TerrainDepth : register(t1);
 RWStructuredBuffer<uint4> EyeResults : register(u0);
 
+static const float MaximumDistance = 3.402823466e+38;
+
 cbuffer ProbeConstants : register(b0)
 {
 	float4 CameraData;
@@ -41,7 +43,7 @@ void InsertClosest(inout float4 values, float candidate)
 	uint2 eyeSize = uint2(RenderSize.x / 2, RenderSize.y);
 	uint2 pixel = min(uint2(eyeUV * eyeSize), eyeSize - 2);
 	pixel.x += group.x * eyeSize.x;
-	float nearest = 3.402823466e+38;
+	float nearest = MaximumDistance;
 	uint valid = 0;
 	[unroll] for (uint y = 0; y < 2; ++y)
 	{
@@ -59,7 +61,7 @@ void InsertClosest(inout float4 values, float candidate)
 			}
 		}
 	}
-	Closest[index] = float4(nearest, 3.402823466e+38, 3.402823466e+38, 3.402823466e+38);
+	Closest[index] = float4(nearest, MaximumDistance, MaximumDistance, MaximumDistance);
 	Valid[index] = valid != 0;
 	GroupMemoryBarrierWithGroupSync();
 	[unroll] for (uint stride = 128; stride > 0; stride >>= 1)

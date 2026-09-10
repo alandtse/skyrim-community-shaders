@@ -13,6 +13,8 @@ The VR settings expose an adaptive near plane for both eyes:
 }
 ```
 
+`DynamicNearClipReadout` is active only when developer mode is enabled.
+
 Distances are Skyrim world units. The depth probe samples the existing world
 prepass with a small central grid for each eye, rejects sky and invalid depth,
 and uses the smaller relevant distance for both eyes. The target is
@@ -23,17 +25,18 @@ deadband and then approaches the normal value exponentially.
 The hook runs after Skyrim prepares the world camera and before it constructs
 the eye projections and combined culling frustum. It writes the selected near
 distance into both source eye frustums; Skyrim then rebuilds its normal
-projection, culling, depth and history data. No render pass, reversed-Z path,
-far-plane change, FOV change, or shadow-camera change is introduced.
+projection, culling, depth and history data. No additional geometry pass,
+reversed-Z path, far-plane change, FOV change, or shadow-camera change is
+introduced.
 
 The existing prepass and pre-water depth-copy hooks provide depth without a
 full-resolution reduction. Readback uses a small asynchronous staging ring and
-never waits for the GPU. The optional headset readout reports the requested,
-observed and sampled distances; logs are throttled.
+never waits for the GPU. In developer mode, the optional headset readout
+reports the requested, observed and sampled distances; logs are throttled.
 
 Projection validation checks both jittered and unjittered eye matrices before a
-sample is accepted. If another camera path leaves the engine projection out of
-sync, the feature holds the engine near plane until the matrices agree.
+sample is accepted. Other projection mismatches are reported by the
+developer-mode diagnostics.
 
 The implementation is VR-only and installs only on Skyrim VR 1.4.15. If camera,
 projection, depth or resource setup is invalid, it restores the engine camera

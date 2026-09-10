@@ -694,8 +694,7 @@ bool GrassBucketStore::CreateBucketSourceBuffers(GrassBucket& b, uint32_t capaci
 
 bool GrassBucketStore::CreateBucketCullScratch(GrassBucket& b, uint32_t capacity, ID3D11Device* device)
 {
-	// On VR, eye 1's survivors land in the second half of these buffers (slot capacity..2*capacity-1);
-	// see GrassCullingCS.hlsl and the StartInstanceLocation set up in CreateBucketArgsBuffer.
+	// On VR, eye 1's survivors land in the second half of these buffers (slot capacity..2*capacity-1).
 	const uint32_t eyeMultiplier = globals::game::isVR ? 2u : 1u;
 	const uint32_t allocCapacity = capacity * eyeMultiplier;
 
@@ -767,8 +766,7 @@ bool GrassBucketStore::CreateBucketCullScratch(GrassBucket& b, uint32_t capacity
 bool GrassBucketStore::CreateBucketArgsBuffer(GrassBucket& b, ID3D11Device* device)
 {
 	// Two back-to-back 8-uint blocks (one per eye; only block 0 is used off VR): 3 uints of padding
-	// so the instance count is UAV accessible at a 16-byte-aligned offset, then the 5-uint indirect
-	// args block. See ArgsByteOffsetForEye / InstanceCountOffsetForEye.
+	// so the instance count is UAV accessible at a 16-byte-aligned offset, then the 5-uint args block.
 	const uint32_t initArgs[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	D3D11_SUBRESOURCE_DATA init{ initArgs, 0, 0 };
 
@@ -983,7 +981,7 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 		}
 		Util::SetResourceName(bin.argsBuf, "GrassOptimizations::LODArgsBuf");
 
-		// See CreateBucketArgsBuffer: spans both eyes' instance-count dwords via one raw view.
+		// Spans both eyes' instance-count dwords via one raw view.
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
 		uav.Format = DXGI_FORMAT_R32_TYPELESS;
 		uav.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;

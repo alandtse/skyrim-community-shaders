@@ -80,7 +80,6 @@ public:
 
 	struct alignas(16) CullParamsCB
 	{
-		// [0..5] = eye 0's planes; [6..11] = eye 1's (VR only -- duplicated from eye 0 otherwise).
 		float frustumPlanes[12][4];
 
 		uint32_t eyeCount;
@@ -142,9 +141,8 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(CullBucketCB);
 
-	// Mirrors RunGrass.hlsl's GrassOptimizationsEyeCB. eyeSlotBase lets the VS read the right half of
-	// InstanceExtras: SV_InstanceID does not include the draw's StartInstanceLocation (only the
-	// per-instance vertex stream is auto-advanced by it), so the SRV index needs it added explicitly.
+	// eyeSlotBase lets the VS read the right half of InstanceExtras: SV_InstanceID excludes the draw's
+	// StartInstanceLocation, so the SRV index needs it added explicitly.
 	struct alignas(16) EyeIndexCB
 	{
 		uint32_t eyeIndex;

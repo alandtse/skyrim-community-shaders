@@ -284,9 +284,8 @@ float WindScalar(float basis, float timer)
 	// Scaled by 4 so it clears the collision and far-shading flags already packed into e1.w.
 	const float4 e1Tier = float4(e1.xyz, e1.w + 4.0 * (float)tier);
 
-	// eyeSlotBase must match the StartInstanceLocation baked into eye 1's args block (GrassOptimizations.cpp)
-	// so the draw's vertex stream lines up. The VS reads InstanceExtras with its own eye slot base
-	// (GrassOptimizationsEyeCB) since SV_InstanceID, unlike the vertex stream, excludes StartInstanceLocation.
+	// eyeSlotBase must match the StartInstanceLocation baked into eye 1's args block: SV_InstanceID
+	// excludes it, so the SRV index needs it added explicitly.
 	static const uint kArgsBlockStride = 32;
 	const uint eyeByteOffset = eyeIndex * kArgsBlockStride;
 	const uint eyeSlotBase = eyeIndex * OutputCapacityPerEye;

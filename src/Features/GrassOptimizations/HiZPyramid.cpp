@@ -126,7 +126,7 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	if (!paramsCB || !globals::game::renderer)
 		return false;
 
-	// Not graphicsState->screenWidth/Height: that reads VR's desktop preview resolution, not the HMD's (see State.cpp's screenSize comment).
+	// Not graphicsState->screenWidth/Height: that reads VR's desktop preview resolution, not the HMD's.
 	float2 screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 

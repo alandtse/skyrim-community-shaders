@@ -356,10 +356,8 @@ void GrassOptimizations::UpdateGrass()
 		cp.lodFadeBand = 0.15f;
 
 		const auto& vf = isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum;
-		// Not Renderer::GetScreenSize(): that reads VR's desktop preview resolution, not the HMD's (see State.cpp's screenSize comment).
-		// Must match HiZPyramid::Build()'s ConvertToDynamic call: ProjScale feeds the HiZ mip-level
-		// selection in GrassCullingCS.hlsl, so using the undynamic screen height there over-culls
-		// grass as occluded whenever DLSS/FSR renders below display resolution.
+		// ProjScale must use the dynamic HMD height, not the desktop preview, or DLSS/FSR below
+		// display resolution over-culls grass as occluded in the Hi-Z test.
 		const float screenH = Util::ConvertToDynamic(globals::state->screenSize).y;
 		cp.meshCostBias = settings.MeshCostBias;
 		cp.projScale = screenH / (2.0f * std::abs(vf.fTop));
@@ -739,9 +737,8 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 	if (b.cullSlot == UINT32_MAX)
 		return;
 
-	// Targeted per-eye reset of just the instance-count dword: the args UAV also spans neighboring
-	// fields (StartInstanceLocation, eye 1's IndexCountPerInstance) that are set once from the CPU
-	// and must survive every frame, so a wholesale ClearUnorderedAccessView would corrupt them.
+	// Reset only the instance-count dword: the args UAV spans CPU-set fields that must survive
+	// every frame, so a wholesale ClearUnorderedAccessView would corrupt them.
 	WriteArgsUint32(ctx, b.argsBuf, InstanceCountOffsetForEye(0), 0);
 	if (globals::game::isVR)
 		WriteArgsUint32(ctx, b.argsBuf, InstanceCountOffsetForEye(1), 0);
@@ -772,7 +769,7 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 	ctx1->CSSetConstantBuffers1(1, 1, &bucketCB, &first, &num);
 
 	// Skipping the dispatch keeps the instance count at zero for the draw. The Z dimension covers
-	// both eyes on VR in one dispatch; see GrassCullingCS.hlsl's tid.z-derived eyeIndex.
+	// both eyes on VR in one dispatch.
 	if (b.visibleInstances && b.sliceTableCount && sliceTableSRV)
 		ctx->Dispatch((b.visibleInstances + 63) / 64, 1, globals::game::isVR ? 2 : 1);
 }
@@ -1031,8 +1028,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		const uint32_t indexCount = 3u * geometry->GetTrishapeRuntimeData().triangleCount;
 		WriteArgsUint32(ctx, b->argsBuf, argsByteOffset, indexCount);
 		if (globals::game::isVR) {
-			// Eye 1 shares the same mesh, so IndexCountPerInstance matches eye 0's; see EyeIndexCB's own
-			// comment for why StartInstanceLocation alone isn't enough to point the VS at eye 1's data.
+			// Eye 1 shares the same mesh, so IndexCountPerInstance matches eye 0's.
 			WriteArgsUint32(ctx, b->argsBuf, ArgsByteOffsetForEye(1), indexCount);
 			WriteArgsUint32(ctx, b->argsBuf, StartInstanceLocationOffsetForEye(1), b->capacityInstances);
 		}

@@ -206,6 +206,10 @@ float WindScalar(float basis, float timer)
 				const float2 tcL = tc / scale;
 				const float rTL = rT / scale;
 				const int2 dimL = max(int2(ceil(HiZSize / scale)), int2(1, 1));
+				// Clamp the footprint to the active eye's half so taps near the stereo seam don't sample the other eye.
+				const int eyeHalf = dimL.x / 2;
+				const int xMin = (EyeCount > 1 && eyeHalf > 0) ? (int(eyeIndex) * eyeHalf) : 0;
+				const int xMax = (EyeCount > 1 && eyeHalf > 0) ? (xMin + eyeHalf - 1) : (dimL.x - 1);
 
 				const int2 t0 = int2(floor(tcL - rTL));
 				const int2 t1 = int2(floor(tcL + rTL));
@@ -222,7 +226,7 @@ float WindScalar(float basis, float timer)
 					[unroll] for (int x = 0; x < 3; ++x)
 					{
 						if (t0.x + x <= t1.x && t0.y + y <= t1.y) {
-							const int2 t = clamp(t0 + int2(x, y), int2(0, 0), dimL - 1);
+							const int2 t = clamp(t0 + int2(x, y), int2(xMin, 0), int2(xMax, dimL.y - 1));
 							tileMax = max(tileMax, HiZ.Load(int3(t, level)));
 						}
 					}

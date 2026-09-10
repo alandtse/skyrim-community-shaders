@@ -49,6 +49,7 @@
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
 #include "Features/WetnessEffects.h"
+#include "Features/Wind/Wind.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "SettingsOverrideManager.h"
@@ -271,6 +272,7 @@ namespace
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
+			&globals::features::wind,
 			&globals::features::screenshotFeature,
 			&globals::features::linearLighting,
 #if defined(ENABLE_EFFECTS11)

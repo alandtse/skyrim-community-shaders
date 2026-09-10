@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #if defined(ENABLE_EFFECTS11)
@@ -61,7 +62,6 @@ void State::UpdateLightingShaderPermutation(RE::BSRenderPass* a_pass)
 		permutationData.ExtraShaderDescriptor |= additiveLighting;
 	}
 }
-
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 {
 	permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
@@ -76,9 +76,19 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 	}
 }
 
+void State::UpdatePermutationBuffer()
+{
+	UpdateWindPermutationData();
+	if (permutationData != permutationDataPrevious) {
+		permutationCB->Update(permutationData);
+		permutationDataPrevious = permutationData;
+	}
+}
+
 void State::Draw()
 {
 	ZoneScoped;
+	UpdateGrassGpuPass();
 
 	auto shaderCache = globals::shaderCache;
 	auto weatherManager = globals::weatherManager;
@@ -139,10 +149,7 @@ void State::Draw()
 			volumetricShadows.SetShaderResources(context);
 		}
 
-		if (permutationData != permutationDataPrevious) {
-			permutationCB->Update(permutationData);
-			permutationDataPrevious = permutationData;
-		}
+		UpdatePermutationBuffer();
 
 		if (currentShader && updateShader) {
 			if (currentShader->shaderType.get() == RE::BSShader::Type::Utility) {
@@ -157,6 +164,17 @@ void State::Draw()
 			Debug();
 
 		updateShader = false;
+	}
+}
+
+void State::UpdateGrassGpuPass()
+{
+	const bool isGrassDraw = currentShader && currentShader->shaderType.get() == RE::BSShader::Type::Grass;
+	if (isGrassDraw) {
+		if (!grassGpuPass)
+			grassGpuPass.emplace("Grass::Draw");
+	} else {
+		grassGpuPass.reset();
 	}
 }
 
@@ -295,6 +313,8 @@ void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
  */
 void State::Reset()
 {
+	grassGpuPass.reset();
+
 	// Land staged SKSE API setter writes before features consume settings this frame.
 	CSPluginAPI::ProcessStagedSettings();
 
@@ -305,6 +325,7 @@ void State::Reset()
 	globals::profiler->EndFrame(frameCount);
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
+	UpdateWind();
 
 	worldRenderedThisFrame = false;
 
@@ -1360,6 +1381,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.CameraData = Util::GetCameraData();
 		data.BufferDim = float4{ screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
+		UpdateWindSharedData(data);
 
 		auto temporal = Util::GetTemporal();
 

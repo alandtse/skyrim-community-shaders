@@ -1,9 +1,11 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/LodLandscape.hlsli"
 #include "Common/Math.hlsli"
+#include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Skinned.hlsli"
+#include "Common/TreeWind.hlsli"
 #include "Common/VR.hlsli"
 
 #if defined(RENDER_SHADOWMASK) || defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
@@ -128,6 +130,7 @@ VS_OUTPUT main(VS_INPUT input)
 		input.InstanceID
 #	endif
 	);
+	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
 
 #	if (defined(RENDER_DEPTH) && defined(RENDER_SHADOWMASK_ANY)) || SHADOWFILTER == 2
 	vsout.PositionCS.xy = input.PositionMS.xy;
@@ -144,6 +147,34 @@ VS_OUTPUT main(VS_INPUT input)
 
 	precise float4 positionMS = float4(input.PositionMS.xyz, 1.0);
 	float4 positionCS = float4(0, 0, 0, 0);
+#		if defined(SKINNED)
+	precise int4 boneIndices = 765.01.xxxx * input.BoneIndices.xyzw;
+	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(
+		Bones, boneIndices, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, input.BoneWeights);
+#		endif
+	TreeWind::Sample treeWindSample;
+	treeWindSample.trunkVelocity = 0.0.xxx;
+	treeWindSample.leafAnimationStrength = 0.0;
+	if (treeBendEnabled) {
+		TreeWind::SamplePositions treeSamplePositions = TreeWind::BuildSamplePositions(
+			World[eyeIndex], FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
+		float2 treeTransientInfluence = float2(
+			Permutation::TreeTransientWindInfluence, Permutation::TreeLeafTransientWindInfluence);
+#		if defined(VC) && defined(NORMALS) && defined(TREE_ANIM)
+#			if defined(SKINNED)
+		float3 leafWorldPosition =
+			mul(positionMS, transpose(worldMatrix)).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+#			else
+		float3 leafWorldPosition =
+			mul(World[eyeIndex], positionMS).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+#			endif
+		treeWindSample = TreeWind::SampleCurrent(
+			treeSamplePositions, leafWorldPosition, treeTransientInfluence);
+#		else
+		treeWindSample = TreeWind::SampleCurrent(
+			treeSamplePositions, treeTransientInfluence);
+#		endif
+	}
 
 	float3 normalMS = float3(1, 1, 1);
 #		if defined(NORMALS)
@@ -151,8 +182,13 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 
 #		if defined(VC) && defined(NORMALS) && defined(TREE_ANIM)
-	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) + dot(input.PositionMS.xyz, 1.0.xxx) + 0.5) - 1));
-	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * (input.Color.w * TreeParams.z);
+	float leafAnimationStrength = treeBendEnabled ?
+	                                  treeWindSample.leafAnimationStrength :
+	                                  TreeParams.z;
+	float2 leafPhase = float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) +
+	                   dot(input.PositionMS.xyz, 1.0.xxx) + 0.5;
+	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(leafPhase) - 1));
+	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * input.Color.w * leafAnimationStrength;
 	positionMS.xyz += normalMS.xyz * normalMult;
 #		endif
 
@@ -161,15 +197,23 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 
 #		if defined(SKINNED)
-	precise int4 boneIndices = 765.01.xxxx * input.BoneIndices.xyzw;
-
-	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, boneIndices, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, input.BoneWeights);
 	precise float4 positionWS = float4(mul(positionMS, transpose(worldMatrix)), 1);
+	if (treeBendEnabled) {
+		positionWS.xy += TreeWind::GetWorldDisplacement(
+			input.PositionMS.z, treeWindSample.trunkVelocity.xy);
+	}
 
 	positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 #		else
-	precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj[eyeIndex], World[eyeIndex]);
-	positionCS = mul(modelViewProj, positionMS);
+	if (treeBendEnabled) {
+		precise float4 positionWS = mul(World[eyeIndex], positionMS);
+		positionWS.xy += TreeWind::GetWorldDisplacement(
+			input.PositionMS.z, treeWindSample.trunkVelocity.xy);
+		positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
+	} else {
+		precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj[eyeIndex], World[eyeIndex]);
+		positionCS = mul(modelViewProj, positionMS);
+	}
 #		endif
 
 #		if defined(RENDER_SHADOWMAP) && defined(RENDER_SHADOWMAP_CLAMPED)

@@ -15,6 +15,25 @@ namespace RE
 
 namespace Util
 {
+	/** @brief World-space capsule used to approximate an actor collision shape. */
+	struct ShapeCollisionCapsule
+	{
+		RE::NiPoint3 pointA;
+		RE::NiPoint3 pointB;
+		float radius;
+	};
+
+	/**
+	 * @brief Extracts a world-space capsule from a collision object.
+	 *
+	 * Native capsules retain their endpoints and radius. Other supported shapes
+	 * are returned as degenerate capsules with coincident endpoints.
+	 * @param collisionObj Collision object whose Havok shape is queried.
+	 * @param capsule Resulting world-space collision capsule.
+	 * @return True when a supported shape was extracted.
+	 */
+	bool GetShapeCollisionCapsule(RE::bhkNiCollisionObject* collisionObj, ShapeCollisionCapsule& capsule);
+
 	/**
      * @brief Extracts the shape bounds from a collision object.
      * @param collisionObj Pointer to the collision object.

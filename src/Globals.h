@@ -40,6 +40,7 @@ struct Upscaling;
 class Profiler;
 struct CSEditor;
 struct CSUtility;
+struct Wind;
 #if defined(ENABLE_EFFECTS11)
 struct Effects11;
 #endif
@@ -144,6 +145,7 @@ namespace globals
 		extern ScreenshotFeature screenshotFeature;
 		extern CSEditor csEditor;
 		extern CSUtility csUtility;
+		extern Wind wind;
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;
 		extern Skin skin;

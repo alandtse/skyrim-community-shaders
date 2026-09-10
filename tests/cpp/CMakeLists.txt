@@ -62,10 +62,11 @@ add_executable(cpp_tests
     test_contenthash.cpp
     test_shadercachemanifest.cpp
     test_shadercacheclear.cpp
-    test_generationclaim.cpp
-    test_settingspatch.cpp
-    test_weatheridparser.cpp
-    test_effectsourcecompatibility.cpp
+	test_generationclaim.cpp
+	test_settingspatch.cpp
+	test_weatheridparser.cpp
+	test_effectsourcecompatibility.cpp
+	test_windfield.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -73,10 +74,12 @@ add_executable(cpp_tests
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )
 
 # The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the
@@ -93,6 +96,7 @@ set_property(TARGET cpp_tests PROPERTY CXX_STANDARD_REQUIRED ON)
 
 target_include_directories(cpp_tests PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/package/Shaders"
 )
 
 target_link_libraries(cpp_tests PRIVATE

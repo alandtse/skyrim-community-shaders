@@ -78,6 +78,7 @@ namespace Permutation
 		static const uint SuppressExternalEmittance = (1 << 5);
 		static const uint AdditiveLighting = (1 << 6);
 		// Fork-only flags reserve the high end so upstream's next sequential flag never collides.
+		static const uint TreeBend = (1u << 29);
 		static const uint IsEye = (1u << 31);
 	}
 
@@ -100,6 +101,46 @@ namespace Permutation
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
+		float TrunkWindTimer;
+		float TrunkWindPreviousTimer;
+
+		float2 TrunkWindVector;
+		float2 TrunkWindPreviousVector;
+
+		float WindIntensityOverride;
+		uint OverrideWindIntensity;
+		float2 WindPadding0;
+
+		float TreeWindUpperBendRange;
+		float TreeWindMaximumDisplacementPercent;
+		float TreeBendModelSensitivity;
+		float TreeLeafModelSensitivity;
+
+		float TreeWindSpringStrength;
+		float TreeWindSpringDamping;
+		float TreeTransientWindInfluence;
+		float TrunkWindBendSensitivity;
+
+		float TreeLeafBaseWindFlutterGain;
+		uint EnableAmbientGrassWind;
+		float GrassWindBendProfile;
+		float GrassWindFlutterStrength;
+		float GrassWindFlutterFrequency;
+		float GrassWindSensitivity;
+		float2 WindPadding1;
+
+		float TreeWindBoundsBase;
+		float TreeWindBoundsHeight;
+		float TreeWindTrunkGustInfluence;
+		float TreeLeafGustInfluence;
+
+		float TreeTransientMaximumBendMultiplier;
+		float TreeLeafTransientWindInfluence;
+		float TreeLeafTransientFlutterMaximum;
+		float GrassWindCompressionToBend;
+
+		float4 TreeWindProbeBase;
+		float4 TreeWindProbeTop;
 	};
 
 }

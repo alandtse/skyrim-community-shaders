@@ -1,12 +1,14 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/GrassWind.hlsli"
 #include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/WindField.hlsli"
 
 #define DEFERRED
 
@@ -95,6 +97,8 @@ cbuffer PerGeometry : register(b2)
 
 #ifdef VSHADER
 
+#	include "Common/GrassWindSpring.hlsli"
+
 #	ifdef GRASS_COLLISION
 #		include "GrassCollision\\GrassCollision.hlsli"
 #	endif  // GRASS_COLLISION
@@ -107,22 +111,6 @@ cbuffer cb7 : register(b7)
 cbuffer cb8 : register(b8)
 {
 	float4 cb8[240];
-}
-
-// Calculate wind displacement for a grass vertex
-float3 CalculateWindDisplacement(VS_INPUT input, float windTimer)
-{
-	float windAngle = 0.4 * ((input.InstanceData1.x + input.InstanceData1.y) * -0.0078125 + windTimer);
-	float windAngleSin, windAngleCos;
-	sincos(windAngle, windAngleSin, windAngleCos);
-
-	float windTmp3 = 0.2 * cos(Math::PI * windAngleCos);
-	float windTmp1 = sin(Math::PI * windAngleSin);
-	float windTmp2 = sin(Math::TAU * windAngleSin);
-	float windPower = WindVector.z * (((windTmp1 + windTmp2) * 0.3 + windTmp3) *
-										 (0.5 * (input.Color.w * input.Color.w)));
-
-	return float3(WindVector.xy, 0) * windPower;
 }
 
 #	ifdef GRASS_LIGHTING
@@ -152,6 +140,84 @@ float4 GetMSPosition(VS_INPUT input)
 	return msPosition;
 }
 
+void GetGrassWindDisplacements(
+	VS_INPUT input, uint eyeIndex, float modelHeight, out float3 windDisplacement,
+	out float3 previousWindDisplacement, out float3 bendAxis, out float bendAngle)
+{
+	windDisplacement = 0.0.xxx;
+	previousWindDisplacement = 0.0.xxx;
+	bendAxis = float3(0.0, 1.0, 0.0);
+	bendAngle = 0.0;
+	if (Permutation::EnableAmbientGrassWind != 0) {
+		float3 rootWorldPosition =
+			mul(World[eyeIndex], float4(input.InstanceData1.xyz, 1.0)).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		float3 previousRootWorldPosition =
+			mul(PreviousWorld[eyeIndex], float4(input.InstanceData1.xyz, 1.0)).xyz +
+			FrameBuffer::CameraPreviousPosAdjust[eyeIndex].xyz;
+		float responseVariation = Random::InterleavedGradientNoise(input.InstanceData1.xy);
+		float responseScale = lerp(0.9, 1.1, responseVariation);
+		float3 previousBendAxis;
+		float springBendAngle;
+		float previousSpringBendAngle;
+		float springCompression;
+		float previousSpringCompression;
+		float currentWindResponse;
+		float previousWindResponse;
+		uint currentSpringField = GrassWindSpring::SelectField(rootWorldPosition.xy);
+		uint previousSpringField = GrassWindSpring::SelectField(previousRootWorldPosition.xy);
+		if (currentSpringField == previousSpringField &&
+			GrassWindSpring::HasTemporalCoverage(
+				currentSpringField, previousSpringField, rootWorldPosition.xy, previousRootWorldPosition.xy)) {
+			float4 currentField = GrassWindSpring::SampleCurrent(currentSpringField, rootWorldPosition.xy);
+			float4 previousField = GrassWindSpring::SamplePrevious(previousSpringField, previousRootWorldPosition.xy);
+			GrassWindSpring::ResolveModelBend(
+				currentField, responseScale, World[eyeIndex],
+				GrassWindSpring::Fields[currentSpringField].MaximumTiltRadians,
+				Permutation::GrassWindCompressionToBend, bendAxis, springBendAngle,
+				springCompression);
+			GrassWindSpring::ResolveModelBend(
+				previousField, responseScale, PreviousWorld[eyeIndex],
+				GrassWindSpring::Fields[previousSpringField].MaximumTiltRadians,
+				Permutation::GrassWindCompressionToBend, previousBendAxis,
+				previousSpringBendAngle, previousSpringCompression);
+			float inverseMaximumTilt = rcp(max(
+				GrassWindSpring::Fields[currentSpringField].MaximumTiltRadians, EPSILON_WIND_GEOMETRY));
+			currentWindResponse = saturate(max(length(currentField.xy) * inverseMaximumTilt, currentField.z));
+			previousWindResponse = saturate(max(length(previousField.xy) * inverseMaximumTilt, previousField.z));
+			float flutterFrequency = lerp(
+				1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), currentWindResponse);
+			float previousFlutterFrequency = lerp(
+				1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), previousWindResponse);
+			float flutterStrength = max(Permutation::GrassWindFlutterStrength, 0.0);
+			float grassWindSensitivity = max(Permutation::GrassWindSensitivity, 0.0f);
+			float3 vanillaDisplacement = GrassWind::CalculateVanillaDisplacement(
+				input.InstanceData1.xy, input.Color.w, WindVector, WindTimer * flutterFrequency,
+				GrassWind::GetWindIntensityOverrideScale() * flutterStrength * grassWindSensitivity);
+			float3 previousVanillaDisplacement = GrassWind::CalculateVanillaDisplacement(
+				input.InstanceData1.xy, input.Color.w, WindVector, PreviousWindTimer * previousFlutterFrequency,
+				GrassWind::GetWindIntensityOverrideScale() * flutterStrength * grassWindSensitivity);
+			float previousBendAngle;
+			windDisplacement = GrassWind::CalculateAmbientDisplacement(
+				input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle,
+				springCompression, bendAngle);
+			previousWindDisplacement = GrassWind::CalculateAmbientDisplacement(
+				input.Color.w, modelHeight, input.InstanceData1.z, previousBendAxis,
+				previousSpringBendAngle, previousSpringCompression, previousBendAngle);
+			windDisplacement += GrassWind::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
+			previousWindDisplacement +=
+				GrassWind::RotateVector(previousVanillaDisplacement, previousBendAxis, previousBendAngle);
+			return;
+		}
+	}
+
+	windDisplacement = GrassWind::CalculateVanillaDisplacement(
+		input.InstanceData1.xy, input.Color.w, WindVector, WindTimer,
+		GrassWind::GetWindIntensityOverrideScale());
+	previousWindDisplacement = GrassWind::CalculateVanillaDisplacement(
+		input.InstanceData1.xy, input.Color.w, WindVector, PreviousWindTimer,
+		GrassWind::GetWindIntensityOverrideScale());
+}
+
 #	ifdef GRASS_LIGHTING
 VS_OUTPUT main(VS_INPUT input)
 {
@@ -166,16 +232,23 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input, world3x3);
 
-	float3 windDisplacement = CalculateWindDisplacement(input, WindTimer);
-	float3 previousWindDisplacement = CalculateWindDisplacement(input, PreviousWindTimer);
+	float3 windDisplacement, previousWindDisplacement, bendAxis;
+	float bendAngle;
+	GetGrassWindDisplacements(
+		input, eyeIndex, msPosition.z, windDisplacement, previousWindDisplacement, bendAxis, bendAngle);
+	float4 previousMsPosition = msPosition;
+	msPosition.xyz += windDisplacement;
+	previousMsPosition.xyz += previousWindDisplacement;
 
 #		ifdef GRASS_COLLISION
-	float3 displacement, previousDisplacement;
-	GrassCollision::GetDisplacedPosition(input, msPosition.xyz, displacement, previousDisplacement);
-	msPosition.xyz += displacement;
+	float3 collisionDisplacement, previousCollisionDisplacement, collisionBendAxis;
+	float collisionBendAngle;
+	GrassCollision::ApplyDeformation(
+		input, msPosition.xyz, previousMsPosition.xyz,
+		collisionDisplacement, previousCollisionDisplacement, collisionBendAxis, collisionBendAngle);
+	msPosition.xyz += collisionDisplacement;
+	previousMsPosition.xyz += previousCollisionDisplacement;
 #		endif  // GRASS_COLLISION
-
-	msPosition.xyz += windDisplacement;
 
 	float4 projSpacePosition = mul(WorldViewProj[eyeIndex], msPosition);
 #		if !defined(VR)
@@ -205,14 +278,6 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.ViewSpacePosition = mul(WorldView[eyeIndex], msPosition).xyz;
 	vsout.WorldPosition = mul(World[eyeIndex], msPosition).xyz;
 
-	float4 previousMsPosition = GetMSPosition(input, world3x3);
-
-#		ifdef GRASS_COLLISION
-	previousMsPosition.xyz += previousDisplacement;
-#		endif  // GRASS_COLLISION
-
-	previousMsPosition.xyz += previousWindDisplacement;
-
 	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], previousMsPosition).xyz;
 #		if defined(VR)
 	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, eyeIndex);
@@ -221,8 +286,13 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.CullDistance.x = VRout.CullDistance;
 #		endif  // !VR
 
-	// Vertex normal needs to be transformed to world-space for lighting calculations.
-	vsout.VertexNormal.xyz = mul(world3x3, input.Normal.xyz * 2.0 - 1.0);
+	// Keep lighting attached to the blade as the angular deformation changes its orientation.
+	float3 modelNormal = mul(world3x3, input.Normal.xyz * 2.0 - 1.0);
+	vsout.VertexNormal.xyz = GrassWind::RotateVector(modelNormal, bendAxis, bendAngle);
+#		ifdef GRASS_COLLISION
+	vsout.VertexNormal.xyz = GrassWind::RotateVector(
+		vsout.VertexNormal.xyz, collisionBendAxis, collisionBendAngle);
+#		endif  // GRASS_COLLISION
 	vsout.VertexNormal.w = input.Color.w;
 
 	return vsout;
@@ -240,16 +310,23 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input);
 
-	float3 windDisplacement = CalculateWindDisplacement(input, WindTimer);
-	float3 previousWindDisplacement = CalculateWindDisplacement(input, PreviousWindTimer);
+	float3 windDisplacement, previousWindDisplacement, bendAxis;
+	float bendAngle;
+	GetGrassWindDisplacements(
+		input, eyeIndex, msPosition.z, windDisplacement, previousWindDisplacement, bendAxis, bendAngle);
+	float4 previousMsPosition = msPosition;
+	msPosition.xyz += windDisplacement;
+	previousMsPosition.xyz += previousWindDisplacement;
 
 #		ifdef GRASS_COLLISION
-	float3 displacement, previousDisplacement;
-	GrassCollision::GetDisplacedPosition(input, msPosition.xyz, displacement, previousDisplacement);
-	msPosition.xyz += displacement;
+	float3 collisionDisplacement, previousCollisionDisplacement, collisionBendAxis;
+	float collisionBendAngle;
+	GrassCollision::ApplyDeformation(
+		input, msPosition.xyz, previousMsPosition.xyz,
+		collisionDisplacement, previousCollisionDisplacement, collisionBendAxis, collisionBendAngle);
+	msPosition.xyz += collisionDisplacement;
+	previousMsPosition.xyz += previousCollisionDisplacement;
 #		endif  // GRASS_COLLISION
-
-	msPosition.xyz += windDisplacement;
 
 	float4 projSpacePosition = mul(WorldViewProj[eyeIndex], msPosition);
 #		if !defined(VR)
@@ -281,19 +358,12 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.ViewSpacePosition = mul(WorldView[eyeIndex], msPosition).xyz;
 	vsout.WorldPosition = mul(World[eyeIndex], msPosition).xyz;
 
-	float4 previousMsPosition = GetMSPosition(input);
 #		if defined(VR)
 	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, eyeIndex);
 	vsout.HPosition = VRout.VRPosition;
 	vsout.ClipDistance.x = VRout.ClipDistance;
 	vsout.CullDistance.x = VRout.CullDistance;
 #		endif  // !VR
-
-#		ifdef GRASS_COLLISION
-	previousMsPosition.xyz += previousDisplacement;
-#		endif  // GRASS_COLLISION
-
-	previousMsPosition.xyz += previousWindDisplacement;
 
 	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], previousMsPosition).xyz;
 

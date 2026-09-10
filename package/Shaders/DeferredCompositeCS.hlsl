@@ -3,17 +3,20 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
 #include "Common/Shading.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/WindField.hlsli"
 
 Texture2D<float3> SpecularTexture : register(t0);
 Texture2D<unorm float3> AlbedoTexture : register(t1);
 Texture2D<unorm float3> NormalRoughnessTexture : register(t2);
 Texture2D<float3> MasksTexture : register(t3);
 Texture2D<unorm float> Masks2Texture : register(t9);
+Texture2D<float4> GrassWindSpringDebug : register(t18);
 
 RWTexture2D<float4> MainRW : register(u0);
 RWTexture2D<float4> NormalTAAMaskSpecularMaskRW : register(u1);
@@ -326,6 +329,54 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	}
 
 #endif
+
+	[branch] if (SharedData::windSettings.windFieldDebugEnabled != 0u && depth < 1.0f)
+	{
+		float3 worldPosition = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		uint debugView = SharedData::windSettings.windFieldDebugView;
+		if (debugView == 5u) {
+			color = 0.0f;
+			if (SharedData::WindFieldSpringDebug.z > 0.0f) {
+				float2 springUV = (worldPosition.xy - SharedData::WindFieldSpringDebug.xy) /
+				                  SharedData::WindFieldSpringDebug.z;
+				if (all(springUV >= 0.0f) && all(springUV <= 1.0f)) {
+					uint springWidth, springHeight;
+					GrassWindSpringDebug.GetDimensions(springWidth, springHeight);
+					uint2 springCell = min(uint2(springUV * float2(springWidth, springHeight)),
+						uint2(springWidth - 1u, springHeight - 1u));
+					float3 springResponse = GrassWindSpringDebug.Load(int3(springCell, 0)).xyz;
+					float springMagnitude = saturate(length(springResponse.xy) /
+													 max(SharedData::WindFieldSpringDebug.w, EPSILON_WIND_GEOMETRY));
+					color = lerp(Color::TurboColormap(springMagnitude), float3(1.0f, 1.0f, 1.0f), springResponse.z * 0.25f);
+				}
+			}
+		} else if (debugView == 6u) {
+			WindField::TransientImpulseSample impulseSample = WindField::SampleCurrentTransientImpulses(worldPosition);
+			float intensity = saturate(impulseSample.intensity);
+			color = Color::TurboColormap(intensity) * intensity;
+		} else {
+			WindField::WindSample currentSample = WindField::SampleField(
+				worldPosition, SharedData::WindFieldCurrent, SharedData::WindFieldTuning);
+			WindField::WindSample previousSample = currentSample;
+			if (debugView >= 2u && SharedData::WindFieldTransitionData.x < 1.0f)
+				previousSample = WindField::SampleField(
+					worldPosition, SharedData::WindFieldTransition, SharedData::WindFieldTuning);
+			WindField::WindSample displayedSample = WindField::SampleCurrent(worldPosition, 1.0f, 1.0f);
+			if (debugView == 1u)
+				displayedSample = currentSample;
+			else if (debugView == 2u)
+				displayedSample = previousSample;
+			else if (debugView == 3u) {
+				if (((dispatchID.x / 16u + dispatchID.y / 16u) & 1u) != 0u)
+					displayedSample = previousSample;
+			} else if (debugView == 4u) {
+				if (dispatchID.x * 2u < uint(SharedData::BufferDim.x))
+					displayedSample = previousSample;
+			}
+			float ambientPressure = saturate((displayedSample.ambientGust - 0.5f) * 2.0f);
+			color = Color::TurboColormap(max(ambientPressure, saturate(displayedSample.transientImpulse)));
+		}
+	}
 
 	MainRW[dispatchID.xy] = float4(color, 1.0);
 	NormalTAAMaskSpecularMaskRW[dispatchID.xy] = float4(GBuffer::EncodeNormalVanilla(normalVS), 0.0, 0.0);

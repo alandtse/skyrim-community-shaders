@@ -3,7 +3,9 @@
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+#include "Common/TransientWindImpulse.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/WindFieldTypes.hlsli"
 
 namespace SharedData
 {
@@ -38,6 +40,21 @@ namespace SharedData
 		float4 HDRData;
 		float RefractionScale;
 		float3 pad1;
+		float4 WindFieldDebug;         // xy: base weather velocity, z: reserved, w: previous frame time
+		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: gust travel
+		WindField::WindTuning WindFieldTuning;
+		float4 WindFieldAmbient;
+		float4 WindFieldPreviousAmbient;
+		float4 WindFieldTwoFramesAgoAmbient;
+		WindField::Field WindFieldCurrent;
+		WindField::Field WindFieldPrevious;
+		WindField::Field WindFieldTransition;
+		WindField::Field WindFieldPreviousTransition;
+		float4 WindFieldTransitionData;  // x/y: current/previous blend, z/w: reserved
+		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
+		uint4 WindFieldActiveCounts;     // x/y: current/previous transient impulse counts, z/w: reserved
+		WindField::TransientWindSource WindFieldTransientImpulses[WindField::TransientImpulseCapacity];
+		WindField::TransientWindSource WindFieldPreviousTransientImpulses[WindField::TransientImpulseCapacity];
 	};
 
 	struct GrassLightingSettings
@@ -260,6 +277,13 @@ namespace SharedData
 		float waterMuddiness;
 	};
 
+	struct WindSettings
+	{
+		uint windFieldDebugEnabled;
+		uint windFieldDebugView;
+		float2 padding;
+	};
+
 	struct LinearLightingSettings
 	{
 		uint enableLinearLighting;
@@ -439,6 +463,17 @@ namespace SharedData
 		uint3 pad0;
 	};
 
+	struct GrassCollisionData
+	{
+		float2 PosOffset;
+		uint2 ArrayOrigin;
+		float2 PreviousPosOffset;
+		uint2 PreviousArrayOrigin;
+		float CompressionHeight;
+		float MaximumCompressibleGrassHeight;
+		float2 pad0;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -456,6 +491,7 @@ namespace SharedData
 		IBLSettings iblSettings;
 		ExtendedTranslucencySettings extendedTranslucencySettings;
 		CSUtilitySettings csUtilitySettings;
+		WindSettings windSettings;
 		LinearLightingSettings linearLightingSettings;
 		ENBSettings enbSettings;
 		TerrainBlendingSettings terrainBlendingSettings;
@@ -466,6 +502,7 @@ namespace SharedData
 		VanillaFresnelSettings vanillaFresnelSettings;
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
+		GrassCollisionData grassCollisionData;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

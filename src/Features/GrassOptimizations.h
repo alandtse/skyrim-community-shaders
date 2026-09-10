@@ -150,6 +150,9 @@ public:
 		float pad[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(EyeIndexCB);
+	// D3D11.1 CBV-offset binding requires 256-byte-aligned slots; one map writes both eyes' slots so
+	// per-eye draws rebind by offset instead of remapping the buffer.
+	static constexpr uint32_t kEyeSlotBytes = 256;
 
 	/** @brief The six frustum planes transposed to a structure of arrays, with two padding slots to fit optimized SSE/AVX instructions  */
 	struct FrustumSoA

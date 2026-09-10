@@ -695,7 +695,8 @@ bool GrassOptimizations::AabbVisible(const FrustumSoA& f, __m128 lo, __m128 hi)
 void GrassOptimizations::SetupResources()
 {
 	cullParamsCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CullParamsCB>(), "GrassOptimizations::CullParamsCB");
-	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<EyeIndexCB>(), "GrassOptimizations::EyeIndexCB");
+	// Two eye slots so a single map covers both draws; see kEyeSlotBytes.
+	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc(2 * kEyeSlotBytes), "GrassOptimizations::EyeIndexCB");
 	hiZ.SetupResources();
 	bucketStore.SetupResources();
 
@@ -935,12 +936,28 @@ RE::BSMultiStreamInstanceTriShape* GrassOptimizations::Hooks::LoadGrassType::thu
 	return shape;
 }
 
-static void SetDrawEyeIndex(GrassOptimizations& self, ID3D11DeviceContext* ctx, uint32_t eyeIndex, uint32_t capacityPerEye)
+// One map/discard fills both eyes' slots, so the per-draw eye switch below is a cheap CBV-offset
+// rebind instead of a second map/discard.
+static void UploadEyeIndexCB(GrassOptimizations& self, ID3D11DeviceContext* ctx, uint32_t capacityPerEye)
 {
-	self.eyeIndexCB->Update(GrassOptimizations::EyeIndexCB{ eyeIndex, eyeIndex * capacityPerEye, {} });
+	D3D11_MAPPED_SUBRESOURCE m{};
+	if (FAILED(ctx->Map(self.eyeIndexCB->CB(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+		return;
+	auto* bytes = static_cast<uint8_t*>(m.pData);
+	for (uint32_t eye = 0; eye < 2; ++eye) {
+		auto* cb = reinterpret_cast<GrassOptimizations::EyeIndexCB*>(bytes + (size_t)eye * GrassOptimizations::kEyeSlotBytes);
+		*cb = { eye, eye * capacityPerEye, {} };
+	}
+	ctx->Unmap(self.eyeIndexCB->CB(), 0);
+}
+
+static void BindEyeIndexCB(GrassOptimizations& self, uint32_t eyeIndex)
+{
 	ID3D11Buffer* cb = self.eyeIndexCB->CB();
+	UINT first = eyeIndex * (GrassOptimizations::kEyeSlotBytes / 16);
+	UINT num = GrassOptimizations::kEyeSlotBytes / 16;
 	// b7 matches GrassOptimizationsEyeCB in RunGrass.hlsl (free there: cb7 only exists on the vanilla path).
-	ctx->VSSetConstantBuffers(7, 1, &cb);
+	self.ctx1->VSSetConstantBuffers1(7, 1, &cb, &first, &num);
 }
 
 void VanillaDrawInstanceTriShape(RE::BSMultiStreamInstanceTriShape* geometry)
@@ -1067,10 +1084,11 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	ctx->VSSetShaderResources(2, 1, &b->extrasSRV);
 	// RunGrass.hlsl reads GrassOptimizationsEyeCB (b7) unconditionally under GRASS_OPTIMIZATIONS, not
 	// just VR, so eye 0 must always bind it or flat reads whatever b7 last held from another draw.
-	SetDrawEyeIndex(self, ctx, 0, b->capacityInstances);
+	UploadEyeIndexCB(self, ctx, b->capacityInstances);
+	BindEyeIndexCB(self, 0);
 	ctx->DrawIndexedInstancedIndirect(b->argsBuf, argsByteOffset);
 	if (globals::game::isVR) {
-		SetDrawEyeIndex(self, ctx, 1, b->capacityInstances);
+		BindEyeIndexCB(self, 1);
 		ctx->DrawIndexedInstancedIndirect(b->argsBuf, ArgsByteOffsetForEye(1));
 	}
 
@@ -1112,10 +1130,11 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		strides[0] = lod->meshStride;
 		ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 		ctx->VSSetShaderResources(2, 1, &bin.extrasSRV);
-		SetDrawEyeIndex(self, ctx, 0, bin.capacityInstances);
+		UploadEyeIndexCB(self, ctx, bin.capacityInstances);
+		BindEyeIndexCB(self, 0);
 		ctx->DrawIndexedInstancedIndirect(bin.argsBuf, argsByteOffset);
 		if (globals::game::isVR) {
-			SetDrawEyeIndex(self, ctx, 1, bin.capacityInstances);
+			BindEyeIndexCB(self, 1);
 			ctx->DrawIndexedInstancedIndirect(bin.argsBuf, ArgsByteOffsetForEye(1));
 		}
 	}

@@ -2,6 +2,8 @@
 
 #include <d3d11.h>
 
+#include "Utils/D3D.h"
+
 namespace Effects11Util
 {
 	static constexpr UINT kMaxSRVs = D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT;
@@ -12,21 +14,8 @@ namespace Effects11Util
 	static constexpr UINT kMaxRTVs = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;
 	static constexpr UINT kMaxViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 
-	template <typename T>
-	inline void SafeRelease(T*& ptr)
-	{
-		if (ptr) {
-			ptr->Release();
-			ptr = nullptr;
-		}
-	}
-
-	template <typename T, size_t N>
-	inline void SafeReleaseArray(T* (&arr)[N])
-	{
-		for (size_t i = 0; i < N; ++i)
-			SafeRelease(arr[i]);
-	}
+	using Util::SafeRelease;
+	using Util::SafeReleaseArray;
 
 	// Saves/restores the D3D11 pipeline state around the post-processing chain (VS/PS/CS only;
 	// HS/DS/GS/SO aren't used here). The destructor covers a throw between Save() and Restore().

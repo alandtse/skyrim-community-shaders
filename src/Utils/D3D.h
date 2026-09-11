@@ -158,6 +158,24 @@ namespace Util
 			shader.get() = nullptr;
 	}
 
+	/** @brief Release a raw D3D11 COM pointer if non-null, then null it. */
+	template <typename T>
+	inline void SafeRelease(T*& ptr)
+	{
+		if (ptr) {
+			ptr->Release();
+			ptr = nullptr;
+		}
+	}
+
+	/** @brief SafeRelease every element of a fixed-size array of raw D3D11 COM pointers. */
+	template <typename T, size_t N>
+	inline void SafeReleaseArray(T* (&arr)[N])
+	{
+		for (size_t i = 0; i < N; ++i)
+			SafeRelease(arr[i]);
+	}
+
 	// VR-aware counts for render targets
 	inline int GetRenderTargetCount()
 	{

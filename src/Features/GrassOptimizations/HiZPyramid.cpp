@@ -2,7 +2,10 @@
 
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
+#include "GpuPass.h"
 #include "Profiler.h"
+#include "State.h"
+#include "Utils/D3D.h"
 
 void HiZPyramid::SetupResources()
 {
@@ -123,7 +126,8 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	if (!paramsCB || !globals::game::renderer)
 		return false;
 
-	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+	// Not graphicsState->screenWidth/Height: that reads VR's desktop preview resolution, not the HMD's.
+	float2 screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	const uint32_t srcW = std::max(1u, (uint32_t)std::lround(renderSize.x));
@@ -185,40 +189,37 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	ID3D11UnorderedAccessView* nullUAV = nullptr;
 	ID3D11ShaderResourceView* nullSRV = nullptr;
 
-	globals::profiler->BeginPass("GrassOptimizations::HiZBase");
-	// Unbind kMAIN for the dispatch, so its use solely as an SRV, since a resource cannot be bound as both a DSV and an SRV at the same time.
-	ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
-	ID3D11DepthStencilView* dsv = nullptr;
-	if (usingLiveDepth) {
-		ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, &dsv);
-		ctx->OMSetRenderTargets(0, nullptr, nullptr);
-	}
-
-	ID3D11Buffer* cb = paramsCB->CB();
-	ID3D11UnorderedAccessView* baseUAV = mipUAVs[0].get();
-	ctx->CSSetShader(baseCS, nullptr, 0);
-	ctx->CSSetConstantBuffers(0, 1, &cb);
-	ctx->CSSetShaderResources(0, 1, &srcSRV);
-	ctx->CSSetUnorderedAccessViews(0, 1, &baseUAV, nullptr);
-	ctx->Dispatch((padW + 7) / 8, (padH + 7) / 8, 1);
-	ctx->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
-	ctx->CSSetShaderResources(0, 1, &nullSRV);
-
-	if (usingLiveDepth) {
-		ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
-		for (auto* rtv : rtvs) {
-			if (rtv)
-				rtv->Release();
+	{
+		CS_GPU_PASS("GrassOptimizations::HiZBase");
+		// Unbind kMAIN for the dispatch, so its use solely as an SRV, since a resource cannot be bound as both a DSV and an SRV at the same time.
+		ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+		ID3D11DepthStencilView* dsv = nullptr;
+		if (usingLiveDepth) {
+			ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, &dsv);
+			ctx->OMSetRenderTargets(0, nullptr, nullptr);
 		}
-		if (dsv)
-			dsv->Release();
+
+		ID3D11Buffer* cb = paramsCB->CB();
+		ID3D11UnorderedAccessView* baseUAV = mipUAVs[0].get();
+		ctx->CSSetShader(baseCS, nullptr, 0);
+		ctx->CSSetConstantBuffers(0, 1, &cb);
+		ctx->CSSetShaderResources(0, 1, &srcSRV);
+		ctx->CSSetUnorderedAccessViews(0, 1, &baseUAV, nullptr);
+		ctx->Dispatch((padW + 7) / 8, (padH + 7) / 8, 1);
+		ctx->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+		ctx->CSSetShaderResources(0, 1, &nullSRV);
+
+		if (usingLiveDepth) {
+			ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
+			Util::SafeReleaseArray(rtvs);
+			Util::SafeRelease(dsv);
+		}
 	}
-	globals::profiler->EndPass();
 
 	// Each level is the exact max of the one above, so an instance of any on-screen size is testable against a fixed number of texels.
 	// One dispatch for the whole chain, every group reducing its own tile from LDS.
 	if (spdCS && spdCounter && GetMipCount() > 1) {
-		globals::profiler->BeginPass("GrassOptimizations::HiZMips");
+		CS_GPU_PASS("GrassOptimizations::HiZMips");
 
 		const uint32_t outputMips = GetMipCount() - 1;
 		const uint32_t groupsX = padW / tileSize;
@@ -239,7 +240,6 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 
 		ID3D11UnorderedAccessView* spdNulls[14]{};
 		ctx->CSSetUnorderedAccessViews(0, 14, spdNulls, nullptr);
-		globals::profiler->EndPass();
 	}
 
 	// The first build runs before Upscaling, so update the log after so accurate values are logged. The log key is the build's parameters, so it only logs when they change.

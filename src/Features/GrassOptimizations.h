@@ -2,9 +2,12 @@
 
 #include <d3d11_1.h>
 
+#include <unordered_map>
+
 #include "Buffer.h"
 #include "GrassOptimizations/GrassBucketStore.h"
 #include "GrassOptimizations/HiZPyramid.h"
+#include "Utils/LazyShader.h"
 #include "Utils/VersionedRelocation.h"
 
 /** @brief Rewrites vanilla grass rendering with a bucket based system utilizing indirect draws and compute shader per instance culling. */
@@ -16,6 +19,7 @@ public:
 	virtual inline std::string GetShortName() override { return "GrassOptimizations"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "GRASS_OPTIMIZATIONS"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kFoliage; }
+	virtual bool SupportsVR() override { return true; }
 
 	/** @brief Returns true only for the Grass shader type. */
 	bool HasShaderDefine(RE::BSShader::Type shaderType) override;
@@ -70,12 +74,21 @@ public:
 	/** @brief Installs the grass capture, culling and draw hooks after all plugins have loaded. */
 	virtual void PostPostLoad() override;
 
+	/** @brief Exposes ForceVanillaOnVisible for devbench's openshaders.feature action=runtimeGet/runtimeSet. */
+	virtual json GetRuntimeFlags() override;
+	virtual bool SetRuntimeFlag(std::string_view name, bool value) override;
+
 	/** @brief Returns the instance culling compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetCullCS();
 
+	ID3D11InputLayout* GetOptimizedInputLayout(uint64_t a_descVal);
+
 	struct alignas(16) CullParamsCB
 	{
-		float frustumPlanes[6][4];
+		float frustumPlanes[12][4];
+
+		uint32_t eyeCount;
+		float pad1[3];
 
 		float minPixelSize;
 		float fullDetailPixelSize;
@@ -127,9 +140,24 @@ public:
 		uint32_t sliceTableOffset;
 		uint32_t sliceCount;
 		float farLODEnabled;
-		float pad;
+		// Per-eye slot capacity of the output Compacted/Extras buffers (== GrassBucket::capacityInstances
+		// or LODBin::capacityInstances), so the CS can offset eye 1's writes into the second half on VR.
+		uint32_t outputCapacityPerEye;
 	};
 	STATIC_ASSERT_ALIGNAS_16(CullBucketCB);
+
+	// eyeSlotBase lets the VS read the right half of InstanceExtras: SV_InstanceID excludes the draw's
+	// StartInstanceLocation, so the SRV index needs it added explicitly.
+	struct alignas(16) EyeIndexCB
+	{
+		uint32_t eyeIndex;
+		uint32_t eyeSlotBase;
+		float pad[2];
+	};
+	STATIC_ASSERT_ALIGNAS_16(EyeIndexCB);
+	// D3D11.1 CBV-offset binding requires 256-byte-aligned slots; one map writes both eyes' slots so
+	// per-eye draws rebind by offset instead of remapping the buffer.
+	static constexpr uint32_t kEyeSlotBytes = 256;
 
 	/** @brief The six frustum planes transposed to a structure of arrays, with two padding slots to fit optimized SSE/AVX instructions  */
 	struct FrustumSoA
@@ -143,6 +171,9 @@ public:
 	/** @brief AABB vs frustum, corners passed as SIMD vectors (xyz in lanes 0-2). */
 	static bool AabbVisible(const FrustumSoA& f, __m128 lo, __m128 hi);
 
+	/** @brief AABB vs any of the given frustums (VR tests both eyes; a slice visible in either eye must not be dropped). */
+	static bool AnyFrustumVisible(const FrustumSoA* frustums, uint32_t frustumCount, __m128 lo, __m128 hi);
+
 	/** @brief Derives world-space frustum planes from the camera frustum and transform. */
 	void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform);
 
@@ -152,8 +183,8 @@ public:
 	/** @brief Merges this bucket's slices into runs of contiguous buffer ranges that share a cell, for the per-bucket slice table. */
 	void MergeSlicesIntoRuns(GrassBucket& b);
 
-	/** @brief Appends this bucket's visible slice runs to sliceTableCPU and records the window in the bucket. */
-	void CullBucketSlices(GrassBucket& b, const FrustumSoA& frustumSoA, __m128 camPosV);
+	/** @brief Appends this bucket's visible slice runs to sliceTableCPU and records the window in the bucket. frustumSoAs holds frustumCount entries (2 on VR, one per eye; 1 otherwise). */
+	void CullBucketSlices(GrassBucket& b, const FrustumSoA* frustumSoAs, uint32_t frustumCount, __m128 camPosV);
 
 	/** @brief Fills the per-bucket cull constant buffer, uploads the slice table and issues the cull dispatches. */
 	void UploadCullState(ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t visibleBuckets);
@@ -169,14 +200,18 @@ public:
 
 	uint32_t lastFrame = UINT32_MAX;
 
+	/** @brief Diagnostic only: forces OnVisible through the vanilla per-shape path (skipping the
+	 *  coarse-cull shortcut) for a same-session Tracy A/B against the optimized path. */
+	bool ForceVanillaOnVisible = false;
+
 	ID3D11DeviceContext1* ctx1 = nullptr;
 
-	ID3D11ComputeShader* cullCS = nullptr;
-	// Set on a failed GetCullCS() compile so UpdateGrass() (called once per frame) doesn't retry the
-	// compile and re-log the failure every frame; cleared by ClearShaderCache() to allow a retry.
-	bool cullCSFailed = false;
+	Util::LazyShader<ID3D11ComputeShader> cullCS;
 
 	std::unique_ptr<ConstantBuffer> cullParamsCB;
+	std::unique_ptr<ConstantBuffer> eyeIndexCB;
+	Util::LazyShader<ID3DBlob> layoutSignature;
+	std::unordered_map<uint64_t, winrt::com_ptr<ID3D11InputLayout>> inputLayouts;
 	// Slotted per-bucket constants bound via CSSetConstantBuffers1: one 256-byte slot per visible
 	// bucket, one map fills them all, recreated when the bucket count outgrows it.
 	std::unique_ptr<ConstantBuffer> cullBucketCB;
@@ -276,8 +311,14 @@ public:
 			auto& trampoline = SKSE::GetTrampoline();
 
 			stl::write_vfunc<0x0, BSMultiStreamInstanceTriShape_dtor>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
-			stl::write_vfunc<0x34, BSMultiStreamInstanceTriShape_OnVisible>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
-			stl::write_vfunc<0x3A, DoneAddingInstances>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
+
+			// VR's vtable inserts one extra slot before these two vs SE/AE; the unshifted index lands
+			// on AddInstances instead, whose different (count, data) signature crashed on cell load.
+			{
+				REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_BSMultiStreamInstanceTriShape[0] };
+				BSMultiStreamInstanceTriShape_OnVisible::func = vtbl.write_vfunc(REL::Relocate(0x34, 0x34, 0x35), BSMultiStreamInstanceTriShape_OnVisible::thunk);
+				DoneAddingInstances::func = vtbl.write_vfunc(REL::Relocate(0x3A, 0x3A, 0x3B), DoneAddingInstances::thunk);
+			}
 
 			stl::write_vfunc<0x6, BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
 
@@ -298,7 +339,8 @@ public:
 			std::uint8_t patch[] = { 0x4C, 0x89, 0xF2 };  // mov rdx, r14
 			REL::safe_write(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x660, 0x648), patch, sizeof(patch));
 			stl::write_thunk_call<DrawInstanceTriShape>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x663, 0x64B));
-			trampoline.write_branch<5>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x668, 0x650), REL::RelocationID(100847, 107637).address() + REL::Relocate(0x759, 0x73A));
+			// Branch target is the post-loop register-restore epilogue.
+			trampoline.write_branch<5>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x668, 0x650), REL::RelocationID(100847, 107637).address() + REL::Relocate(0x759, 0x73A, 0x76F));
 
 			// Skip mapping the vanilla dynamic fade buffer.
 			if (REL::Module::IsAE()) {
@@ -307,7 +349,8 @@ public:
 					REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x595, 0x595, 0x6A2),
 					REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x6C6, 0x6C6, 0x7D6));
 			} else {
-				REL::safe_write(REL::RelocationID(99996, 106685).address() + 0x54D, REL::NOP5);
+				// VR's compiled function has an extra per-frame buffer-cache check SE doesn't have.
+				REL::safe_write(REL::RelocationID(99996, 106685).address() + REL::Relocate(0x54D, 0x54D, 0x563), REL::NOP5);
 			}
 
 			logger::info("[GRASS OPTIMIZATIONS] Installed hooks");

@@ -119,6 +119,15 @@ cbuffer PerGeometry : register(b2)
 #	ifdef GRASS_OPTIMIZATIONS
 // Two per instance: [0] = origin.xyz + isComplex, [1] = windCur, windPrev, fade, packed flags.
 StructuredBuffer<float4> InstanceExtras : register(t2);
+
+// EyeSlotBase must be added to instanceID manually: StartInstanceLocation advances the per-instance
+// vertex stream but not SV_InstanceID, so InstanceExtras (an SRV, not a vertex stream) needs it explicit.
+cbuffer GrassOptimizationsEyeCB : register(b7)
+{
+	uint CurrentEyeIndex;
+	uint EyeSlotBase;
+	float2 _padEye;
+}
 #	else
 cbuffer cb7 : register(b7)
 {
@@ -180,8 +189,9 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 {
 	VS_OUTPUT vsout = (VS_OUTPUT)0;
 
-	const float4 e0 = InstanceExtras[instanceID * 2 + 0];
-	const float4 e1 = InstanceExtras[instanceID * 2 + 1];
+	const uint extrasSlot = instanceID + EyeSlotBase;
+	const float4 e0 = InstanceExtras[extrasSlot * 2 + 0];
+	const float4 e1 = InstanceExtras[extrasSlot * 2 + 1];
 	vsout.IsComplex = e0.w;
 	vsout.TexCoord = input.TexCoord.xy;
 
@@ -220,9 +230,12 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 
 	const float vertexTerm = WindVector.z * (0.5 * (input.Color.w * input.Color.w));
 	msPosition.xyz += float3(WindVector.xy, 0) * (e1.x * vertexTerm);
-	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[0], float4(eyeRel, 1.0));
+	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
+	// WorldViewProj carries the per-eye matrix (FrameBuffer::CameraViewProj is identical for both eyes in VR).
+	const float4 projSpacePosition = mul(WorldViewProj[CurrentEyeIndex], msPosition);
+#		if !defined(VR)
 	vsout.HPosition = projSpacePosition;
+#		endif  // !VR
 
 #		if defined(RENDER_DEPTH)
 	vsout.Fade = e1.z;
@@ -234,7 +247,7 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	vsout.DirLightAngle = saturate(dot(DirLightDirection.xyz, instanceNormal));
 #			endif
 	vsout.WorldPosition = eyeRel;
-	vsout.PreviousWorldPosition = previousMsPosition.xyz - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
+	vsout.PreviousWorldPosition = previousMsPosition.xyz - FrameBuffer::CameraPreviousPosAdjust[CurrentEyeIndex].xyz;
 	vsout.IsFar = isFarFlag;
 	vsout.LodTier = lodTier;
 #			ifdef GRASS_LIGHTING
@@ -242,6 +255,13 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	vsout.VertexNormal.w = input.Color.w;
 #			endif
 #		endif
+
+#		if defined(VR)
+	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, CurrentEyeIndex);
+	vsout.HPosition = VRout.VRPosition;
+	vsout.ClipDistance.x = VRout.ClipDistance;
+	vsout.CullDistance.x = VRout.CullDistance;
+#		endif  // VR
 
 	return vsout;
 }
@@ -512,7 +532,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Swaps direction of the backfaces otherwise they seem to get lit from the wrong direction.
 	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GrassSphereNormal))
-		if (!frontFace)
+		if (dot(normal, viewDirection) < 0.0)
 			normal = -normal;
 
 	float3x3 tbn = 0;
@@ -930,6 +950,8 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif
 	float3 normalVS = -normalize(cross(ddx, ddy));
 	float3 normal = normalize(FrameBuffer::ViewToWorld(normalVS, false, eyeIndex));
+	if (dot(normal, -normalize(input.WorldPosition.xyz)) < 0.0)
+		normal = -normal;
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);

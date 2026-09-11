@@ -24,10 +24,10 @@ namespace PostProcessingUI
 		constexpr int FFTResolutionDefaultIndex = 1;
 		constexpr int Float3ComponentCount = 3;
 		constexpr std::array<const char*, Float3ComponentCount> Float3ComponentIds = { "##X", "##Y", "##Z" };
-		constexpr std::array<ImU32, Float3ComponentCount> RGBFloatDragMarkers = {
-			IM_COL32(240, 20, 20, 255),
-			IM_COL32(20, 240, 20, 255),
-			IM_COL32(20, 20, 240, 255)
+		constexpr std::array<Util::ColorChannel, Float3ComponentCount> RGBFloatDragChannels = {
+			Util::ColorChannel::Red,
+			Util::ColorChannel::Green,
+			Util::ColorChannel::Blue
 		};
 
 		struct LeadingIcon
@@ -238,7 +238,7 @@ namespace PostProcessingUI
 			if (i > 0)
 				ImGui::SameLine(0.f, spacing);
 			ImGui::SetNextItemWidth(GetFloat3ComponentWidth(availableWidth, previousSplit, i));
-			ImGui::SetNextItemColorMarker(RGBFloatDragMarkers[i]);
+			ImGui::SetNextItemColorMarker(Util::GetColorChannelMarker(RGBFloatDragChannels[i]));
 			changed |= ImGui::DragFloat(Float3ComponentIds[i], &values[i], speed, min, max, format, flags | ImGuiSliderFlags_ColorMarkers);
 		}
 		ImGui::PopID();

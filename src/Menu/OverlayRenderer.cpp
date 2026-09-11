@@ -81,6 +81,7 @@ void OverlayRenderer::RenderOverlay(
 	processInputEventQueue();
 
 	if (ShouldSkipRendering()) {
+		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
 		auto& io = ImGui::GetIO();
 		io.ClearInputKeys();
 		io.ClearEventsQueue();
@@ -124,6 +125,7 @@ void OverlayRenderer::RenderOverlay(
 	RenderFeatureOverlays();
 	RenderFirstTimeSetupOverlay();
 	HandleABTesting();
+	editorWindow->FinishGameHourSliderFrame(true);
 	FinalizeImGuiFrame();
 }
 

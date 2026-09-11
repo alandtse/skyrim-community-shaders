@@ -10,6 +10,7 @@
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
+#include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
@@ -27,6 +28,7 @@
 #include "Features/PostProcessing.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
@@ -54,7 +56,6 @@
 #include "State.h"
 #include "TruePBR.h"
 #include "Utils/Game.h"
-#include "WeatherManager.h"
 
 namespace globals
 {
@@ -112,10 +113,12 @@ namespace globals
 		ScreenshotFeature screenshotFeature{};
 		CSEditor csEditor{};
 		CSUtility csUtility{};
+		FeatureOverwrites featureOverwrites{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		Skin skin{};
 		PostProcessing postProcessing{};
+		SceneManager sceneManager{};
 
 		namespace llf
 		{
@@ -193,7 +196,6 @@ namespace globals
 	Deferred* deferred = nullptr;
 	Menu* menu = nullptr;
 	SIE::ShaderCache* shaderCache = nullptr;
-	WeatherManager* weatherManager = nullptr;
 	SceneSettingsManager* sceneSettingsManager = nullptr;
 
 	static Profiler profilerInstance;
@@ -205,7 +207,6 @@ namespace globals
 		state = State::GetSingleton();
 		menu = Menu::GetSingleton();
 		deferred = Deferred::GetSingleton();
-		weatherManager = WeatherManager::GetSingleton();
 		sceneSettingsManager = SceneSettingsManager::GetSingleton();
 	}
 

@@ -20,6 +20,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
@@ -40,8 +41,6 @@
 #include "Utils/SettingsPatch.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
-#include "WeatherManager.h"
-#include "WeatherVariableRegistry.h"
 
 #ifdef TRACY_ENABLE
 static thread_local std::vector<TracyCZoneCtx> s_tracyPerfZones;
@@ -79,29 +78,19 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 void State::Draw()
 {
 	ZoneScoped;
+	if (globals::features::sceneManager.loaded)
+		globals::features::sceneManager.Update();
 
 	auto shaderCache = globals::shaderCache;
-	auto weatherManager = globals::weatherManager;
-	auto sceneSettingsManager = globals::sceneSettingsManager;
 	auto& terrainBlending = globals::features::terrainBlending;
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
-	auto& csEditor = globals::features::csEditor;
-	auto& sceneSelector = globals::features::sceneSelector;
 	auto& skin = globals::features::skin;
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
 	auto& volumetricShadows = globals::features::volumetricShadows;
 
 	if (shaderCache->IsEnabled()) {
-		// Process deferred cell transitions (interior detection)
-		sceneSettingsManager->Update();
-
-		if (csEditor.loaded || sceneSelector.loaded) {
-			ZoneScopedN("WeatherManager::UpdateFeatures");
-			weatherManager->UpdateFeatures();
-		}
-
 		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
 			ZoneScopedN("TerrainBlending::TerrainShaderHacks");
 			terrainBlending.TerrainShaderHacks();
@@ -370,12 +359,6 @@ void State::Setup()
 
 	Feature::ForEachLoadedFeature("SetupResources", [](Feature* feature) { feature->SetupResources(); });
 	globals::deferred->SetupResources();
-
-	// Load per-weather settings after features are setup
-	globals::weatherManager->LoadPerWeatherSettingsFromDisk();
-
-	// Load scene-specific settings (Interior Only, etc.)
-	globals::sceneSettingsManager->LoadAll();
 }
 
 static std::string GetConfigPath(State::ConfigMode a_configMode)
@@ -434,28 +417,9 @@ static bool WriteConfigAtomically(const std::filesystem::path& a_configPath, std
 	return true;
 }
 
-static void SaveUserOverrides(const nlohmann::json& a_settings)
-{
-	auto* overrideManager = SettingsOverrideManager::GetSingleton();
-	for (auto* feature : Feature::GetFeatureList()) {
-		const std::string featureName = feature->GetShortName();
-		const auto featureSettings = a_settings.find(feature->GetName());
-		if (!feature->loaded || !overrideManager->HasFeatureOverrides(featureName) || featureSettings == a_settings.end()) {
-			continue;
-		}
-
-		const json overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
-		overrideManager->SaveUserOverride(featureName, *featureSettings, overrideSettings);
-	}
-
-	const json globalOverrideSettings = overrideManager->GetMergedOverrideSettings("Global", json::object());
-	if (!globalOverrideSettings.empty()) {
-		overrideManager->SaveUserOverride("Global", a_settings, globalOverrideSettings);
-	}
-}
-
 void State::Load(ConfigMode a_configMode, bool a_allowReload)
 {
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 	json settings;
 	bool errorDetected = false;
 
@@ -529,12 +493,13 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 	// Step 3: Discover and prepare overrides (applied after user settings, so overrides take priority)
 	auto overrideManager = SettingsOverrideManager::GetSingleton();
+	overrideManager->CaptureBaseSettings(settings);
 	size_t overridesDiscovered = overrideManager->DiscoverOverrides();
+	if (!overrideManager->CleanupStaleUserOverrides())
+		logger::warn("Could not clean up orphaned user overwrite settings");
 
-	// Cleanup stale user override files (where override hash has changed)
 	if (overridesDiscovered > 0) {
 		logger::info("Discovered {} override files", overridesDiscovered);
-		overrideManager->CleanupStaleUserOverrides();
 
 		// Apply global overrides to main settings
 		size_t globalOverrides = overrideManager->ApplyGlobalOverrides(settings);
@@ -552,22 +517,6 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		// Load core settings (Menu, Advanced, General, Replace Original Shaders)
 		logger::info("Loading core settings");
 		LoadFromJson(settings);
-		// Ensure 'Disable at Boot' section exists in the JSON
-		if (!settings.contains("Disable at Boot") || !settings["Disable at Boot"].is_object()) {
-			// Initialize to an empty object if it doesn't exist
-			settings["Disable at Boot"] = json::object();
-		}
-
-		json& disabledFeaturesJson = settings["Disable at Boot"];
-		logger::info("Loading 'Disable at Boot' settings");
-
-		for (auto& [featureName, featureStatus] : disabledFeaturesJson.items()) {
-			if (featureStatus.is_boolean()) {
-				disabledFeatures[featureName] = featureStatus.get<bool>();
-			} else {
-				logger::warn("Invalid entry for feature '{}' in 'Disable at Boot', expected boolean.", featureName);
-			}
-		}
 		for (auto* feature : Feature::GetFeatureList()) {
 			try {
 				const std::string featureName = feature->GetShortName();
@@ -579,22 +528,15 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				if (ec)
 					logger::warn("Could not determine install state for feature '{}': {}", featureName, ec.message());
 				feature->installed = ec || iniExists;
-				if (!disabledFeatures.contains(featureName) && feature->IsDisabledByDefault()) {
-					disabledFeatures[featureName] = true;
-					logger::info("Feature '{}' is disabled by default", featureName);
-				}
-				bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+				bool isDisabled = !feature->IsAlwaysEnabled() && disabledFeatures.contains(featureName) && disabledFeatures[featureName];
 				if (!isDisabled) {
 					logger::info("Loading Feature: '{}'", featureName);
 
 					// Load base feature settings from merged config (default + user)
 					feature->Load(settings);
 
-					// Register weather variables (features opt-in by implementing this)
-					feature->RegisterWeatherVariables();
-
 					// Apply feature-specific overrides on top (overrides take priority over user settings)
-					if (overridesDiscovered > 0 && overrideManager->HasFeatureOverrides(featureName)) {
+					if (feature->UsesMainSettings() && overridesDiscovered > 0 && overrideManager->HasFeatureOverrides(featureName)) {
 						json featureJson;
 						feature->SaveSettings(featureJson);  // Get current settings as JSON
 
@@ -617,8 +559,6 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 						}
 					}
 
-					// Capture current values as user settings baseline for weather overrides
-					WeatherVariables::GlobalWeatherRegistry::GetSingleton()->CaptureFeatureUserSettings(featureName);
 				} else {
 					logger::info("Feature '{}' is disabled at boot.", featureName);
 				}
@@ -629,6 +569,10 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				logger::warn("Error loading setting for feature '{}': {}", feature->GetShortName(), e.what());
 			}
 		}
+
+		json appliedSettings;
+		SaveToJson(appliedSettings);
+		overrideManager->CaptureAppliedSettings(appliedSettings);
 
 		if (settings["Version"].is_string() && settings["Version"].get<std::string>() != Plugin::VERSION.string()) {
 			logger::info("Found older config for version {}; upgrading to {}", (std::string)settings["Version"], Plugin::VERSION.string());
@@ -715,12 +659,31 @@ void State::SaveToJson(nlohmann::json& settings)
 			feature->Save(settings);
 		}
 	}
+	SceneSettingsManager::GetSingleton()->RestoreBaselinesInSerializedSettings(settings);
 }
 
 void State::LoadFromJson(nlohmann::json& settings)
 {
 	std::lock_guard<std::mutex> lock(m_mutex);
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 	const auto shaderCache = globals::shaderCache;
+
+	disabledFeatures.clear();
+	if (const auto disabled = settings.find("Disable at Boot"); disabled != settings.end() && disabled->is_object()) {
+		for (const auto& [featureName, featureStatus] : disabled->items()) {
+			if (featureStatus.is_boolean())
+				disabledFeatures[featureName] = featureStatus.get<bool>();
+			else
+				logger::warn("Invalid entry for feature '{}' in 'Disable at Boot', expected boolean.", featureName);
+		}
+	}
+	for (auto* feature : Feature::GetFeatureList()) {
+		const auto featureName = feature->GetShortName();
+		if (feature->IsAlwaysEnabled())
+			disabledFeatures.erase(featureName);
+		else if (!disabledFeatures.contains(featureName) && feature->IsDisabledByDefault())
+			disabledFeatures[featureName] = true;
+	}
 
 	favoriteFeatures.clear();
 	if (const auto favorites = settings.find("Favorites"); favorites != settings.end() && favorites->is_object()) {
@@ -844,15 +807,25 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	}
 
 	std::string serializedSettings;
+	json effectiveSettings;
+	auto* overrideManager = SettingsOverrideManager::GetSingleton();
 	try {
 		SaveToJson(settings);
+		if (a_configMode == ConfigMode::USER) {
+			effectiveSettings = settings;
+			overrideManager->PrepareUserSettings(settings);
+		}
 		serializedSettings = settings.dump(1);
 	} catch (const std::exception& e) {
 		logger::warn("Failed to serialize settings for {}: {}", configPath, e.what());
 		return;
 	}
 
-	if (!WriteConfigAtomically(configPath, serializedSettings)) {
+	const auto saveConfig = [&] { return WriteConfigAtomically(configPath, serializedSettings); };
+	if (!(a_configMode == ConfigMode::USER && a_isExplicitUserSave ?
+				overrideManager->SaveUserEdits(effectiveSettings, saveConfig) :
+				saveConfig())) {
+		logger::error("Could not save settings and feature overwrites");
 		return;
 	}
 	logger::info("Saving settings to {}", configPath);
@@ -861,7 +834,7 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	// gated) was actually intentional; record it so next boot's disk-cache mismatch
 	// can auto-resolve instead of holding for the "Rebuild Cache" menu action.
 	if (a_configMode == ConfigMode::USER) {
-		SaveUserOverrides(settings);
+		overrideManager->CaptureBaseSettings(settings);
 		if (auto* shaderCache = globals::shaderCache)
 			shaderCache->MarkExpectedFeatureFlip();
 
@@ -888,27 +861,12 @@ bool State::SaveFeaturePreference(const json& patch)
 				return false;
 		}
 		settings.merge_patch(patch);
-		const auto serializedSettings = settings.dump(1);
 		std::filesystem::create_directories(Util::PathHelpers::GetCommunityShaderPath());
 
 		auto* overrides = SettingsOverrideManager::GetSingleton();
-		const auto globalOverrides = overrides->GetMergedOverrideSettings("Global", json::object());
-		auto originalGlobal = globalOverrides;
-		if (overrides->HasUserOverride("Global") && !overrides->LoadUserOverride("Global", originalGlobal))
+		const auto serializedSettings = settings.dump(1);
+		if (!overrides->SaveUserEdits(patch, [&] { return WriteConfigAtomically(configPath, serializedSettings); }))
 			return false;
-		auto updatedGlobal = originalGlobal;
-		updatedGlobal.merge_patch(patch);
-		const bool overrideChanged = Util::Settings::BuildUserOverride(originalGlobal, globalOverrides) !=
-		                             Util::Settings::BuildUserOverride(updatedGlobal, globalOverrides);
-		if (overrideChanged && !overrides->PersistUserOverride("Global", updatedGlobal, globalOverrides)) {
-			overrides->PersistUserOverride("Global", originalGlobal, globalOverrides);
-			return false;
-		}
-		if (!WriteConfigAtomically(configPath, serializedSettings)) {
-			if (overrideChanged)
-				overrides->PersistUserOverride("Global", originalGlobal, globalOverrides);
-			return false;
-		}
 		return true;
 	} catch (const std::exception& e) {
 		logger::error("Could not save feature preference to {}: {}", configPath, e.what());
@@ -1522,6 +1480,12 @@ void State::ClearDisabledFeatures()
 
 bool State::SetFeatureDisabled(const std::string& featureName, bool isDisabled)
 {
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (feature->GetShortName() == featureName && feature->IsAlwaysEnabled()) {
+			disabledFeatures.erase(featureName);
+			return false;
+		}
+	}
 	bool wasPreviouslyDisabled = disabledFeatures.count(featureName) > 0 ? disabledFeatures[featureName] : false;  // Properly check if it exists
 	disabledFeatures[featureName] = isDisabled;
 
@@ -1537,6 +1501,9 @@ bool State::SetFeatureDisabled(const std::string& featureName, bool isDisabled)
 
 bool State::IsFeatureDisabled(const std::string& featureName)
 {
+	for (auto* feature : Feature::GetFeatureList())
+		if (feature->GetShortName() == featureName && feature->IsAlwaysEnabled())
+			return false;
 	return disabledFeatures.contains(featureName) && disabledFeatures[featureName];
 }
 

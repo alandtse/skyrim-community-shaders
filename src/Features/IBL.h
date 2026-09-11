@@ -43,9 +43,6 @@ public:
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
-	/** @brief Registers IBL parameters as weather-interpolatable variables. */
-	virtual void RegisterWeatherVariables() override;
-
 	/** @brief Binds IBL and static fallback textures as pixel shader resources for the reflections prepass. */
 	virtual void ReflectionsPrepass() override;
 	/** @brief Projects environment and sky cubemaps into spherical harmonics and binds the resulting IBL textures. */

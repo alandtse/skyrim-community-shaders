@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "State.h"
@@ -940,9 +941,18 @@ void ProfilingRenderer::RenderFeatureTimers(const std::string& featurePrefix)
 	IM_ASSERT(std::abs(ImGui::GetCursorPosY() - contentStartY - ImGui::GetStyle().ItemSpacing.y - view.contentHeight) <= kFeatureTimingHeightTolerance);
 }
 
-bool ProfilingRenderer::IsFeatureProfilingAvailable()
+bool ProfilingRenderer::IsFeatureProfilingAvailable(const std::string& featurePrefix)
 {
-	return globals::profiler != nullptr;
+	if (!globals::profiler)
+		return false;
+	if (GpuPassCapabilities::Contains(featurePrefix))
+		return true;
+
+	const auto prefix = GetFeatureTimerPrefix(featurePrefix);
+	const auto& results = globals::profiler->GetResults();
+	return std::any_of(results.begin(), results.end(), [&](const auto& result) {
+		return IsFeatureTimerResult(result, prefix);
+	});
 }
 
 std::string ProfilingRenderer::GetFeatureTimerPrefix(const std::string& featurePrefix)

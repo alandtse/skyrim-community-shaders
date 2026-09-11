@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 /**
  @def GET_INSTANCE_MEMBER
@@ -68,6 +69,56 @@
 		else                                                                                  \
 			(a_fn)((a_source)->GetVRRuntimeData());                                           \
 	} while (0)
+
+namespace Util::EnvironmentControls
+{
+	inline constexpr float kDefaultTimeScale = 20.0f;
+	inline constexpr float kHoursPerDay = 24.0f;
+
+	/// Select a weather, retargeting an existing lock and ending any temporary preview.
+	void ChangeWeather(RE::TESWeather* weather, bool instant);
+	/// Release locks and return to the engine's default weather.
+	void ResetWeather();
+	/// Refresh an edited current weather without releasing an active lock.
+	void RefreshWeather(RE::TESWeather* weather);
+	/// Hold the dominant weather during a slider interaction, ending any temporary preview.
+	void BeginGameHourScrub();
+	/// Release the slider's temporary weather lock, preserving any earlier explicit lock.
+	void EndGameHourScrub();
+	/// Set the hour and end any preview; optionally defer sky synchronization while scrubbing.
+	bool SetGameHour(float hour, bool synchronize = true);
+	/// Update the running or saved timescale and end any temporary preview.
+	void SetTimeScale(float timeScale);
+
+	/// Report successful installation of the existing engine weather guards.
+	void SetWeatherLockAvailable();
+	/// Return whether engine weather changes can be guarded.
+	bool IsWeatherLockAvailable();
+	/// Return the weather held by either editor, or nullptr.
+	RE::TESWeather* GetLockedWeather();
+	/// Replace a preview with an explicit weather lock; nullptr releases the lock.
+	void SetLockedWeather(RE::TESWeather* weather);
+	/// Maintain shared weather and preview-time locks once per frame.
+	void MaintainLocks();
+	/// Pause game time, ending any temporary preview first.
+	void PauseTime();
+	/// Restore game-time progression, ending any temporary preview first.
+	void ResumeTime();
+	/// Return whether the shared time control is paused.
+	bool IsTimePaused();
+	/// Return the timescale to restore when resuming.
+	float GetSavedTimeScale();
+	/// Reset the running or saved timescale to its default.
+	void ResetTimeScale();
+	/// Keep time running across loading, sleep/wait and fast-travel menus.
+	void SetTimeRunningForMenu(bool needsRunningTime);
+	/// Start or retarget a weather/time lock; time-only previews hold current weather and Stop restores prior controls.
+	bool StartPreview(RE::TESWeather* weather, std::optional<float> hour);
+	/// Release the preview and restore the controls that preceded it, not the old game hour.
+	void StopPreview();
+	/// Return whether a temporary weather or time lock is active.
+	bool IsPreviewActive();
+}
 
 namespace Util
 {

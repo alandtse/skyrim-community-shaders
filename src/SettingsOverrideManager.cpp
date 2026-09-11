@@ -234,21 +234,6 @@ size_t SettingsOverrideManager::ReapplyFeatureOverrides(const std::string& featu
 	return ApplyOverrides(featureName, featureJson);
 }
 
-void SettingsOverrideManager::SetOverrideEnabled(const std::string& modName, const std::string& featureName, bool isEnabled)
-{
-	for (auto& override : overrides) {
-		if (override.modName == modName &&
-			((featureName.empty() && override.isGlobal) || override.featureName == featureName)) {
-			override.enabled = isEnabled;
-			logger::info("{} override from {} for {}",
-				isEnabled ? "Enabled" : "Disabled",
-				modName,
-				featureName.empty() ? "Global" : featureName);
-			break;
-		}
-	}
-}
-
 void SettingsOverrideManager::RefreshOverrides()
 {
 	discovered = false;
@@ -953,7 +938,7 @@ std::filesystem::path SettingsOverrideManager::GetUserOverridesDirectory() const
 
 bool SettingsOverrideManager::LoadUserOverride(const std::string& featureName, json& featureJson)
 {
-	if (!enabled || featureName.empty()) {
+	if (!enabled || !discovered || featureName.empty()) {
 		return false;
 	}
 
@@ -985,8 +970,8 @@ bool SettingsOverrideManager::LoadUserOverride(const std::string& featureName, j
 			return false;
 		}
 
-		// Merge user settings on top
-		MergeJson(featureJson, userJson);
+		const auto mask = GetMergedOverrideSettings(featureName, json::object());
+		MergeJson(featureJson, Util::Settings::SelectSettings(userJson, mask));
 		logger::info("Loaded user override for {}", featureName);
 		return true;
 
@@ -1133,72 +1118,6 @@ std::string SettingsOverrideManager::GetCombinedOverrideHash(const std::string& 
 	}
 
 	return ComputeContentHash(combinedHashes);
-}
-
-void SettingsOverrideManager::CleanupStaleUserOverrides()
-{
-	if (!enabled || !discovered) {
-		return;
-	}
-
-	auto userDir = GetUserOverridesDirectory();
-	std::error_code ec;
-
-	if (!std::filesystem::exists(userDir, ec)) {
-		return;
-	}
-
-	json tracking = LoadAppliedOverridesTracking();
-
-	try {
-		for (const auto& entry : std::filesystem::directory_iterator(userDir)) {
-			if (!entry.is_regular_file()) {
-				continue;
-			}
-
-			std::string filename = entry.path().filename().string();
-
-			// Check for .user.json extension
-			const std::string suffix = ".user.json";
-			if (!filename.ends_with(suffix)) {
-				continue;
-			}
-
-			// Extract feature name
-			std::string featureName = filename.substr(0, filename.length() - suffix.length());
-
-			// Clean up orphaned user override file
-			if (!HasFeatureOverrides(featureName) && featureName != "Global") {
-				logger::info("Cleaning up orphaned user override: {}", featureName);
-				std::filesystem::remove(entry.path(), ec);
-				continue;
-			}
-
-			// Check if override hash has changed
-			std::string currentHash = GetCombinedOverrideHash(featureName);
-			std::string trackingKey = featureName + "_hash";
-
-			if (tracking.contains(trackingKey) && tracking[trackingKey].is_string()) {
-				std::string storedHash = tracking[trackingKey].get<std::string>();
-				if (storedHash != currentHash) {
-					// Override file changed, delete user customizations
-					logger::info("Override changed for {}, removing stale user override", featureName);
-					std::filesystem::remove(entry.path(), ec);
-
-					// Update stored hash
-					tracking[trackingKey] = currentHash;
-				}
-			} else {
-				// First time tracking or invalid entry, set the hash
-				tracking[trackingKey] = currentHash;
-			}
-		}
-
-		SaveAppliedOverridesTracking(tracking);
-
-	} catch (const std::exception& e) {
-		logger::info("Error during user override cleanup: {}", e.what());
-	}
 }
 
 json SettingsOverrideManager::GetMergedOverrideSettings(const std::string& featureName, const json& baseSettings)

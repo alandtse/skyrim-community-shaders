@@ -13,6 +13,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "ProfilingRenderer.h"
+#include "SceneSettingsManager.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "menu.performance."
@@ -158,8 +159,10 @@ static void DrawGlobalProfileChooser(const Feature::PerfProfile (&profiles)[3], 
 		for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
 			ImGui::TableNextColumn();
 			ImGui::PushID(i);
-			if (DrawProfileCard(labels[i], descriptions[i], i == activeIdx, theme.StatusPalette.InfoColor))
+			if (DrawProfileCard(labels[i], descriptions[i], i == activeIdx, theme.StatusPalette.InfoColor)) {
+				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 				Feature::ApplyPerformanceProfileToAll(profiles[i]);
+			}
 			ImGui::PopID();
 		}
 		ImGui::EndTable();
@@ -275,7 +278,10 @@ static void RenderPresets(Feature* host)
 			featureTooltips[i] = previewText[i].empty() ? sectionTooltips[i] : previewText[i].c_str();
 		}
 		DrawProfileButtonRow(profiles, labels, featureTooltips, featureActiveIdx,
-			[feature](Feature::PerfProfile p) { feature->ApplyPerformanceProfile(p); });
+			[feature](Feature::PerfProfile p) {
+				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
+				feature->ApplyPerformanceProfile(p);
+			});
 		// Feature overrides stay visible beneath the global chooser.
 		// Only raw sliders/knobs collapse into Advanced below.
 		try {

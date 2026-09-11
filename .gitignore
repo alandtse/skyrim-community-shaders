@@ -11,7 +11,7 @@ shadertoolsconfig.json
 **/.DS_Store
 .claude/settings.local.json
 
-tools/__pycache__/
+**/__pycache__/
 
 # Semantic Release's plugin dependencies (CI installs these into the
 # checkout via cycjimmy/semantic-release-action); also produced by a local
@@ -27,4 +27,3 @@ tools/__pycache__/
 # clangd compile database (machine-specific absolute paths; regenerate with
 # tools/gen-clangd-db.ps1)
 /compile_commands.json
-.github/scripts/__pycache__/

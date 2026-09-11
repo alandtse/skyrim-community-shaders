@@ -25,6 +25,7 @@
 #	include "Globals.h"
 #	include "Menu.h"
 #	include "Profiler.h"
+#	include "SceneSettingsManager.h"
 #	include "ShaderCache.h"
 #	include "State.h"
 #	include "Utils/DevBenchUx.h"
@@ -331,6 +332,8 @@ namespace
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
+					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
+						*SceneSettingsManager::GetSingleton());
 					std::vector<std::string> unknown;
 					if (!Util::Settings::ApplyPatch(*feature, blob, unknown))
 						return json{
@@ -353,6 +356,8 @@ namespace
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
+					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
+						*SceneSettingsManager::GetSingleton());
 					feature->RestoreDefaultSettings();
 					logger::info("DevBenchBridge: feature(reset, {}) applied", shortName);
 					return json{ { "action", "reset" }, { "shortName", shortName }, { "applied", true } };
@@ -1041,6 +1046,8 @@ namespace
 			// Restore every feature to its defaults, then persist. Mirrors what the UI's
 			// global reset does: per-feature RestoreDefaultSettings followed by a Save.
 			task->AddTask([state]() {
+				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
+					*SceneSettingsManager::GetSingleton());
 				for (auto* f : Feature::GetFeatureList()) {
 					try {
 						f->RestoreDefaultSettings();
@@ -1073,6 +1080,8 @@ namespace
 				return json{ { "error", "unknown profile (performance|balanced|quality)" }, { "profile", profileName } };
 
 			task->AddTask([state, profile]() {
+				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
+					*SceneSettingsManager::GetSingleton());
 				try {
 					Feature::ApplyPerformanceProfileToAll(profile);
 				} catch (const std::exception& e) {

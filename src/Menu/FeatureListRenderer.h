@@ -95,10 +95,14 @@ private:
 			float size{};
 		};
 
-		FeatureActionsLayout RenderFeatureHeader(Feature* feat, bool isLoaded);
-		void RenderFeatureActions(Feature* feat, bool isDisabled, bool isLoaded, bool sceneControlled, const FeatureActionsLayout& layout);
-		float RenderFeatureMaterial(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage);
-		void RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled);
+		FeatureActionsLayout RenderFeatureHeader(Feature* feat, bool isDisabled, bool isLoaded,
+			bool canEditSceneSettings);
+		void RenderFeatureActions(Feature* feat, bool isDisabled, bool isLoaded,
+			bool sceneControlled, bool canEditSceneSettings, const FeatureActionsLayout& layout);
+		float RenderFeatureMaterial(Feature* feat, bool isDisabled, bool isLoaded,
+			bool hasFailedMessage, bool sceneControlled, bool sceneEditing);
+		void RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded,
+			bool hasFailedMessage, bool sceneControlled, bool sceneEditing);
 		void RenderReactiveConstraintWarningDialog();
 	};
 

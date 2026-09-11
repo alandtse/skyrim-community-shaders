@@ -244,6 +244,14 @@ namespace Util
 		 */
 		std::filesystem::path SafeRelative(const std::filesystem::path& path, const std::filesystem::path& base);
 
+		/**
+		 * Checks logical containment without resolving virtual filesystem mappings or symlinks.
+		 * @param directory The containing directory
+		 * @param path The path to validate
+		 * @return true when the normalized absolute path is the directory or one of its descendants
+		 */
+		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path);
+
 	}
 
 	/**
@@ -251,6 +259,12 @@ namespace Util
 	 */
 	namespace FileHelpers
 	{
+		/** @brief Atomically writes JSON; a failure leaves the destination unchanged. */
+		bool WriteJsonAtomically(const std::filesystem::path& path, const nlohmann::json& data,
+			int indent, std::string_view context);
+		/** @brief Resolves an existing file's physical path through its handle, including virtual filesystems. */
+		std::filesystem::path ResolveExistingFile(const std::filesystem::path& path);
+
 		/**
 		 * Result of a file deletion operation
 		 */

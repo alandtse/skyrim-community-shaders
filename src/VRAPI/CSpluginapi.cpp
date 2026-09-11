@@ -7,6 +7,7 @@
 #include "Features/Upscaling.h"
 #include "Features/VolumetricLighting.h"
 #include "Globals.h"
+#include "SceneSettingsManager.h"
 #include "Utils/SettingsPatch.h"
 
 #include <algorithm>
@@ -198,6 +199,8 @@ namespace CSPluginAPI
 				return;
 			pending.swap(stagedPatches);
 		}
+		SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
+			*SceneSettingsManager::GetSingleton());
 		for (auto& [shortName, patch] : pending) {
 			auto* feature = Feature::FindFeatureByShortName(shortName);
 			if (!feature) {

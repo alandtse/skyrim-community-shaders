@@ -9,11 +9,12 @@
 #include "Util.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
-#include "WeatherManager.h"
 
 #include "CSEditor.h"
 #include "CSEditor/EditorWindow.h"
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <nlohmann/json.hpp>
@@ -165,26 +166,30 @@ void SceneSelector::DrawWeatherStatusPanel()
 {
 	ImGui::SeparatorText(T(TKEY("weather_transition"), "Weather Transition"));
 
-	auto weatherManager = globals::weatherManager;
-	auto currentWeathers = weatherManager->GetCurrentWeathers();
+	auto* sky = globals::game::sky;
+	auto* currentWeather = sky ? sky->currentWeather : nullptr;
+	auto* previousWeather = sky ? sky->lastWeather : nullptr;
+	const float weatherLerp = sky && std::isfinite(sky->currentWeatherPct) ?
+	                              std::clamp(sky->currentWeatherPct, 0.0f, 1.0f) :
+	                              1.0f;
 	const auto& theme = Menu::GetSingleton()->GetTheme();
 
-	if (currentWeathers.currentWeather) {
+	if (currentWeather) {
 		ImGui::Text(T(TKEY("current_weather"), "Current Weather: %s"),
-			currentWeathers.currentWeather->GetFormEditorID() ?
-				currentWeathers.currentWeather->GetFormEditorID() :
-				std::format("{:08X}", currentWeathers.currentWeather->GetFormID()).c_str());
+			currentWeather->GetFormEditorID() ?
+				currentWeather->GetFormEditorID() :
+				std::format("{:08X}", currentWeather->GetFormID()).c_str());
 
-		const bool isTransitioning = currentWeathers.lastWeather && currentWeathers.lerpFactor < 1.0f;
+		const bool isTransitioning = previousWeather && weatherLerp < 1.0f;
 		if (isTransitioning) {
 			ImGui::Text(T(TKEY("transitioning_from"), "Transitioning From: %s"),
-				currentWeathers.lastWeather->GetFormEditorID() ?
-					currentWeathers.lastWeather->GetFormEditorID() :
-					std::format("{:08X}", currentWeathers.lastWeather->GetFormID()).c_str());
+				previousWeather->GetFormEditorID() ?
+					previousWeather->GetFormEditorID() :
+					std::format("{:08X}", previousWeather->GetFormID()).c_str());
 
-			float transitionPct = currentWeathers.lerpFactor * 100.0f;
+			float transitionPct = weatherLerp * 100.0f;
 			const auto transitionOverlay = std::vformat(T(TKEY("transition_progress"), "Transition: {:.1f}%"), std::make_format_args(transitionPct));
-			ImGui::ProgressBar(currentWeathers.lerpFactor, ImVec2(-1, 0), transitionOverlay.c_str());
+			ImGui::ProgressBar(weatherLerp, ImVec2(-1, 0), transitionOverlay.c_str());
 		} else {
 			ImGui::TextDisabled("%s", T(TKEY("no_transition"), "No active weather transition"));
 		}
@@ -540,7 +545,7 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 	}
 
 	if (ImGui::Button(T(TKEY("reset_weather"), "Reset Weather"))) {
-		sky->ResetWeather();
+		Util::EnvironmentControls::ResetWeather();
 		// Update the selection box to reflect the reset weather without double-applying
 		s_selectedWeatherIdx = FindWeatherIndex(sky->defaultWeather);
 		logger::info("[SceneSelector] Reset weather to default");
@@ -629,14 +634,7 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 				s_selectedWeatherIdx = i;
 				auto selectedWeather = s_filteredWeathers[i];
 
-				if (s_accelerateWeatherChange)
-					sky->ForceWeather(selectedWeather, false);
-				else
-					sky->SetWeather(selectedWeather, true, false);
-
-				// Retarget the lock so Prepass() enforces the new choice instead of reverting it.
-				if (editorWindow->IsWeatherLocked())
-					editorWindow->LockWeather(selectedWeather);
+				Util::EnvironmentControls::ChangeWeather(selectedWeather, s_accelerateWeatherChange);
 
 				Util::ClearComboSearch(kWeatherSearchId);
 				logger::info("[SceneSelector] Changed weather to: {}", Util::FormatWeather(selectedWeather));

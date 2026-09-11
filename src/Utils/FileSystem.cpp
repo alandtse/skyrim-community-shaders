@@ -252,6 +252,23 @@ namespace Util
 			}
 			return result;
 		}
+
+		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path)
+		{
+			if (directory.empty() || path.empty())
+				return false;
+			std::error_code ec;
+			const auto absoluteDirectory = std::filesystem::absolute(directory, ec);
+			if (ec)
+				return false;
+
+			const auto absolutePath = std::filesystem::absolute(path, ec);
+			if (ec)
+				return false;
+
+			const auto relative = absolutePath.lexically_normal().lexically_relative(absoluteDirectory.lexically_normal());
+			return !relative.empty() && *relative.begin() != "..";
+		}
 	}
 
 	// File system utilities implementation

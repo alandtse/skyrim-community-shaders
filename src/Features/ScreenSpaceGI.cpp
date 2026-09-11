@@ -446,13 +446,20 @@ void ScreenSpaceGI::DrawSettings()
 
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
+	const auto previousShaderConfiguration = std::tuple{
+		settings.EnableGI, settings.EnableExperimentalSpecularGI,
+		settings.ResolutionMode, settings.EnableTemporalDenoiser, settings.EnableAdaptiveSampling
+	};
 	settings = o_json;
 	settings.ResolutionMode = std::clamp(settings.ResolutionMode, 0, 2);
 	if (!o_json.contains("ResourceProfile")) {
 		// Existing VR configs keep full resources if GI was active, else use lean AO-only.
 		settings.ResourceProfile = (REL::Module::IsVR() && !settings.EnableGI) ? kResourceProfileAOOnly : kResourceProfileFullGI;
 	}
-	recompileFlag = true;
+	recompileFlag |= previousShaderConfiguration != std::tuple{
+		settings.EnableGI, settings.EnableExperimentalSpecularGI,
+		settings.ResolutionMode, settings.EnableTemporalDenoiser, settings.EnableAdaptiveSampling
+	};
 }
 
 void ScreenSpaceGI::SaveSettings(json& o_json)

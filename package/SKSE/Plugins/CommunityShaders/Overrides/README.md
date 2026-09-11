@@ -79,7 +79,7 @@ Override files use JSON format and should contain only the settings you want to 
 
 ## Metadata Section
 
-The `_metadata` section also required for the system to identify the override. It provides information about the override:
+The optional `_metadata` section describes the override. Its filename identifies the mod and target feature.
 
 -   `modName`: Display name of your mod
 -   `version`: Version of your override file
@@ -130,17 +130,22 @@ To create feature-specific overrides, you need to use the correct feature short 
 
 ### In-Game UI
 
--   Navigate to the "Overrides" tab in the Open Shaders menu
--   View all discovered override files
--   Enable/disable individual overrides
--   Refresh to discover new override files
--   View override file contents and metadata
+-   Open **Utilities > Feature Overwrites**, directly before OS Utility.
+-   View overwrite files targeting loaded features, including global files.
+-   Delete a file after confirmation. This removes it from disk, not just from the list.
+-   Deletion reapplies the remaining layers without saving or discarding pending normal feature edits. It removes companion user entries no remaining overwrite controls, deleting empty companion files. Saved personal values remain in normal user settings. Scene Manager drafts remain separate.
+-   Use **Export Settings** to choose one feature, then select individual settings from its searchable catalogue-backed list. Arrays are selected as a whole. Exports include unsaved normal feature edits, but exclude applied Scene Manager values and toolbar drafts. Existing same-name files are updated while preserving unselected keys and metadata.
+-   Externally changed export targets require a settings reload before export. Exporting another file does not clear this protection. Files changed outside the game are not automatically watched.
 
-### Enable/Disable System
+### Saving Feature Edits
 
--   The entire override system can be toggled on/off
--   Individual overrides can be enabled/disabled
--   Changes take effect on next game restart
+Edit a normal feature page and save to store changes in normal `SettingsUser.json` and, for overwritten settings, `User/<Feature>.user.json` (or `Global.user.json`). Installed overwrite files are not modified by normal saves. Restoring defaults and saving follows the same behavior. Unedited applied overwrite values and Scene Manager values, including toolbar previews, are excluded from normal user settings.
+
+Global files and their user customizations are applied before feature-specific files and their user customizations. A save only changes the companion controlling each edited setting, preserving shadowed user customizations. A source changed externally must be reloaded before saving. Export is an explicit file-writing action, not a normal settings save.
+
+Removing an overwrite in-game cleans up orphaned companion entries immediately. Removing or disabling its mod outside the game performs that cleanup on settings reload or startup, even when no overwrite files remain. Entries still controlled by another file are retained. Saved personal settings already exist in `SettingsUser.json`, so no transfer is needed when a companion is removed. Values baked into normal settings by older versions are preserved because their original intent cannot be recovered.
+
+Settings that normally require a restart still require one. Set `_metadata.enabled` to `false` in the file or disable the providing mod to disable an overwrite.
 
 ## Best Practices for Mod Authors
 
@@ -158,7 +163,7 @@ To create feature-specific overrides, you need to use the correct feature short 
 -   Check file naming follows the correct pattern
 -   Verify JSON syntax is valid
 -   Ensure feature short name is correct
--   Check that override system is enabled in the UI
+-   Check that the providing mod is enabled and the file does not set `_metadata.enabled` to `false`
 -   Look for errors in the Open Shaders log (CommunityShaders.log)
 
 ### JSON Validation

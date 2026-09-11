@@ -75,10 +75,12 @@ public:
 	/**
 	 * @brief Checks whether per-feature profiling can be shown.
 	 *
-	 * Always true while the profiler exists, so the CPU/GPU/Off controls stay
-	 * reachable even before any capture has produced timer results.
+	 * True when an executed GPU pass declared this feature prefix or a legacy
+	 * profiler timer has produced a matching result.
+	 *
+	 * @param featurePrefix The profiler timer name prefix identifying the feature.
 	 */
-	static bool IsFeatureProfilingAvailable();
+	static bool IsFeatureProfilingAvailable(const std::string& featurePrefix);
 
 private:
 	static inline TimingMode timingMode = TimingMode::GPU;

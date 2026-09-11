@@ -1,8 +1,8 @@
 #include "UI.h"
 
-#include "../CSEditor/EditorWindow.h"
 #include "../I18n/I18n.h"
 #include "D3D.h"
+#include "Feature.h"
 #include "FileSystem.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
@@ -10,8 +10,6 @@
 #include "Menu/ThemeManager.h"
 #include "PerfUtils.h"
 #include "ShaderCache.h"
-#include "WeatherManager.h"
-#include "WeatherVariableRegistry.h"
 
 #ifndef DIRECTINPUT_VERSION
 #	define DIRECTINPUT_VERSION 0x0800
@@ -52,11 +50,39 @@
 
 namespace Util
 {
+	void DrawSelectionButtons(std::span<uint8_t> selected, const char* selectAll, const char* selectNone)
+	{
+		if (ImGui::SmallButton(selectAll))
+			std::ranges::fill(selected, uint8_t{ 1 });
+		ImGui::SameLine();
+		if (ImGui::SmallButton(selectNone))
+			std::ranges::fill(selected, uint8_t{ 0 });
+	}
+
 	static ImVec2 g_screenScaleRatio = { 1.0f, 1.0f };
 	static ImVec2 g_displaySize = { 0.0f, 0.0f };
 
 	static int g_lastWindowWidth = 0;
 	static int g_lastWindowHeight = 0;
+	static thread_local const void* g_activeControlStorageAddress = nullptr;
+
+	class ActiveControlStorageGuard
+	{
+	public:
+		explicit ActiveControlStorageGuard(const void* address) :
+			previousAddress(g_activeControlStorageAddress)
+		{
+			g_activeControlStorageAddress = address;
+		}
+
+		~ActiveControlStorageGuard()
+		{
+			g_activeControlStorageAddress = previousAddress;
+		}
+
+	private:
+		const void* previousAddress;
+	};
 
 	void RefreshScreenScale(HWND hwnd, float bufferWidth, float bufferHeight)
 	{
@@ -121,16 +147,143 @@ namespace Util
 		}
 	}
 
+	bool CloseButton(const char* id, float size)
+	{
+		const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size));
+		const auto minimum = ImGui::GetItemRectMin();
+		const auto maximum = ImGui::GetItemRectMax();
+		const bool held = ImGui::IsItemActive() || pressed;
+		const bool hovered = ImGui::IsItemHovered();
+		const auto color = ImGui::GetColorU32(
+			held ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered :
+													 ImGuiCol_Button);
+		ImGui::RenderFrame(minimum, maximum, color, true, ImGui::GetStyle().FrameRounding);
+
+		const ImVec2 center(
+			(minimum.x + maximum.x) * 0.5f,
+			(minimum.y + maximum.y) * 0.5f);
+		const float halfExtent = std::max(3.0f, size * 0.2f);
+		const float stroke = std::max(2.0f, size * 0.1f);
+		auto* drawList = ImGui::GetWindowDrawList();
+		const auto glyphColor = ImGui::GetColorU32(ImGuiCol_Text);
+		drawList->AddLine(
+			ImVec2(center.x - halfExtent, center.y - halfExtent),
+			ImVec2(center.x + halfExtent, center.y + halfExtent), glyphColor, stroke);
+		drawList->AddLine(
+			ImVec2(center.x + halfExtent, center.y - halfExtent),
+			ImVec2(center.x - halfExtent, center.y + halfExtent), glyphColor, stroke);
+		return pressed;
+	}
+
+	struct DialogSizeAnimation
+	{
+		ImVec2 size;
+		ImGuiSizeCallback callback = nullptr;
+		void* callbackData = nullptr;
+	};
+
+	static void AnimateDialogSize(ImGuiSizeCallbackData* data)
+	{
+		auto& animation = *static_cast<DialogSizeAnimation*>(data->UserData);
+		if (animation.callback) {
+			data->UserData = animation.callbackData;
+			animation.callback(data);
+			data->UserData = &animation;
+		}
+		const float blend = 1.0f - std::exp(-ThemeManager::Constants::DIALOG_RESIZE_RESPONSE * ImGui::GetIO().DeltaTime);
+		for (int axis = 0; axis < 2; ++axis) {
+			const float difference = data->DesiredSize[axis] - animation.size[axis];
+			const float step = std::min(std::abs(difference), std::ceil(std::abs(difference) * blend));
+			data->DesiredSize[axis] = animation.size[axis] + std::copysign(step, difference);
+		}
+	}
+
+	static void PrepareDialogSizeAnimation(ImGuiWindow* window, ImGuiWindowFlags flags, DialogSizeAnimation& animation)
+	{
+		const auto& context = *GImGui;
+		if (!(flags & ImGuiWindowFlags_AlwaysAutoResize) || !window || window->Hidden ||
+			window->LastFrameActive != context.FrameCount - 1 || window->AutoFitFramesX > 0 || window->AutoFitFramesY > 0)
+			return;
+		animation.size = window->SizeFull;
+		const bool constrained = context.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasSizeConstraint;
+		const auto bounds = constrained ? context.NextWindowData.SizeConstraintRect : ImRect(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+		if (constrained) {
+			animation.callback = context.NextWindowData.SizeCallback;
+			animation.callbackData = context.NextWindowData.SizeCallbackUserData;
+		}
+		ImGui::SetNextWindowSizeConstraints(bounds.Min, bounds.Max, AnimateDialogSize, &animation);
+	}
+
+	static ImGuiWindow* GetOpenDialogWindow(const char* id)
+	{
+		const auto& context = *GImGui;
+		if (context.OpenPopupStack.Size > context.BeginPopupStack.Size) {
+			const auto& popup = context.OpenPopupStack[context.BeginPopupStack.Size];
+			if (popup.PopupId == ImGui::GetID(id) && popup.OpenFrameCount < context.FrameCount - 1)
+				return popup.Window;
+		}
+		return nullptr;
+	}
+
+	static bool BeginDialogPopup(const char* id, const char* title, bool* open, bool modal, ImGuiWindowFlags flags)
+	{
+		if (!(GImGui->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasSize))
+			ImGui::SetNextWindowSize(ImVec2(ThemeManager::Constants::POPUP_BUTTON_WIDTH * GetUIScale() * 2.0f +
+												ImGui::GetStyle().WindowPadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x,
+										 0.0f),
+				ImGuiCond_Appearing);
+		DialogSizeAnimation animation;
+		PrepareDialogSizeAnimation(GetOpenDialogWindow(id), flags, animation);
+		const bool visible = [&] {
+			ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, ImGui::GetStyle().WindowRounding);
+			ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
+			const SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleColor(); ImGui::PopStyleVar(); });
+			flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+			return modal ? ImGui::BeginPopupModal(id, open, flags) : ImGui::BeginPopup(id, flags);
+		}();
+		if (!visible)
+			return false;
+		const bool closable = !modal || open;
+		const float size = ImGui::GetFrameHeight();
+		const auto start = ImGui::GetCursorScreenPos();
+		const float right = start.x + ImGui::GetContentRegionAvail().x;
+		const float textRight = closable ? right - size - ImGui::GetStyle().ItemSpacing.x : right;
+		ImGui::PushClipRect(start, ImVec2(std::max(start.x, textRight), start.y + size), true);
+		ImGui::AlignTextToFramePadding();
+		const std::string_view label(title);
+		const auto visibleLabel = label.substr(0, label.find("##"));
+		ImGui::TextUnformatted(visibleLabel.data(), visibleLabel.data() + visibleLabel.size());
+		ImGui::PopClipRect();
+		if (closable) {
+			ImGui::SameLine();
+			ImGui::SetCursorScreenPos(ImVec2(right - size, start.y));
+			if (CloseButton("##ClosePopup", size)) {
+				if (open)
+					*open = false;
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return false;
+			}
+		}
+		return true;
+	}
+
+	Popup::Popup(const char* id, const char* title, ImGuiWindowFlags flags) :
+		isOpen(BeginDialogPopup(id, title, nullptr, false, flags))
+	{}
+
+	Popup::~Popup()
+	{
+		if (isOpen)
+			ImGui::EndPopup();
+	}
+
 	CenteredPopupModal::CenteredPopupModal(const char* name, bool* p_open, ImGuiWindowFlags flags, ImVec2 pos, ImVec2 pivot)
 	{
 		if (pos.x == -FLT_MAX && pos.y == -FLT_MAX)
 			pos = ImGui::GetMainViewport()->GetCenter();
 		ImGui::SetNextWindowPos(pos, ImGuiCond_Always, pivot);
-		// Fix first-frame vertical stretch: AlwaysAutoResize resets width to 0 on the hidden
-		// measurement frame, causing TextWrapped to wrap at 0px and produce an enormous height.
-		// Setting an initial width gives TextWrapped a sensible wrap column on that frame.
-		ImGui::SetNextWindowSize(ImVec2(400.0f * GetUIScale(), 0.0f), ImGuiCond_Appearing);
-		isOpen = BeginPopupModalWithRoundedClose(name, p_open, flags | ImGuiWindowFlags_NoSavedSettings);
+		isOpen = BeginDialogPopup(name, name, p_open, true, flags);
 	}
 
 	CenteredPopupModal::~CenteredPopupModal()
@@ -457,6 +610,37 @@ namespace Util
 		bool retval = ImGui::SliderFloat(label, &percentageData, lb, ub, format);
 		(*data) = percentageData * 1e-2f;
 		return retval;
+	}
+
+	bool InvertedCheckbox(const char* label, bool* storedValue)
+	{
+		if (!storedValue)
+			return false;
+
+		ActiveControlStorageGuard storageGuard(storedValue);
+		bool displayValue = !*storedValue;
+		const bool changed = ImGui::Checkbox(label, &displayValue);
+		if (changed)
+			*storedValue = !displayValue;
+		return changed;
+	}
+
+	bool RadioButton(const char* label, unsigned int* storedValue, unsigned int buttonValue)
+	{
+		if (!storedValue)
+			return false;
+
+		ActiveControlStorageGuard storageGuard(storedValue);
+		int displayValue = static_cast<int>(*storedValue);
+		const bool changed = ImGui::RadioButton(label, &displayValue, static_cast<int>(buttonValue));
+		if (changed)
+			*storedValue = static_cast<unsigned int>(displayValue);
+		return changed;
+	}
+
+	const void* GetActiveControlStorageAddress()
+	{
+		return g_activeControlStorageAddress;
 	}
 
 	ImVec2 GetNativeViewportSizeScaled(float scale)
@@ -986,6 +1170,8 @@ namespace Util
 
 	bool BeginWithRoundedClose(const char* name, bool* p_open, ImGuiWindowFlags flags)
 	{
+		DialogSizeAnimation animation;
+		PrepareDialogSizeAnimation(ImGui::FindWindowByName(name), flags, animation);
 		bool visible = false;
 		{
 			NativeTitleBarButtonHighlightGuard guard;
@@ -997,6 +1183,8 @@ namespace Util
 
 	bool BeginPopupModalWithRoundedClose(const char* name, bool* p_open, ImGuiWindowFlags flags)
 	{
+		DialogSizeAnimation animation;
+		PrepareDialogSizeAnimation(GetOpenDialogWindow(name), flags, animation);
 		bool visible = false;
 		{
 			NativeTitleBarButtonHighlightGuard guard;
@@ -1407,6 +1595,144 @@ namespace Util
 
 	namespace detail
 	{
+		constexpr std::size_t kSearchableComboBufferSize = 256;
+		constexpr int kSearchableComboPruneIntervalFrames = 600;
+		constexpr int kSearchableComboStaleFrames = 3600;
+
+		struct SearchableComboState
+		{
+			std::array<char, kSearchableComboBufferSize> filter{};
+			std::uint64_t filterRevision = 0;
+			bool open = false;
+			int lastSeenFrame = 0;
+			int lastOpenFrame = -1;
+
+			const void* cachedUserData = nullptr;
+			SearchableComboLabelGetter cachedGetter = nullptr;
+			std::uint64_t cachedItemsRevision = 0;
+			std::uint64_t cachedFilterRevision = std::numeric_limits<std::uint64_t>::max();
+			int cachedItemCount = -1;
+			std::vector<int> filteredIndices;
+		};
+
+		struct SearchableComboFrame
+		{
+			SearchableComboState* state = nullptr;
+			ImGuiLastItemData openerItem;
+		};
+
+		struct SearchableComboStorage
+		{
+			ImGuiContext* context = nullptr;
+			std::unordered_map<ImGuiID, SearchableComboState> states;
+			std::vector<SearchableComboFrame> frames;
+			int lastPruneFrame = 0;
+		};
+
+		SearchableComboStorage& GetSearchableComboStorage()
+		{
+			static SearchableComboStorage storage;
+			if (storage.context != GImGui) {
+				storage = {};
+				storage.context = GImGui;
+			}
+			return storage;
+		}
+
+		SearchableComboState& GetSearchableComboState(ImGuiID id)
+		{
+			auto& storage = GetSearchableComboStorage();
+			const int frame = ImGui::GetFrameCount();
+			if (frame < storage.lastPruneFrame ||
+				frame - storage.lastPruneFrame >= kSearchableComboPruneIntervalFrames) {
+				std::erase_if(storage.states, [frame](const auto& entry) {
+					return frame >= entry.second.lastSeenFrame &&
+					       frame - entry.second.lastSeenFrame >= kSearchableComboStaleFrames;
+				});
+				storage.lastPruneFrame = frame;
+			}
+
+			auto& state = storage.states[id];
+			state.lastSeenFrame = frame;
+			return state;
+		}
+
+		void ClearSearchableComboFilter(SearchableComboState& state)
+		{
+			if (state.filter.front() == '\0')
+				return;
+			state.filter.front() = '\0';
+			++state.filterRevision;
+		}
+
+		constexpr unsigned char FoldAsciiCase(unsigned char value) noexcept
+		{
+			return value >= 'A' && value <= 'Z' ? static_cast<unsigned char>(value + ('a' - 'A')) : value;
+		}
+
+		bool ContainsCaseInsensitive(std::string_view text, std::string_view filter) noexcept
+		{
+			if (filter.empty())
+				return true;
+			if (filter.size() > text.size())
+				return false;
+			return std::search(text.begin(), text.end(), filter.begin(), filter.end(), [](char left, char right) {
+				return FoldAsciiCase(static_cast<unsigned char>(left)) ==
+				       FoldAsciiCase(static_cast<unsigned char>(right));
+			}) != text.end();
+		}
+
+		int GetSearchableComboMaxItemCount(ImGuiComboFlags flags) noexcept
+		{
+			if ((flags & ImGuiComboFlags_HeightSmall) != 0)
+				return 4;
+			if ((flags & ImGuiComboFlags_HeightLarge) != 0)
+				return 20;
+			if ((flags & ImGuiComboFlags_HeightLargest) != 0)
+				return -1;
+			return 8;
+		}
+
+		float GetSearchableComboPopupHeight(ImGuiComboFlags flags, int maxVisibleItems)
+		{
+			const int itemCount = maxVisibleItems > 0 ?
+			                          maxVisibleItems :
+			                          GetSearchableComboMaxItemCount(flags);
+			if (itemCount < 0)
+				return FLT_MAX;
+
+			const auto& style = ImGui::GetStyle();
+			const float listHeight = ImGui::GetTextLineHeightWithSpacing() * itemCount - style.ItemSpacing.y;
+			const float searchHeight = ImGui::GetFrameHeightWithSpacing() + style.ItemSpacing.y;
+			return searchHeight + listHeight + style.WindowPadding.y * 2.0f;
+		}
+
+		void SetSearchableComboPopupConstraints(
+			const char* previewValue, ImGuiComboFlags flags, int maxVisibleItems)
+		{
+			if ((GImGui->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasSizeConstraint) != 0)
+				return;
+
+			const auto& style = ImGui::GetStyle();
+			float popupWidth = ImGui::CalcItemWidth();
+			if ((flags & ImGuiComboFlags_NoPreview) != 0) {
+				popupWidth = ImGui::GetFrameHeight();
+			} else if ((flags & ImGuiComboFlags_WidthFitPreview) != 0) {
+				const float arrowWidth = (flags & ImGuiComboFlags_NoArrowButton) != 0 ? 0.0f : ImGui::GetFrameHeight();
+				const float previewWidth = previewValue ? ImGui::CalcTextSize(previewValue, nullptr, true).x : 0.0f;
+				popupWidth = arrowWidth + previewWidth + style.FramePadding.x * 2.0f;
+			}
+
+			const float scale = GetSearchUIScale();
+			const float searchWidth = ImGui::CalcTextSize(T("ui.search", "Search...")).x +
+			                          ThemeManager::Constants::COMBO_SEARCH_ICON_SIZE * scale +
+			                          style.FramePadding.x * 4.0f;
+			popupWidth = std::max(popupWidth, searchWidth);
+			ImGui::SetNextWindowSizeConstraints(
+				ImVec2(popupWidth, 0.0f),
+				ImVec2(popupWidth, GetSearchableComboPopupHeight(flags, maxVisibleItems)));
+		}
+
 		struct ComboSearchState
 		{
 			char buffer[256] = {};
@@ -1418,6 +1744,207 @@ namespace Util
 			static std::unordered_map<std::string, ComboSearchState> states;
 			return states;
 		}
+	}
+
+	bool BeginSearchableCombo(
+		const char* label, const char* previewValue, ImGuiComboFlags flags,
+		const void* storageAddress, int maxVisibleItems)
+	{
+		const ImGuiID id = ImGui::GetID(label);
+		auto& state = detail::GetSearchableComboState(id);
+		detail::SetSearchableComboPopupConstraints(previewValue, flags, maxVisibleItems);
+
+		bool open = false;
+		if (storageAddress) {
+			ActiveControlStorageGuard storageGuard(storageAddress);
+			open = ImGui::BeginCombo(label, previewValue, flags);
+		} else {
+			open = ImGui::BeginCombo(label, previewValue, flags);
+		}
+		const ImGuiLastItemData openerItem = GImGui->LastItemData;
+		if (!open) {
+			if (state.open)
+				detail::ClearSearchableComboFilter(state);
+			state.open = false;
+			return false;
+		}
+
+		const int frame = ImGui::GetFrameCount();
+		const bool popupAppearing = ImGui::IsWindowAppearing();
+		const bool continuingOpen = state.open && state.lastOpenFrame == frame - 1 && !popupAppearing;
+		if (state.open && !continuingOpen)
+			detail::ClearSearchableComboFilter(state);
+		const bool focusSearch = !continuingOpen;
+		state.open = true;
+		state.lastOpenFrame = frame;
+		auto& comboStorage = detail::GetSearchableComboStorage();
+		comboStorage.frames.push_back({ &state, openerItem });
+
+		ImGui::PushID(id);
+		if (focusSearch)
+			ImGui::SetKeyboardFocusHere();
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		const float scale = GetSearchUIScale();
+		const float iconSize = ThemeManager::Constants::COMBO_SEARCH_ICON_SIZE * scale;
+		const float iconOffsetX = ThemeManager::Constants::COMBO_SEARCH_ICON_OFFSET_X * scale;
+		const float paddingLeft = ThemeManager::Constants::COMBO_SEARCH_PADDING_LEFT * scale;
+		ImGui::PushStyleVar(
+			ImGuiStyleVar_FramePadding, ImVec2(paddingLeft, ImGui::GetStyle().FramePadding.y));
+		bool filterChanged = false;
+		{
+			ActiveControlStorageGuard storageGuard(nullptr);
+			filterChanged = ImGui::InputTextWithHint("##search", T("ui.search", "Search..."),
+				state.filter.data(), state.filter.size());
+		}
+		ImGui::PopStyleVar();
+		if (filterChanged)
+			++state.filterRevision;
+
+		const ImVec2 iconPosition(
+			ImGui::GetItemRectMin().x + iconOffsetX,
+			ImGui::GetItemRectMin().y + (ImGui::GetItemRectSize().y - iconSize) * 0.5f);
+		DrawSearchIcon(iconPosition, iconSize, ThemeManager::Constants::COMBO_SEARCH_ICON_ALPHA);
+		ImGui::Separator();
+		ImGui::PopID();
+		GImGui->LastItemData = openerItem;
+		return true;
+	}
+
+	void EndSearchableCombo()
+	{
+		auto& storage = detail::GetSearchableComboStorage();
+		IM_ASSERT(!storage.frames.empty() && "EndSearchableCombo called without BeginSearchableCombo");
+		if (storage.frames.empty())
+			return;
+
+		const ImGuiLastItemData openerItem = storage.frames.back().openerItem;
+		storage.frames.pop_back();
+		ImGui::EndCombo();
+		GImGui->LastItemData = openerItem;
+	}
+
+	std::string_view GetSearchableComboFilter()
+	{
+		const auto& frames = detail::GetSearchableComboStorage().frames;
+		return frames.empty() ? std::string_view{} : std::string_view(frames.back().state->filter.data());
+	}
+
+	bool SearchableComboMatches(std::string_view text)
+	{
+		return detail::ContainsCaseInsensitive(text, GetSearchableComboFilter());
+	}
+
+	void SearchableComboClipper::Begin(int itemCount, SearchableComboLabelGetter getter,
+		const void* userData, std::uint64_t itemsRevision, float itemHeight)
+	{
+		filteredIndices = nullptr;
+		itemCount = std::max(itemCount, 0);
+		auto& frames = detail::GetSearchableComboStorage().frames;
+		if (frames.empty() || !getter || GetSearchableComboFilter().empty()) {
+			clipper.Begin(itemCount, itemHeight);
+			return;
+		}
+
+		auto& state = *frames.back().state;
+		if (state.cachedUserData != userData || state.cachedGetter != getter ||
+			state.cachedItemsRevision != itemsRevision || state.cachedItemCount != itemCount ||
+			state.cachedFilterRevision != state.filterRevision) {
+			state.filteredIndices.clear();
+			state.filteredIndices.reserve(static_cast<std::size_t>(itemCount));
+			const std::string_view filter(state.filter.data());
+			for (int itemIndex = 0; itemIndex < itemCount; ++itemIndex) {
+				const char* label = getter(userData, itemIndex);
+				if (label && detail::ContainsCaseInsensitive(label, filter))
+					state.filteredIndices.push_back(itemIndex);
+			}
+			state.cachedUserData = userData;
+			state.cachedGetter = getter;
+			state.cachedItemsRevision = itemsRevision;
+			state.cachedItemCount = itemCount;
+			state.cachedFilterRevision = state.filterRevision;
+		}
+
+		filteredIndices = &state.filteredIndices;
+		clipper.Begin(static_cast<int>(filteredIndices->size()), itemHeight);
+	}
+
+	void SearchableComboClipper::IncludeItemByIndex(int itemIndex)
+	{
+		if (!filteredIndices) {
+			if (itemIndex >= 0 && itemIndex < clipper.ItemsCount)
+				clipper.IncludeItemByIndex(itemIndex);
+			return;
+		}
+
+		const auto found = std::lower_bound(filteredIndices->begin(), filteredIndices->end(), itemIndex);
+		if (found != filteredIndices->end() && *found == itemIndex)
+			clipper.IncludeItemByIndex(static_cast<int>(found - filteredIndices->begin()));
+	}
+
+	bool SearchableComboClipper::Step()
+	{
+		return clipper.Step();
+	}
+
+	int SearchableComboClipper::GetDisplayStart() const noexcept
+	{
+		return clipper.DisplayStart;
+	}
+
+	int SearchableComboClipper::GetDisplayEnd() const noexcept
+	{
+		return clipper.DisplayEnd;
+	}
+
+	int SearchableComboClipper::GetItemIndex(int displayIndex) const noexcept
+	{
+		if (!filteredIndices)
+			return displayIndex;
+		if (displayIndex < 0 || displayIndex >= static_cast<int>(filteredIndices->size()))
+			return -1;
+		return (*filteredIndices)[displayIndex];
+	}
+
+	bool SearchableCombo(const char* label, int* currentItem, int itemCount,
+		SearchableComboLabelGetter getter, const void* userData,
+		ImGuiComboFlags flags, std::uint64_t itemsRevision)
+	{
+		if (!currentItem || !getter)
+			return false;
+
+		const char* previewValue = *currentItem >= 0 && *currentItem < itemCount ?
+		                               getter(userData, *currentItem) :
+		                               nullptr;
+		if (!BeginSearchableCombo(label, previewValue, flags, currentItem))
+			return false;
+
+		bool changed = false;
+		const bool scrollToSelection = ImGui::IsWindowAppearing() && GetSearchableComboFilter().empty();
+		SearchableComboClipper itemClipper;
+		itemClipper.Begin(itemCount, getter, userData, itemsRevision);
+		itemClipper.IncludeItemByIndex(*currentItem);
+		while (itemClipper.Step()) {
+			for (int displayIndex = itemClipper.GetDisplayStart();
+				displayIndex < itemClipper.GetDisplayEnd(); ++displayIndex) {
+				const int itemIndex = itemClipper.GetItemIndex(displayIndex);
+				const char* itemLabel = getter(userData, itemIndex);
+				if (!itemLabel)
+					continue;
+				const bool selected = itemIndex == *currentItem;
+				ImGui::PushID(itemIndex);
+				if (ImGui::Selectable(itemLabel, selected)) {
+					changed = !selected;
+					*currentItem = itemIndex;
+				}
+				if (selected && scrollToSelection)
+					ImGui::SetScrollHereY(0.5f);
+				ImGui::PopID();
+			}
+		}
+		EndSearchableCombo();
+		if (changed)
+			ImGui::MarkItemEdited(GImGui->LastItemData.ID);
+		return changed;
 	}
 
 	std::string DrawComboSearchInput(const char* id)
@@ -2238,257 +2765,6 @@ namespace Util
 		return clicked;
 	}
 
-	namespace WeatherUI
-	{
-		bool IsWeatherControlled(Feature* feature, const char* settingName)
-		{
-			if (!feature || !settingName) {
-				return false;
-			}
-
-			auto* globalRegistry = WeatherVariables::GlobalWeatherRegistry::GetSingleton();
-			auto* weatherManager = globals::weatherManager;
-
-			// Check if this feature has registered weather variables
-			std::string featureName = feature->GetShortName();
-			if (!globalRegistry->HasWeatherSupport(featureName)) {
-				return false;
-			}
-
-			// Still controlled if variable is mid-transition (e.g., transitioning to a weather without an override)
-			if (globalRegistry->IsFeatureVariableInTransition(featureName, settingName)) {
-				return true;
-			}
-
-			// Check if current weather exists
-			auto currentWeathers = weatherManager->GetCurrentWeathers();
-			if (!currentWeathers.currentWeather) {
-				return false;
-			}
-
-			// Load weather settings for this feature
-			json weatherSettings;
-			if (!weatherManager->LoadSettingsFromWeather(currentWeathers.currentWeather, featureName, weatherSettings)) {
-				return false;
-			}
-
-			// Check if this specific setting has an override
-			return weatherSettings.contains(settingName) && !weatherSettings[settingName].is_null();
-		}
-
-		bool SliderFloat(const char* label, Feature* feature, const char* settingName, float* value, float min, float max, const char* format)
-		{
-			bool isControlled = IsWeatherControlled(feature, settingName);
-
-			if (isControlled) {
-				auto* weatherManager = globals::weatherManager;
-				auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-				// Make it look like a clickable button when weather-controlled
-				ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.3f, 0.3f, 0.4f, 0.8f));
-				ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.4f, 0.4f, 0.5f, 0.9f));
-				ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.5f, 0.5f, 0.6f, 1.0f));
-				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
-			}
-
-			ImGuiSliderFlags flags = isControlled ? (static_cast<ImGuiSliderFlags>(ImGuiSliderFlags_NoInput) | static_cast<ImGuiSliderFlags>(ImGuiSliderFlags_ReadOnly)) : ImGuiSliderFlags_None;
-			bool changed = ImGui::SliderFloat(label, value, min, max, format, flags);
-
-			if (isControlled) {
-				ImGui::PopStyleVar();
-				ImGui::PopStyleColor(3);
-
-				// Check if clicked
-				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = globals::weatherManager;
-					auto* editorWindow = EditorWindow::GetSingleton();
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-					if (currentWeathers.currentWeather && editorWindow) {
-						editorWindow->OpenWeatherFeatureSetting(
-							currentWeathers.currentWeather,
-							feature->GetShortName(),
-							settingName);
-					}
-				}
-
-				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-					ImGui::BeginTooltip();
-					auto* weatherManager = globals::weatherManager;
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
-					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
-						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
-					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
-				}
-
-				return false;  // Prevent changes when weather-controlled
-			}
-
-			return changed;
-		}
-
-		bool Checkbox(const char* label, Feature* feature, const char* settingName, bool* value)
-		{
-			bool isControlled = IsWeatherControlled(feature, settingName);
-
-			if (isControlled) {
-				auto* weatherManager = globals::weatherManager;
-				auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-				ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.3f, 0.3f, 0.4f, 0.8f));
-				ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.4f, 0.4f, 0.5f, 0.9f));
-				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
-				ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-			}
-
-			bool changed = ImGui::Checkbox(label, value);
-
-			if (isControlled) {
-				ImGui::PopItemFlag();
-				ImGui::PopStyleVar();
-				ImGui::PopStyleColor(2);
-
-				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = globals::weatherManager;
-					auto* editorWindow = EditorWindow::GetSingleton();
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-					if (currentWeathers.currentWeather && editorWindow) {
-						editorWindow->OpenWeatherFeatureSetting(
-							currentWeathers.currentWeather,
-							feature->GetShortName(),
-							settingName);
-					}
-				}
-
-				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-					ImGui::BeginTooltip();
-					auto* weatherManager = globals::weatherManager;
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
-					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
-						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
-					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
-				}
-
-				return false;
-			}
-
-			return changed;
-		}
-
-		bool ColorEdit3(const char* label, Feature* feature, const char* settingName, float col[3])
-		{
-			bool isControlled = IsWeatherControlled(feature, settingName);
-
-			if (isControlled) {
-				auto* weatherManager = globals::weatherManager;
-				auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
-				ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-			}
-
-			bool changed = ImGui::ColorEdit3(label, col);
-
-			if (isControlled) {
-				ImGui::PopItemFlag();
-				ImGui::PopStyleVar();
-
-				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = globals::weatherManager;
-					auto* editorWindow = EditorWindow::GetSingleton();
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-					if (currentWeathers.currentWeather && editorWindow) {
-						editorWindow->OpenWeatherFeatureSetting(
-							currentWeathers.currentWeather,
-							feature->GetShortName(),
-							settingName);
-					}
-				}
-
-				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-					ImGui::BeginTooltip();
-					auto* weatherManager = globals::weatherManager;
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
-					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
-						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
-					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
-				}
-
-				return false;
-			}
-
-			return changed;
-		}
-
-		bool ColorEdit4(const char* label, Feature* feature, const char* settingName, float col[4])
-		{
-			bool isControlled = IsWeatherControlled(feature, settingName);
-
-			if (isControlled) {
-				auto* weatherManager = globals::weatherManager;
-				auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
-				ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-			}
-
-			bool changed = ImGui::ColorEdit4(label, col);
-
-			if (isControlled) {
-				ImGui::PopItemFlag();
-				ImGui::PopStyleVar();
-
-				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = globals::weatherManager;
-					auto* editorWindow = EditorWindow::GetSingleton();
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-
-					if (currentWeathers.currentWeather && editorWindow) {
-						editorWindow->OpenWeatherFeatureSetting(
-							currentWeathers.currentWeather,
-							feature->GetShortName(),
-							settingName);
-					}
-				}
-
-				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-					ImGui::BeginTooltip();
-					auto* weatherManager = globals::weatherManager;
-					auto currentWeathers = weatherManager->GetCurrentWeathers();
-					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
-					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
-						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
-					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
-					ImGui::PopTextWrapPos();
-					ImGui::EndTooltip();
-				}
-
-				return false;
-			}
-
-			return changed;
-		}
-	}
-
 	bool InputComboWidget(
 		const char* label,
 		std::vector<InputCombo>& combo,
@@ -2706,13 +2982,13 @@ namespace Util
 
 	namespace
 	{
-		constexpr float kFlyoutCloseDelay = 0.25f;
+		constexpr float kFlyoutCloseDelay = 0.10f;
 		constexpr float kFlyoutSlideOpenSpeed = 10.0f;
 		constexpr float kFlyoutSlideCloseSpeed = 14.0f;
 		constexpr float kFlyoutSlideDistance = 6.0f;
-		constexpr float kFlyoutGap = 2.0f;
 		constexpr float kFlyoutAlphaScale = 4.0f;
 		constexpr std::string_view kFlyoutWindowPrefix = "##flyout_";
+		constexpr std::string_view kBlurredFlyoutWindowPrefix = "##blurred_flyout_";
 
 		void ResetFlyout(FlyoutState& state, bool preserveHoverBlock = false) noexcept
 		{
@@ -2752,28 +3028,36 @@ namespace Util
 			       ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 		}
 
-		ImVec2 GetFlyoutPos(FlyoutState& state, const ImVec2& anchorMax,
-			float slideOffset, float scale, const ImRect& visible, bool& canOpen)
+		ImVec2 GetFlyoutPos(FlyoutState& state, const ImVec2& sourceMin, const ImVec2& sourceMax,
+			float slideOffset, float scale, const ImRect& visible, const FlyoutStyle& style, bool& canOpen)
 		{
-			const float gap = kFlyoutGap * scale;
-			ImVec2 pos(anchorMax.x, anchorMax.y + gap - slideOffset);
+			const float gap = style.verticalGap * scale;
+			const float horizontalPivot = style.centerOnSource ? 0.5f : 1.0f;
+			ImVec2 pos(
+				style.centerOnSource ? (sourceMin.x + sourceMax.x) * 0.5f : sourceMax.x,
+				sourceMax.y + gap - slideOffset);
 
-			canOpen = state.lastSize.y <= 0.0f || anchorMax.y + gap + state.lastSize.y <= visible.Max.y;
-			const float minRight = state.lastSize.x > 0.0f ?
-			                           std::min(visible.Max.x, visible.Min.x + state.lastSize.x) :
-			                           visible.Min.x;
-			pos.x = std::clamp(pos.x, minRight, visible.Max.x);
+			canOpen = state.lastSize.y <= 0.0f || sourceMax.y + gap + state.lastSize.y <= visible.Max.y;
+			if (state.lastSize.x > 0.0f) {
+				const float minimumAnchor = visible.Min.x + state.lastSize.x * horizontalPivot;
+				const float maximumAnchor = visible.Max.x - state.lastSize.x * (1.0f - horizontalPivot);
+				pos.x = minimumAnchor <= maximumAnchor ?
+				            std::clamp(pos.x, minimumAnchor, maximumAnchor) :
+				            (visible.Min.x + visible.Max.x) * 0.5f;
+			}
 
 			pos.x = std::floor(pos.x + 0.5f);
 			pos.y = std::floor(pos.y + 0.5f);
 			return pos;
 		}
 
-		bool BeginFlyoutImpl(FlyoutState& state, ImGuiID itemId, bool sourcePressed)
+		bool BeginFlyoutImpl(FlyoutState& state, ImGuiID itemId, bool sourcePressed,
+			const FlyoutStyle& flyoutStyle, const ImVec2* explicitSourceMin = nullptr,
+			const ImVec2* explicitSourceMax = nullptr)
 		{
-			IM_ASSERT(ImGui::GetItemID() == itemId);
-			const ImVec2 sourceMin = ImGui::GetItemRectMin();
-			const ImVec2 sourceMax = ImGui::GetItemRectMax();
+			const ImGuiID submittedItemId = ImGui::GetItemID();
+			const ImVec2 sourceMin = explicitSourceMin ? *explicitSourceMin : ImGui::GetItemRectMin();
+			const ImVec2 sourceMax = explicitSourceMax ? *explicitSourceMax : ImGui::GetItemRectMax();
 
 			const int currentFrame = ImGui::GetFrameCount();
 			if (state.lastFrame >= 0 && currentFrame > state.lastFrame + 1)
@@ -2781,8 +3065,10 @@ namespace Util
 			state.lastFrame = currentFrame;
 
 			if (state.pendingFocusReturnId == itemId) {
-				ImGui::FocusItem();
-				ImGui::SetNavCursorVisible(true);
+				if (submittedItemId == itemId) {
+					ImGui::FocusItem();
+					ImGui::SetNavCursorVisible(true);
+				}
 				state.pendingFocusReturnId = 0;
 			}
 
@@ -2802,8 +3088,10 @@ namespace Util
 					state.closeTimer = 0.0f;
 					state.keepOpenForNavigation = navigationPressed;
 					focusOnOpen = navigationPressed;
-				} else {
+				} else if (!flyoutStyle.keepOpenOnSourcePress) {
 					RequestCloseFlyout(state);
+				} else {
+					state.closeTimer = 0.0f;
 				}
 			} else {
 				const bool wantsOpen = (hovered && state.blockedHoverId != itemId) || sourcePressed;
@@ -2817,7 +3105,8 @@ namespace Util
 						state.openProgress = 0.0f;
 						state.keepOpenForNavigation = navigationPressed;
 						state.windowName.clear();
-						std::format_to(std::back_inserter(state.windowName), "{}{}", kFlyoutWindowPrefix, itemId);
+						std::format_to(std::back_inserter(state.windowName), "{}{}",
+							flyoutStyle.blurBackground ? kBlurredFlyoutWindowPrefix : kFlyoutWindowPrefix, itemId);
 					}
 				}
 
@@ -2843,15 +3132,16 @@ namespace Util
 			const float alpha = std::min(state.openProgress * kFlyoutAlphaScale, 1.0f);
 			bool canOpen = true;
 			const ImVec2 flyoutPos = GetFlyoutPos(
-				state, sourceMax, slideOffset, scale, GetFlyoutWindowRect(), canOpen);
+				state, sourceMin, sourceMax, slideOffset, scale, GetFlyoutWindowRect(), flyoutStyle, canOpen);
 			if (!canOpen) {
 				state.blockedHoverId = itemId;
 				ResetFlyout(state, true);
 				return false;
 			}
 
-			ImGui::SetNextWindowPos(flyoutPos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-			ImGui::SetNextWindowBgAlpha(ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w * alpha);
+			ImGui::SetNextWindowPos(
+				flyoutPos, ImGuiCond_Always, ImVec2(flyoutStyle.centerOnSource ? 0.5f : 1.0f, 0.0f));
+			ImGui::SetNextWindowBgAlpha(flyoutStyle.windowBackgroundAlpha * alpha);
 			if (focusOnOpen)
 				ImGui::SetNextWindowFocus();
 
@@ -2860,19 +3150,17 @@ namespace Util
 			                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
 			                                   ImGuiWindowFlags_NoFocusOnAppearing;
 
-			const auto& style = ImGui::GetStyle();
-			const float highlightGap = std::max(0.0f, style.WindowPadding.x - style.ItemSpacing.x * 0.5f);
-			const float verticalPadding = highlightGap + style.ItemSpacing.y * 0.5f;
-			ImGui::PushStyleVar(
-				ImGuiStyleVar_WindowPadding, ImVec2(style.WindowPadding.x, verticalPadding));
-			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * alpha);
-			SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(2); });
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, flyoutStyle.windowPadding);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, flyoutStyle.windowRounding);
+			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, flyoutStyle.contentAlpha * alpha);
+			SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(3); });
 
 			const bool visible = ImGui::Begin(state.windowName.c_str(), nullptr, flags);
 			state.lastSize = ImGui::GetWindowSize();
 			state.flyoutMin = ImGui::GetWindowPos();
 			state.flyoutMax = ImVec2(state.flyoutMin.x + state.lastSize.x, state.flyoutMin.y + state.lastSize.y);
-			if (visible)
+			constexpr auto popupFlags = ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel;
+			if (visible && !ImGui::IsPopupOpen(nullptr, popupFlags))
 				ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
 
 			if (!visible) {
@@ -2906,7 +3194,7 @@ namespace Util
 				state.draggedFromFlyout = false;
 
 			ImGui::End();
-			ImGui::PopStyleVar(2);
+			ImGui::PopStyleVar(3);
 
 			const ImVec2 mousePos = ImGui::GetIO().MousePos;
 			const bool overSource = ContainsPoint(state.sourceMin, state.sourceMax, mousePos);
@@ -2937,9 +3225,17 @@ namespace Util
 		}
 	}
 
-	FlyoutScope::FlyoutScope(FlyoutState& flyoutState, ImGuiID itemId, bool sourcePressed)
+	FlyoutScope::FlyoutScope(
+		FlyoutState& flyoutState, ImGuiID itemId, bool sourcePressed, const FlyoutStyle& flyoutStyle)
 	{
-		if (BeginFlyoutImpl(flyoutState, itemId, sourcePressed))
+		if (BeginFlyoutImpl(flyoutState, itemId, sourcePressed, flyoutStyle))
+			state = &flyoutState;
+	}
+
+	FlyoutScope::FlyoutScope(FlyoutState& flyoutState, ImGuiID itemId, bool sourcePressed,
+		const ImVec2& sourceMin, const ImVec2& sourceMax, const FlyoutStyle& flyoutStyle)
+	{
+		if (BeginFlyoutImpl(flyoutState, itemId, sourcePressed, flyoutStyle, &sourceMin, &sourceMax))
 			state = &flyoutState;
 	}
 
@@ -2950,6 +3246,12 @@ namespace Util
 	}
 
 	bool IsFlyoutWindowName(const char* name) noexcept
+	{
+		return IsUnblurredFlyoutWindowName(name) ||
+		       (name && std::string_view(name).starts_with(kBlurredFlyoutWindowPrefix));
+	}
+
+	bool IsUnblurredFlyoutWindowName(const char* name) noexcept
 	{
 		return name && std::string_view(name).starts_with(kFlyoutWindowPrefix);
 	}
@@ -2974,5 +3276,20 @@ namespace Util
 	{
 		const float progress = std::clamp(state.openProgress, 0.0f, 1.0f);
 		return 1.0f - (1.0f - progress) * (1.0f - progress);
+	}
+
+	ImU32 GetColorChannelMarker(ColorChannel channel)
+	{
+		constexpr std::array markers{
+			IM_COL32(240, 20, 20, 255),
+			IM_COL32(20, 240, 20, 255),
+			IM_COL32(20, 20, 240, 255),
+		};
+		return markers[static_cast<size_t>(channel)];
+	}
+
+	void SetNextItemColorMarker(ColorChannel channel)
+	{
+		ImGui::SetNextItemColorMarker(GetColorChannelMarker(channel));
 	}
 }  // namespace Util

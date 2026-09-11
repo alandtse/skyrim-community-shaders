@@ -3,6 +3,52 @@
 #include "Globals.h"
 #include "State.h"
 
+#include <mutex>
+#include <set>
+#include <string>
+
+namespace
+{
+	struct GpuPassCapabilityRegistry
+	{
+		std::mutex mutex;
+		std::set<std::string, std::less<>> featurePrefixes;
+	};
+
+	GpuPassCapabilityRegistry& GetGpuPassCapabilityRegistry()
+	{
+		static GpuPassCapabilityRegistry registry;
+		return registry;
+	}
+}
+
+bool GpuPassCapabilities::Register(std::string_view passName)
+{
+	const auto separator = passName.find("::");
+	if (separator == std::string_view::npos || separator == 0)
+		return false;
+
+	// The registry is append-only, so successful registrations remain valid on every thread.
+	thread_local std::set<std::string, std::less<>> registeredPrefixes;
+	const auto prefix = passName.substr(0, separator);
+	if (registeredPrefixes.contains(prefix))
+		return true;
+
+	auto& registry = GetGpuPassCapabilityRegistry();
+	std::scoped_lock lock(registry.mutex);
+	if (!registry.featurePrefixes.contains(prefix))
+		registry.featurePrefixes.emplace(prefix);
+	registeredPrefixes.emplace(prefix);
+	return true;
+}
+
+bool GpuPassCapabilities::Contains(std::string_view featurePrefix)
+{
+	auto& registry = GetGpuPassCapabilityRegistry();
+	std::scoped_lock lock(registry.mutex);
+	return registry.featurePrefixes.contains(featurePrefix);
+}
+
 #ifdef TRACY_ENABLE
 ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name)
 {

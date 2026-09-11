@@ -217,8 +217,8 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	[branch] if (collisionFlag > 0.5)
 	{
 		// Captured instances already include the cell origin; do not apply World a second time.
-		const float3 collisionPos = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
-		const float3 collisionCentre = input.InstanceData1.xyz + e0.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
+		const float3 collisionPos = msPosition.xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+		const float3 collisionCentre = input.InstanceData1.xyz + e0.xyz - FrameBuffer::CameraPosAdjust[0].xyz;
 		float3 displacement, previousDisplacement;
 		GrassCollision::GetDisplacedPosition(input, collisionPos, collisionCentre, displacement, previousDisplacement);
 		msPosition.xyz += displacement;
@@ -532,7 +532,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Swaps direction of the backfaces otherwise they seem to get lit from the wrong direction.
 	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GrassSphereNormal))
-		if (!frontFace)
+		if (dot(normal, viewDirection) < 0.0)
 			normal = -normal;
 
 	float3x3 tbn = 0;
@@ -950,6 +950,8 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif
 	float3 normalVS = -normalize(cross(ddx, ddy));
 	float3 normal = normalize(FrameBuffer::ViewToWorld(normalVS, false, eyeIndex));
+	if (dot(normal, -normalize(input.WorldPosition.xyz)) < 0.0)
+		normal = -normal;
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);

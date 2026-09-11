@@ -7,6 +7,7 @@
 #include "Buffer.h"
 #include "GrassOptimizations/GrassBucketStore.h"
 #include "GrassOptimizations/HiZPyramid.h"
+#include "Utils/LazyShader.h"
 #include "Utils/VersionedRelocation.h"
 
 /** @brief Rewrites vanilla grass rendering with a bucket based system utilizing indirect draws and compute shader per instance culling. */
@@ -205,15 +206,11 @@ public:
 
 	ID3D11DeviceContext1* ctx1 = nullptr;
 
-	ID3D11ComputeShader* cullCS = nullptr;
-	// Set on a failed GetCullCS() compile so UpdateGrass() (called once per frame) doesn't retry the
-	// compile and re-log the failure every frame; cleared by ClearShaderCache() to allow a retry.
-	bool cullCSFailed = false;
+	Util::LazyShader<ID3D11ComputeShader> cullCS;
 
 	std::unique_ptr<ConstantBuffer> cullParamsCB;
 	std::unique_ptr<ConstantBuffer> eyeIndexCB;
-	winrt::com_ptr<ID3DBlob> layoutSignature;
-	bool layoutSignatureFailed = false;
+	Util::LazyShader<ID3DBlob> layoutSignature;
 	std::unordered_map<uint64_t, winrt::com_ptr<ID3D11InputLayout>> inputLayouts;
 	// Slotted per-bucket constants bound via CSSetConstantBuffers1: one 256-byte slot per visible
 	// bucket, one map fills them all, recreated when the bucket count outgrows it.

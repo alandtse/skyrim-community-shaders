@@ -618,7 +618,7 @@ void GrassOptimizations::UploadCullState(ID3D11Device* device, ID3D11DeviceConte
 			b.cullVisible = false;
 	}
 
-	ctx->CSSetShader(cullCS, nullptr, 0);
+	ctx->CSSetShader(cullCS.get(), nullptr, 0);
 
 	for (auto& [key, b] : bucketStore.buckets)
 		if (b.cullVisible)
@@ -709,16 +709,9 @@ void GrassOptimizations::SetupResources()
 
 void GrassOptimizations::ClearShaderCache()
 {
-	auto release = [](ID3D11ComputeShader*& shader) {
-		if (shader)
-			shader->Release();
-		shader = nullptr;
-	};
-	release(cullCS);
-	cullCSFailed = false;
+	cullCS.Reset();
+	layoutSignature.Reset();
 	inputLayouts.clear();
-	layoutSignature = nullptr;
-	layoutSignatureFailed = false;
 	hiZ.ClearShaderCache();
 	bucketStore.ClearShaderCache();
 }
@@ -728,16 +721,9 @@ ID3D11InputLayout* GrassOptimizations::GetOptimizedInputLayout(uint64_t a_descVa
 	if (auto it = inputLayouts.find(a_descVal); it != inputLayouts.end())
 		return it->second.get();
 
-	if (layoutSignatureFailed)
+	ID3DBlob* signature = layoutSignature.Get(L"Data\\Shaders\\GrassOptimizations\\GrassInstanceSignatureVS.hlsl", {}, "vs_5_0");
+	if (!signature)
 		return nullptr;
-	if (!layoutSignature) {
-		layoutSignature = Util::CompileShaderBlob(L"Data\\Shaders\\GrassOptimizations\\GrassInstanceSignatureVS.hlsl", {}, "vs_5_0");
-		if (!layoutSignature) {
-			logger::error("[GRASS OPTIMIZATIONS] GrassInstanceSignatureVS compile failed");
-			layoutSignatureFailed = true;
-			return nullptr;
-		}
-	}
 
 	uint64_t storage = a_descVal;
 	auto& vdesc = *reinterpret_cast<RE::BSGraphics::VertexDesc*>(&storage);
@@ -755,7 +741,7 @@ ID3D11InputLayout* GrassOptimizations::GetOptimizedInputLayout(uint64_t a_descVa
 
 	winrt::com_ptr<ID3D11InputLayout> layout;
 	const HRESULT hr = globals::d3d::device->CreateInputLayout(elements.data(), count,
-		layoutSignature->GetBufferPointer(), layoutSignature->GetBufferSize(), layout.put());
+		signature->GetBufferPointer(), signature->GetBufferSize(), layout.put());
 	if (FAILED(hr) || !layout) {
 		logger::error("[GRASS OPTIMIZATIONS] input layout creation failed for desc {:X} hr={:08X}", a_descVal, (uint32_t)hr);
 		return nullptr;
@@ -768,14 +754,7 @@ ID3D11InputLayout* GrassOptimizations::GetOptimizedInputLayout(uint64_t a_descVa
 
 ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 {
-	if (!cullCS && !cullCSFailed) {
-		cullCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0"));
-		if (!cullCS) {
-			cullCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] cull CS load failed — feature disabled");
-		}
-	}
-	return cullCS;
+	return cullCS.Get(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0", "main", "GrassOptimizations::CullCS");
 }
 
 static void WriteArgsUint32(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, uint32_t byteOffset, uint32_t value)

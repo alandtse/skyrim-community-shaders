@@ -953,13 +953,11 @@ PS_OUTPUT main(PS_INPUT input)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor, float4(input.Position.xy * FrameBuffer::DynamicResolutionParams2.xy, input.Position.z, 1));
 		expFogFactor = exponentialHeightFog.w;
-#			if defined(ADDBLEND) || defined(MULTBLEND) || defined(MULTBLEND_DECAL)
 		fogColor = exponentialHeightFog.xyz;
-		fogFactor = exponentialHeightFog.w;
-#			else
-		fogColor = exponentialHeightFog.xyz;
-		fogFactor = exponentialHeightFog.w;
-		alpha *= 1 - exponentialHeightFog.w;
+#			if !defined(ADDBLEND) && !defined(MULTBLEND) && !defined(MULTBLEND_DECAL)
+		// Weather-matched fog changes radiance, not mountain-mist material coverage.
+		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings == 0)
+			alpha *= 1 - exponentialHeightFog.w;
 #			endif
 		if (ExponentialHeightFog::ShouldDisableVanillaFog()) {
 			vanillaFogColor = lightColor;

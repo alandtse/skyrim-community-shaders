@@ -376,7 +376,19 @@ namespace SharedData
 		float volumetricSampleJitterMultiplier;
 		float volumetricUpsampleJitterMultiplier;
 		float volumetricLocalLightScatteringIntensity;
+		uint useVanillaFogSettings;
+		float vanillaFogMaxOpacity;
+		float vanillaFogDensity;
+		float vanillaFogNear;
+		float vanillaFogFar;
+		float vanillaFogPower;
+		float fogAlphaGamma;
+		float vanillaFogStrength;
 		float2 pad0;
+		float4 vanillaFogNearColor;
+		float4 vanillaFogFarColor;
+		float fogLightingInfluence;
+		float3 pad1;
 	};
 
 	struct TruePBRSettings

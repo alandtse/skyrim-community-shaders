@@ -3,6 +3,7 @@
 #include "Menu.h"
 #include "OverlayFeature.h"
 #include "Utils/Input.h"
+#include "VR/DynamicNearClip.h"
 #include "VR/OpenVRDetection.h"  // In Features/VR/
 #include "VRStereoOptimizations.h"
 #include <algorithm>
@@ -136,7 +137,7 @@ public:
 	 * visual customization options. Settings are automatically validated and clamped
 	 * to valid ranges when loaded or modified.
 	 */
-	struct Settings
+	struct Settings : VRNearClipSettings
 	{
 		// Performance optimization settings
 		bool EnableDepthBufferCullingExterior = true;  ///< Enable depth buffer culling for VR performance
@@ -178,6 +179,7 @@ public:
 		 */
 		void ClampToValidRanges()
 		{
+			ClampNearClipSettings();
 			mouseDeadzone = std::clamp(mouseDeadzone, 0.0f, 1.0f);
 			StereoBlendDepthSigma = std::clamp(StereoBlendDepthSigma, 0.001f, 0.1f);
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);
@@ -224,6 +226,7 @@ public:
 	eastl::unique_ptr<ConstantBuffer> stereoBlendCB;
 
 	VRStereoOptimizations stereoOpt;
+	VRDynamicNearClip dynamicNearClip;
 
 	struct alignas(16) StereoBlendCB
 	{

@@ -75,6 +75,8 @@ public:
 	void DrawSSGI();
 	/** @brief Updates the SSGI constant buffer with current camera, resolution, and settings data. */
 	void UpdateSB();
+	/** @brief Discard temporal accumulation before the next SSGI dispatch. */
+	void QueueHistoryReset() { queuedResetHistory.store(true, std::memory_order_release); }
 
 	//////////////////////////////////////////////////////////////////////////////////
 

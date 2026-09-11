@@ -16,6 +16,12 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VR::Settings,
+	DynamicNearClip,
+	NormalNearClip,
+	MinimumNearClip,
+	NearDistanceScale,
+	RestoreSpeed,
+	DynamicNearClipReadout,
 	EnableDepthBufferCullingInterior,
 	EnableDepthBufferCullingExterior,
 	MinOccludeeBoxExtent,
@@ -67,6 +73,7 @@ void VR::RestoreDefaultSettings()
 
 void VR::SetupResources()
 {
+	dynamicNearClip.SetupResources();
 	CompileStereoBlendShaders();
 
 	auto renderer = globals::game::renderer;
@@ -124,6 +131,7 @@ void VR::SetupResources()
 
 void VR::PostPostLoad()
 {
+	dynamicNearClip.Install();
 	stereoOpt.LatchBootSnapshot();
 
 	gDepthBufferCulling = reinterpret_cast<bool*>(REL::Offset(0x1EC6B88).address());

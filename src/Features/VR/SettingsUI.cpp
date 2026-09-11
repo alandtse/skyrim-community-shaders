@@ -232,6 +232,7 @@ void VR::DrawSettings()
 		if (BeginTabItemWithFont(T(TKEY("tab_general"), "General"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRGeneralFrame", { 0, 0 }, true)) {
 				DrawGeneralVRSettings();
+				dynamicNearClip.DrawSettings();
 			}
 			ImGui::EndChild();
 			ImGui::EndTabItem();

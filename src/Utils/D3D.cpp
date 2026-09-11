@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "Features/TerrainBlending.h"
+#include "Features/VR.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/Format.h"
@@ -18,6 +19,9 @@ namespace Util
 		auto renderer = globals::game::renderer;
 		if (!renderer)
 			return nullptr;
+		// Preserve depth precision for consumers while the camera's near plane is adaptive.
+		if (globals::game::isVR && globals::features::vr.dynamicNearClip.IsControllingCamera())
+			prefer16bit = false;
 		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		if (globals::deferred && globals::deferred->sceneDepthFinal)
 			return zPrepassCopy.depthSRV;

@@ -195,5 +195,6 @@ void VR::RenderStatusHud()
 			});
 		OverlayRenderer::RenderShaderBlockingStatus();
 		OverlayRenderer::RenderFeatureOverlays();
+		globals::features::vr.dynamicNearClip.DrawReadout();
 	});
 }

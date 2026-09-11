@@ -48,6 +48,7 @@
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
 #include "Features/WetnessEffects.h"
+#include "Features/Wind/Wind.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
@@ -112,6 +113,7 @@ namespace globals
 		ScreenshotFeature screenshotFeature{};
 		CSEditor csEditor{};
 		CSUtility csUtility{};
+		Wind wind{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		Skin skin{};

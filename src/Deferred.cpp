@@ -18,6 +18,7 @@
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/Wind/Wind.h"
 
 #include "Hooks.h"
 
@@ -452,9 +453,13 @@ void Deferred::DeferredPasses()
 		// lights Eye 1 natively — no mode-texture skip (null SRV reads 0 = MODE_DISOCCLUDED).
 		ID3D11ShaderResourceView* modeSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &modeSRV);
+		ID3D11ShaderResourceView* springDebugSRV = globals::features::wind.GetGrassWindSpringDebugSRV();
+		context->CSSetShaderResources(18, 1, &springDebugSRV);
 
 		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, motionVectors.UAV };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		ID3D11Buffer* sharedBuffers[]{ globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
+		context->CSSetConstantBuffers(5, ARRAYSIZE(sharedBuffers), sharedBuffers);
 
 		if (auto* shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite()) {
 			context->CSSetShader(shader, nullptr, 0);
@@ -464,6 +469,7 @@ void Deferred::DeferredPasses()
 		// Unbind mode texture SRV
 		ID3D11ShaderResourceView* nullSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &nullSRV);
+		context->CSSetShaderResources(18, 1, &nullSRV);
 	}
 
 	// VR: Bilateral stereo blend (the reprojection color-overwrite path is gone —

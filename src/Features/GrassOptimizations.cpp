@@ -1,6 +1,10 @@
 #include "GrassOptimizations.h"
+#include "GpuPass.h"
+#include "GrassCollision.h"
 #include "GrassLighting.h"
+#include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
+#include "Wind/Wind.h"
 
 #define I18N_KEY_PREFIX "feature.grass_optimizations."
 
@@ -17,7 +21,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableOcclusionCulling,
 	OcclusionBias,
 	SimpleShadingPixelSize,
-	CollisionDistance,
 	EnableMeshLOD,
 	EnableMidLOD,
 	MidLODPixelSize,
@@ -116,16 +119,6 @@ void GrassOptimizations::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("simple_shading_px_tooltip"),
 							  "Grass instances smaller than this size on screen will skip barely visible detail including contact shadows, specular highlights, and other complex grass visual elements. Zero disables this feature."));
-	}
-
-	ImGui::SliderFloat(T(TKEY("collision_distance"), "Collision Distance"), &settings.CollisionDistance, 0.0f, 8192.0f, "%.0f");
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		std::vector<std::string> tooltipLines = {
-			T(TKEY("collision_distance_tooltip"),
-				"Grass beyond this distance skips any collision detection. Zero disables collision on all grass. Requires the Grass Collision feature."),
-			Util::Units::FormatDistance(settings.CollisionDistance)
-		};
-		Util::DrawMultiLineTooltip(tooltipLines);
 	}
 
 	ImGui::SeparatorText(T(TKEY("mesh_lod"), "Mesh LOD"));
@@ -329,10 +322,8 @@ void GrassOptimizations::UpdateGrass()
 		cp.fadeNow = timeAccum;
 		cp.fadeInTimeRcp = fadeInTimeRcp;
 
-		const float collisionDist = std::max(0.0f, settings.CollisionDistance);
 		cp.invisibleFadeCull = settings.InvisibleFadeCull;
 		cp.simpleShadingPixelSize = std::max(0.0f, settings.SimpleShadingPixelSize);
-		cp.collisionDistSq = collisionDist * collisionDist;
 		cp.midLODPixelSize = settings.MidLODPixelSize;
 		cp.farLODPixelSize = settings.EnableMidLOD ? std::min(settings.FarLODPixelSize, settings.MidLODPixelSize) : settings.FarLODPixelSize;
 
@@ -510,6 +501,19 @@ void GrassOptimizations::UploadCullState(ID3D11Device* device, ID3D11DeviceConte
 			b.cullVisible = false;
 	}
 
+	// These fields must be updated before culling, regardless of SetupGeometry hook order.
+	if (globals::features::grassCollision.loaded) {
+		globals::features::grassCollision.Update();
+		globals::features::grassCollision.BindDeformationResources(true);
+	}
+	if (globals::features::wind.loaded)
+		globals::features::wind.UpdateGrassWindSpring(true);
+	globals::state->UpdatePermutationBuffer();
+	ID3D11Buffer* deformationBuffers[] = {
+		globals::state->permutationCB->CB(), globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB()
+	};
+	ctx->CSSetConstantBuffers(4, ARRAYSIZE(deformationBuffers), deformationBuffers);
+
 	ID3D11Buffer* paramsCB = cullParamsCB->CB();
 	ctx->CSSetConstantBuffers(0, 1, &paramsCB);
 	ID3D11Buffer* frameBuffers[1]{ *globals::game::perFrame.get() };
@@ -571,6 +575,12 @@ void GrassOptimizations::UploadCullState(ID3D11Device* device, ID3D11DeviceConte
 	ctx->CSSetUnorderedAccessViews(0, (UINT)std::size(nullUAVs), nullUAVs, nullptr);
 	ID3D11ShaderResourceView* nullSRVs[4] = {};
 	ctx->CSSetShaderResources(0, 4, nullSRVs);
+	ID3D11ShaderResourceView* nullDeformationSRVs[11] = {};
+	ctx->CSSetShaderResources(100, ARRAYSIZE(nullDeformationSRVs), nullDeformationSRVs);
+	ID3D11Buffer* nullDeformationBuffers[4] = {};
+	ctx->CSSetConstantBuffers(3, ARRAYSIZE(nullDeformationBuffers), nullDeformationBuffers);
+	ID3D11SamplerState* nullDeformationSamplers[2] = {};
+	ctx->CSSetSamplers(14, ARRAYSIZE(nullDeformationSamplers), nullDeformationSamplers);
 	ctx->CSSetShader(nullptr, nullptr, 0);
 }
 
@@ -664,7 +674,11 @@ void GrassOptimizations::ClearShaderCache()
 ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 {
 	if (!cullCS && !cullCSFailed) {
-		cullCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0"));
+		std::vector<std::pair<const char*, const char*>> defines;
+		if (globals::features::grassCollision.loaded)
+			defines.emplace_back("GRASS_COLLISION", "1");
+		cullCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(
+			L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", defines, "cs_5_0"));
 		if (!cullCS) {
 			cullCSFailed = true;
 			logger::error("[GRASS OPTIMIZATIONS] cull CS load failed — feature disabled");
@@ -675,6 +689,7 @@ ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 
 void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 {
+	CS_GPU_PASS("GrassOptimizations::CullBucket");
 	if (b.cullSlot == UINT32_MAX)
 		return;
 

@@ -5,16 +5,22 @@
 #include <Tracy/TracyD3D11.hpp>
 
 #include <Buffer.h>
+#include <array>
 #include <atomic>
 #include <format>
 #include <iterator>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <span>
 
 using json = nlohmann::json;
 
+#include "GpuPass.h"
 #include <FeatureBuffer.h>
 
+#include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/WindField.h"
 #include <Hooks.h>
 #include <mutex>
 
@@ -61,6 +67,26 @@ public:
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
 	float timer = 0;
+	float windFieldFrameTime = 0.0f;
+	float windFieldAmbientSpeed = 0.0f;
+	float windFieldAdvectionSpeed = 0.0f;
+	float windFieldGustTravelDistance = 0.0f;
+	float previousWindFieldGustTravelDistance = 0.0f;
+	float windFieldTravelDelta = 0.0f;
+	float3 ambientWindVelocity = {};
+	float3 windFieldSelectedVelocity = {};
+	float3 previousWindFieldSelectedVelocity = {};
+	WindField::Field windFieldCurrent{};
+	WindField::Field previousWindFieldCurrent{};
+	WindField::Field windFieldTransition{};
+	WindField::Field previousWindFieldTransition{};
+	float windFieldTransitionElapsed = 0.0f;
+	float windFieldTransitionBlend = 1.0f;
+	float previousWindFieldTransitionBlend = 1.0f;
+	bool windFieldTransitionActive = false;
+	float windFieldSelectedSpeed = 0.0f;
+	bool windFieldHasPreviousSample = false;
+	WindField::WindTuning windFieldTuning{};
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -72,6 +98,7 @@ public:
 	LARGE_INTEGER frameTimingFrequency;
 	LARGE_INTEGER frameStartTime;
 	bool frameTimingActive = false;
+	std::optional<ScopedGpuPass> grassGpuPass;
 
 	enum ConfigMode
 	{
@@ -83,10 +110,61 @@ public:
 
 	/** @brief Per-draw-call hook: updates feature state, constant buffers, and overlay. */
 	void Draw();
+	/** @brief Keeps one GPU timer open across each contiguous batch of Grass draw calls. */
+	void UpdateGrassGpuPass();
 	/** @brief Accumulates per-shader-type draw call counts and frame timing for the performance overlay. */
 	void Debug();
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
 	void Reset();
+	/** @brief Samples the current shared wind field at an absolute world position. */
+	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition) const noexcept;
+	/** @brief Samples the shared field with explicit ambient direction and speed inputs. */
+	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition,
+		const float3& a_windDirection, float a_windSpeed) const noexcept;
+
+	/** Identifies the producer that owns a transient wind source. */
+	enum class TransientWindSourceOwner : uint8_t
+	{
+		Generic,
+		FusRoDah,
+		Dragon,
+		SpellShout,
+		StormCall,
+		ProjectileMagic,
+		WeaponThrowVR,
+		Explosion,
+		HeavyImpact
+	};
+
+	/** Controls which sources survive when the shared pool reaches capacity. */
+	enum class TransientWindSourcePriority : uint8_t
+	{
+		Wingbeat = 10,
+		Flight = 20,
+		Impact = 40,
+		Breath = 50,
+		FusRoDah = 60
+	};
+
+	/** A frame-submitted source paired with its saturation priority. */
+	struct TransientWindSourceSubmission
+	{
+		WindField::TransientWindSource source;
+		TransientWindSourcePriority priority;
+	};
+
+	/** @brief Queues a transient XYZ pressure impulse for insertion into the shared wind field. */
+	void QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse);
+	/** @brief Queues a typed one-shot source with explicit ownership and saturation priority. */
+	void QueueTransientWindSource(const WindField::TransientWindSource& a_source,
+		TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority);
+	/** @brief Replaces one producer's frame-updated attached sources. */
+	void SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
+		std::span<const TransientWindSourceSubmission> a_sources);
+	/** @brief Removes active, pending, and attached sources owned by one producer. */
+	void ClearTransientWindSources(TransientWindSourceOwner a_owner);
+	/** @brief Removes all active and pending transient wind impulses. */
+	void ClearTransientWindImpulses();
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
 
@@ -326,6 +404,7 @@ public:
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
+		TreeBend = 1u << 29,
 		IsEye = 1u << 31
 	};
 
@@ -386,6 +465,7 @@ public:
 	 * @param a_pass The render pass to inspect.
 	 */
 	void UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass);
+	void UpdatePermutationBuffer();
 	/**
 	 * @brief Checks whether directional shadows are available for the current scene.
 	 * @returns true if directional shadows are present, false otherwise.
@@ -400,15 +480,81 @@ public:
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
-		float3 pad0;
+		float WindIntensityOverride;
+		uint OverrideWindIntensity;
+		float pad0;
+
+		float TreeWindUpperBendRange;
+		float TreeWindMaximumDisplacementPercent;
+		float TreeBendModelSensitivity;
+		float TreeLeafModelSensitivity;
+
+		float TreeTransientWindInfluence;
+		float TrunkWindBendSensitivity;
+		float TreeLeafBaseWindFlutterGain;
+		uint EnableAmbientGrassWind;
+
+		float GrassWindBendProfile;
+		float GrassWindFlutterStrength;
+		float GrassWindFlutterFrequency;
+		float GrassWindSensitivity;
+
+		float TreeWindBoundsBase;
+		float TreeWindBoundsHeight;
+		float TreeWindTrunkGustInfluence;
+		float TreeLeafGustInfluence;
+
+		float TreeTransientMaximumBendMultiplier;
+		float TreeLeafTransientWindInfluence;
+		float TreeLeafTransientFlutterMaximum;
+		float GrassWindCompressionToBend;
+
+		float4 TreeWindProbeBase;
+		float4 TreeWindProbeTop;
 
 		bool operator==(const PermutationCB& other) const
 		{
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
-			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius;
+			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
+			       WindIntensityOverride == other.WindIntensityOverride &&
+			       OverrideWindIntensity == other.OverrideWindIntensity &&
+			       TreeWindUpperBendRange == other.TreeWindUpperBendRange &&
+			       TreeWindMaximumDisplacementPercent == other.TreeWindMaximumDisplacementPercent &&
+			       TreeBendModelSensitivity == other.TreeBendModelSensitivity &&
+			       TreeLeafModelSensitivity == other.TreeLeafModelSensitivity &&
+			       TreeTransientWindInfluence == other.TreeTransientWindInfluence &&
+			       TreeLeafTransientWindInfluence == other.TreeLeafTransientWindInfluence &&
+			       TreeLeafTransientFlutterMaximum == other.TreeLeafTransientFlutterMaximum &&
+			       TreeTransientMaximumBendMultiplier == other.TreeTransientMaximumBendMultiplier &&
+			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
+			       TreeLeafBaseWindFlutterGain == other.TreeLeafBaseWindFlutterGain &&
+			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
+			       GrassWindSensitivity == other.GrassWindSensitivity &&
+			       GrassWindBendProfile == other.GrassWindBendProfile &&
+			       GrassWindCompressionToBend == other.GrassWindCompressionToBend &&
+			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
+			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
+			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
+			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
+			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
+			       TreeLeafGustInfluence == other.TreeLeafGustInfluence &&
+			       TreeWindProbeBase.x == other.TreeWindProbeBase.x &&
+			       TreeWindProbeBase.y == other.TreeWindProbeBase.y &&
+			       TreeWindProbeBase.z == other.TreeWindProbeBase.z &&
+			       TreeWindProbeTop.x == other.TreeWindProbeTop.x &&
+			       TreeWindProbeTop.y == other.TreeWindProbeTop.y &&
+			       TreeWindProbeTop.z == other.TreeWindProbeTop.z;
 		}
 	};
+	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 60);
+	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 68);
+	static_assert(offsetof(PermutationCB, TreeTransientMaximumBendMultiplier) == 96);
+	static_assert(offsetof(PermutationCB, TreeLeafTransientWindInfluence) == 100);
+	static_assert(offsetof(PermutationCB, TreeLeafTransientFlutterMaximum) == 104);
+	static_assert(offsetof(PermutationCB, TreeWindProbeBase) == 112);
+	static_assert(offsetof(PermutationCB, TreeWindProbeTop) == 128);
+	static_assert(sizeof(PermutationCB) == 144);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;
@@ -444,6 +590,18 @@ public:
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
+		WindField::WindTuning WindFieldTuning;
+		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
+		float4 WindFieldPreviousAmbient;
+		WindField::Field WindFieldCurrent;
+		WindField::Field WindFieldPrevious;
+		WindField::Field WindFieldTransition;
+		WindField::Field WindFieldPreviousTransition;
+		float4 WindFieldTransitionData;  // x/y: current/previous blend, z/w: reserved
+		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
+		std::array<uint32_t, 4> WindFieldActiveCounts;
+		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
+		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -451,6 +609,19 @@ public:
 	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTuning) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldCurrent) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPrevious) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransition) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransition) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransitionData) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldSpringDebug) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldActiveCounts) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransientImpulses) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
+	static_assert(sizeof(SharedDataCB) <= D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
@@ -548,6 +719,31 @@ public:
 private:
 	std::unordered_map<std::string, bool> favoriteFeatures;
 	bool SaveFeaturePreference(const json& patch);
+	void UpdateWind();
+	void AdvanceWindHistory(float a_frameTime);
+	void UpdateWeatherWind();
+	void UpdateWindField(const float3& a_direction, float a_speed, float a_frameTime);
+	void UpdateWindPermutationData();
+	void UpdateWindSharedData(SharedDataCB& a_data) const;
+	void UpdateTransientWindImpulses(float a_frameTime);
+	struct ManagedTransientWindSource
+	{
+		WindField::TransientWindSource source;
+		TransientWindSourceOwner owner;
+		TransientWindSourcePriority priority;
+		uint64_t sequence;
+	};
+	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transientWindImpulses{};
+	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
+	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> transientWindImpulseOwners{};
+	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> previousTransientWindImpulseOwners{};
+	uint32_t activeTransientWindImpulseCount = 0;
+	uint32_t previousActiveTransientWindImpulseCount = 0;
+	std::vector<ManagedTransientWindSource> activeTransientWindSources;
+	std::vector<ManagedTransientWindSource> pendingTransientWindSources;
+	std::vector<ManagedTransientWindSource> attachedTransientWindSources;
+	uint64_t transientWindSourceSequence = 0;
+	std::mutex transientWindImpulseMutex;
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

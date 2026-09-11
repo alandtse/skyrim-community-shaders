@@ -1,0 +1,92 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://open-shaders.org/schemas/wind-settings-v1.json",
+    "title": "Open Shaders Wind Settings",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["version", "trees"],
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "version": {
+            "const": 1
+        },
+        "trees": {
+            "type": "array",
+            "maxItems": 4096,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mesh"],
+                "properties": {
+                    "mesh": {
+                        "type": "string",
+                        "maxLength": 260,
+                        "pattern": "[.][nN][iI][fF]$"
+                    },
+                    "bendSensitivity": {
+                        "type": "number",
+                        "default": 1.0,
+                        "minimum": 0.0,
+                        "maximum": 4.0
+                    },
+                    "leafAmbientSensitivity": {
+                        "type": "number",
+                        "default": 1.0,
+                        "minimum": 0.0,
+                        "maximum": 4.0
+                    },
+                    "upperBendRange": {
+                        "type": "number",
+                        "default": 100.0,
+                        "minimum": 5.0,
+                        "maximum": 100.0
+                    },
+                    "maximumDisplacementPercent": {
+                        "type": "number",
+                        "default": 3.0,
+                        "minimum": 0.0,
+                        "maximum": 10.0
+                    },
+                    "trunkGustInfluence": {
+                        "type": "number",
+                        "default": 0.5,
+                        "minimum": 0.0,
+                        "maximum": 2.0
+                    },
+                    "leafGustInfluence": {
+                        "type": "number",
+                        "default": 0.99,
+                        "minimum": 0.0,
+                        "maximum": 2.0
+                    },
+                    "transientWindInfluence": {
+                        "type": "number",
+                        "default": 2.01,
+                        "minimum": 0.0,
+                        "maximum": 5.0
+                    },
+                    "leafTransientWindInfluence": {
+                        "type": "number",
+                        "default": 5.0,
+                        "minimum": 0.0,
+                        "maximum": 5.0
+                    },
+                    "leafTransientFlutterMaximum": {
+                        "type": "number",
+                        "default": 20.0,
+                        "minimum": 0.0,
+                        "maximum": 20.0
+                    },
+                    "transientMaximumBendMultiplier": {
+                        "type": "number",
+                        "default": 2.5,
+                        "minimum": 0.0,
+                        "maximum": 5.0
+                    }
+                }
+            }
+        }
+    }
+}

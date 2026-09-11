@@ -5,7 +5,9 @@
 #include "I18n/I18n.h"
 #include "LightLimitFix.h"
 #include "LinearLighting.h"
+#include "State.h"
 #include "UnderwaterDepthOfField.h"
+#include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/UI.h"
 
@@ -32,29 +34,34 @@ namespace
 	constexpr uint32_t kMaxVanillaPointLights = 7;
 	constexpr uint32_t kVanillaPointLightCBRegister = 3;
 	constexpr uint32_t kFirstPointLightSceneIndex = 1;
-	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
-	{
-		if (!std::isfinite(a_value))
-			return a_default;
-		return std::clamp(a_value, a_min, a_max);
-	}
+}
 
-	void SanitizeSettings(CSUtility::Settings& a_settings)
-	{
-		const CSUtility::Settings defaults{};
-		a_settings.skyBrightness = ClampFiniteOrDefault(a_settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.skyBrightness);
-		a_settings.directionalLightMult = ClampFiniteOrDefault(a_settings.directionalLightMult, kMultiplierMin, kMultiplierMax, defaults.directionalLightMult);
-		a_settings.pointLightMult = ClampFiniteOrDefault(a_settings.pointLightMult, kMultiplierMin, kMultiplierMax, defaults.pointLightMult);
-		a_settings.linearPointLightMult = ClampFiniteOrDefault(a_settings.linearPointLightMult, kMultiplierMin, kMultiplierMax, defaults.linearPointLightMult);
-		a_settings.spotlightMult = ClampFiniteOrDefault(a_settings.spotlightMult, kMultiplierMin, kMultiplierMax, defaults.spotlightMult);
-		a_settings.linearSpotlightMult = ClampFiniteOrDefault(a_settings.linearSpotlightMult, kMultiplierMin, kMultiplierMax, defaults.linearSpotlightMult);
-		a_settings.omnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.omnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.omnidirectionalBulbMult);
-		a_settings.linearOmnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.linearOmnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.linearOmnidirectionalBulbMult);
-		CSUtility::SanitizeWaterSettings(a_settings.water);
-		CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
-		CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
-		Bloom::SanitizeSettings(a_settings.bloomEnhancement);
-	}
+float CSUtility::ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
+{
+	if (!std::isfinite(a_value))
+		return a_default;
+	return std::clamp(a_value, a_min, a_max);
+}
+
+void CSUtility::SanitizeSettings(Settings& a_settings)
+{
+	const Settings defaults{};
+	a_settings.skyBrightness = ClampFiniteOrDefault(a_settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.skyBrightness);
+	a_settings.directionalLightMult = ClampFiniteOrDefault(a_settings.directionalLightMult, kMultiplierMin, kMultiplierMax, defaults.directionalLightMult);
+	a_settings.pointLightMult = ClampFiniteOrDefault(a_settings.pointLightMult, kMultiplierMin, kMultiplierMax, defaults.pointLightMult);
+	a_settings.linearPointLightMult = ClampFiniteOrDefault(a_settings.linearPointLightMult, kMultiplierMin, kMultiplierMax, defaults.linearPointLightMult);
+	a_settings.spotlightMult = ClampFiniteOrDefault(a_settings.spotlightMult, kMultiplierMin, kMultiplierMax, defaults.spotlightMult);
+	a_settings.linearSpotlightMult = ClampFiniteOrDefault(a_settings.linearSpotlightMult, kMultiplierMin, kMultiplierMax, defaults.linearSpotlightMult);
+	a_settings.omnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.omnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.omnidirectionalBulbMult);
+	a_settings.linearOmnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.linearOmnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.linearOmnidirectionalBulbMult);
+	CSUtility::SanitizeWaterSettings(a_settings.water);
+	CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
+	CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
+	Bloom::SanitizeSettings(a_settings.bloomEnhancement);
+}
+
+namespace
+{
 
 	void DrawMultiplierSlider(const char* a_label, float& a_value, float a_max = kMultiplierMax)
 	{
@@ -81,6 +88,7 @@ namespace
 			ImGui::TextWrapped("%s", a_tooltip);
 		}
 	}
+
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -303,7 +311,6 @@ void CSUtility::SetupResources()
 {
 	vanillaPointLightCB = new ConstantBuffer(ConstantBufferDesc<VanillaPointLightData>(), "OSUtility::VanillaPointLightData");
 }
-
 CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 {
 	Settings sanitizedSettings = settings;

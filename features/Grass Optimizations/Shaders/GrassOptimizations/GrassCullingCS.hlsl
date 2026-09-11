@@ -1,6 +1,11 @@
 #include "Common/FrameBuffer.hlsli"
+#include "Common/GrassWindResponse.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Random.hlsli"
+
+#ifdef GRASS_COLLISION
+#	include "GrassCollision/GrassCollisionField.hlsli"
+#endif
 
 cbuffer CullParams : register(b0)
 {
@@ -23,7 +28,7 @@ cbuffer CullParams : register(b0)
 
 	float InvisibleFadeCull;
 	float SimpleShadingPixelSize;
-	float CollisionDistSq;
+	float Padding;
 	float MidLODPixelSize;
 
 	float MeshLODBandPx;
@@ -89,18 +94,6 @@ float RandFloat(uint bits)
 	return asfloat(bits) - 1.0;
 }
 
-// Precomputed here so the vertex shader only scales by the wind vector and adds.
-float WindScalar(float basis, float timer)
-{
-	const float a = 0.4 * (basis + timer);
-	float sa, ca;
-	sincos(a, sa, ca);
-	const float t3 = 0.2 * cos(Math::PI * ca);
-	const float t1 = sin(Math::PI * sa);
-	const float t2 = sin(Math::TAU * sa);
-	return (t1 + t2) * 0.3 + t3;
-}
-
 [numthreads(64, 1, 1)] void main(uint3 tid : SV_DispatchThreadID) {
 	const uint compactIdx = tid.x;
 	if (compactIdx >= InstanceCount || SliceCount == 0)
@@ -135,7 +128,7 @@ float WindScalar(float basis, float timer)
 	const float4 og = Origins[idx];
 	const float3 world = float3(localXY, localZ) + og.xyz;
 
-	const float3 dv = world - FrameBuffer::CameraPosAdjust.xyz;
+	const float3 dv = world - FrameBuffer::CameraPosAdjust[0].xyz;
 	const float distSq = dot(dv, dv);
 
 	const float dist = sqrt(distSq);
@@ -179,7 +172,7 @@ float WindScalar(float basis, float timer)
 		const float distC = max(length(dvC), 1e-4);
 		const float projPxOcc = (occRadius / distC) * ProjScale;
 
-		const float4 clipC = mul(FrameBuffer::CameraViewProj, float4(dvC, 1.0));
+		const float4 clipC = mul(FrameBuffer::CameraViewProj[0], float4(dvC, 1.0));
 		if (clipC.w > 0.0) {
 			const float2 uv = (clipC.xy / clipC.w) * float2(0.5, -0.5) + 0.5;
 			const float2 tc = uv * HiZSize;
@@ -203,7 +196,7 @@ float WindScalar(float basis, float timer)
 				// An instance hides only once even its nearest point is behind the occluder. A camera inside
 				// the sphere collapses dvC, putting nearZ below any tile depth so the test never fires.
 				const float3 dvNear = dvC * (max(distC - occRadius, 0.0) / distC);
-				const float4 clipN = mul(FrameBuffer::CameraViewProj, float4(dvNear, 1.0));
+				const float4 clipN = mul(FrameBuffer::CameraViewProj[0], float4(dvNear, 1.0));
 				const float nearZ = clipN.z / max(clipN.w, 1e-4);
 
 				float tileMax = 0.0;
@@ -241,7 +234,7 @@ float WindScalar(float basis, float timer)
 	const float edgeStart = maxDist * EdgeFadeStart;
 	const float edgeFade = saturate((maxDist - dist) / max(maxDist - edgeStart, 1e-4));
 
-	const float4 clip = mul(FrameBuffer::CameraViewProj, float4(dv, 1.0));
+	const float4 clip = mul(FrameBuffer::CameraViewProj[0], float4(dv, 1.0));
 	const float distFade = 1.0 - saturate((length(clip.xyz) - AlphaParam1) / AlphaParam2);
 	const float spawnFade = saturate((FadeNow - og.w) * FadeInTimeRcp);
 
@@ -249,14 +242,24 @@ float WindScalar(float basis, float timer)
 	if (fade <= InvisibleFadeCull)
 		return;
 
-	const float basis = (localXY.x + localXY.y) * -0.0078125;
-
 	const float4 e0 = float4(og.xyz, IsComplex);
 
-	const float collisionFlag = (distSq < CollisionDistSq) ? 1.0 : 0.0;
 	const float farFlag = (SimpleShadingPixelSize > 0.0 && projPx < SimpleShadingPixelSize) ? 2.0 : 0.0;
 
-	const float4 e1 = float4(WindScalar(basis, TimeBase * WavePeriod), WindScalar(basis, PrevTimeBase * WavePeriod), fade, collisionFlag + farFlag);
+	float4 currentResponse, previousResponse;
+	float2 flutter;
+	GrassWindResponse::Sample(localXY, world.xy, world.xy, Math::IdentityMatrix, Math::IdentityMatrix,
+		TimeBase * WavePeriod, PrevTimeBase * WavePeriod, currentResponse, previousResponse, flutter);
+	const float4 e1 = float4(flutter, fade, farFlag);
+	float4 currentCollision = 0.0;
+	float4 previousCollision = 0.0;
+#ifdef GRASS_COLLISION
+	const float3 previousRoot = world - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
+	currentCollision = GrassCollision::SampleCurrentDeformation(dv.xy);
+	previousCollision = GrassCollision::SamplePreviousDeformation(previousRoot.xy);
+	currentCollision.w = smoothstep(4096.0, 0.0, dist);
+	previousCollision.w = smoothstep(4096.0, 0.0, length(previousRoot));
+#endif
 
 	// Both thresholds are dithered over MeshLODBandPx so each swap is gradual rather than a visible
 	// line, and both compare the same hash so an instance crosses middle then far in order as it
@@ -271,7 +274,7 @@ float WindScalar(float basis, float timer)
 	if (FarLODEnabled > 0.5 && h < saturate((FarLODPixelSize + halfBand - projPx) * bandRcp))
 		tier = 2;
 
-	// Scaled by 4 so it clears the collision and far-shading flags already packed into e1.w.
+	// Scaled by 4 so it clears the far-shading flag already packed into e1.w.
 	const float4 e1Tier = float4(e1.xyz, e1.w + 4.0 * (float)tier);
 
 	uint slot;
@@ -279,19 +282,31 @@ float WindScalar(float basis, float timer)
 		FarLODCounter.InterlockedAdd(0, 1, slot);
 		FarLODCompacted.Store4(slot * 32, raw0);
 		FarLODCompacted.Store4(slot * 32 + 16, raw1);
-		FarLODExtras[slot * 2 + 0] = e0;
-		FarLODExtras[slot * 2 + 1] = e1Tier;
+		FarLODExtras[slot * 6 + 0] = e0;
+		FarLODExtras[slot * 6 + 1] = e1Tier;
+		FarLODExtras[slot * 6 + 2] = currentResponse;
+		FarLODExtras[slot * 6 + 3] = previousResponse;
+		FarLODExtras[slot * 6 + 4] = currentCollision;
+		FarLODExtras[slot * 6 + 5] = previousCollision;
 	} else if (tier == 1) {
 		MidLODCounter.InterlockedAdd(0, 1, slot);
 		MidLODCompacted.Store4(slot * 32, raw0);
 		MidLODCompacted.Store4(slot * 32 + 16, raw1);
-		MidLODExtras[slot * 2 + 0] = e0;
-		MidLODExtras[slot * 2 + 1] = e1Tier;
+		MidLODExtras[slot * 6 + 0] = e0;
+		MidLODExtras[slot * 6 + 1] = e1Tier;
+		MidLODExtras[slot * 6 + 2] = currentResponse;
+		MidLODExtras[slot * 6 + 3] = previousResponse;
+		MidLODExtras[slot * 6 + 4] = currentCollision;
+		MidLODExtras[slot * 6 + 5] = previousCollision;
 	} else {
 		Counter.InterlockedAdd(0, 1, slot);
 		Compacted.Store4(slot * 32, raw0);
 		Compacted.Store4(slot * 32 + 16, raw1);
-		Extras[slot * 2 + 0] = e0;
-		Extras[slot * 2 + 1] = e1;
+		Extras[slot * 6 + 0] = e0;
+		Extras[slot * 6 + 1] = e1;
+		Extras[slot * 6 + 2] = currentResponse;
+		Extras[slot * 6 + 3] = previousResponse;
+		Extras[slot * 6 + 4] = currentCollision;
+		Extras[slot * 6 + 5] = previousCollision;
 	}
 }

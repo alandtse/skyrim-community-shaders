@@ -2,9 +2,28 @@
 #include <algorithm>
 #include <cmath>
 
+namespace
+{
+	RE::NiPoint3 TransformHavokPoint(const RE::hkTransform& transform, const RE::hkVector4& point)
+	{
+		alignas(16) float localPoint[4];
+		_mm_store_ps(localPoint, point.quad);
+
+		__m128 worldPoint = transform.translation.quad;
+		worldPoint = _mm_add_ps(worldPoint, _mm_mul_ps(transform.rotation.col0.quad, _mm_set1_ps(localPoint[0])));
+		worldPoint = _mm_add_ps(worldPoint, _mm_mul_ps(transform.rotation.col1.quad, _mm_set1_ps(localPoint[1])));
+		worldPoint = _mm_add_ps(worldPoint, _mm_mul_ps(transform.rotation.col2.quad, _mm_set1_ps(localPoint[2])));
+
+		alignas(16) float transformedPoint[4];
+		_mm_store_ps(transformedPoint, worldPoint);
+		return RE::NiPoint3(transformedPoint[0], transformedPoint[1], transformedPoint[2]) *
+		       RE::bhkWorld::GetWorldScaleInverse();
+	}
+}
+
 namespace Util
 {
-	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)
+	bool GetShapeCollisionCapsule(RE::bhkNiCollisionObject* collisionObj, ShapeCollisionCapsule& capsule)
 	{
 		if (!collisionObj)
 			return false;
@@ -12,15 +31,44 @@ namespace Util
 		RE::bhkRigidBody* bhkRigid = collisionObj->body.get() ? collisionObj->body.get()->AsBhkRigidBody() : nullptr;
 		RE::hkpRigidBody* hkpRigid = bhkRigid ? skyrim_cast<RE::hkpRigidBody*>(bhkRigid->referencedObject.get()) : nullptr;
 		if (bhkRigid && hkpRigid && !skyrim_cast<RE::hkpListShape*>(hkpRigid)) {  // Ignore hkpListShape, unsupported
+			const auto* shape = hkpRigid->collidable.GetShape();
+			if (!shape)
+				return false;
+
+			if (shape->type == RE::hkpShapeType::kCapsule) {
+				const auto* capsuleShape = static_cast<const RE::hkpCapsuleShape*>(shape);
+				RE::hkTransform transform;
+				bhkRigid->GetTransform(transform);
+
+				capsule.pointA = TransformHavokPoint(transform, capsuleShape->vertexA);
+				capsule.pointB = TransformHavokPoint(transform, capsuleShape->vertexB);
+				capsule.radius = capsuleShape->radius * RE::bhkWorld::GetWorldScaleInverse();
+				if (capsule.pointB.z < capsule.pointA.z)
+					std::swap(capsule.pointA, capsule.pointB);
+				return std::isfinite(capsule.radius) && capsule.radius > 0.0f;
+			}
+
 			RE::hkVector4 massCenter;
 			bhkRigid->GetCenterOfMassWorld(massCenter);
 			float massTrans[4];
 			// Use unaligned store to avoid UB from potential stack misalignment
 			_mm_storeu_ps(massTrans, massCenter.quad);
-			centerPos = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
-			return Util::ExtractShapeBound(hkpRigid->collidable.GetShape(), radius);
+			capsule.pointA = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
+			capsule.pointB = capsule.pointA;
+			return Util::ExtractShapeBound(shape, capsule.radius);
 		}
 		return false;
+	}
+
+	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)
+	{
+		ShapeCollisionCapsule capsule;
+		if (!GetShapeCollisionCapsule(collisionObj, capsule))
+			return false;
+
+		centerPos = (capsule.pointA + capsule.pointB) * 0.5f;
+		radius = capsule.radius + capsule.pointA.GetDistance(capsule.pointB) * 0.5f;
+		return true;
 	}
 
 	bool ExtractShapeBound(const RE::hkpShape* shape, float& radius)

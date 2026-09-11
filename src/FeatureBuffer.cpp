@@ -12,6 +12,7 @@
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
 #include "Features/FoliageLighting.h"
+#include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
 #include "Features/HairSpecular.h"
 #include "Features/IBL.h"
@@ -26,6 +27,7 @@
 #include "Features/TerrainVariation.h"
 #include "Features/VanillaFresnel.h"
 #include "Features/WetnessEffects.h"
+#include "Features/Wind/Wind.h"
 #include "TruePBR.h"
 #include "Utils/Game.h"
 
@@ -67,6 +69,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::ibl.GetCommonBufferData(),
 		globals::features::extendedTranslucency.GetCommonBufferData(),
 		globals::features::csUtility.GetCommonBufferData(),
+		globals::features::wind.GetCommonBufferData(),
 		globals::features::linearLighting.GetCommonBufferData(),
 #if defined(ENABLE_EFFECTS11)
 		globals::features::effects11.GetCommonBufferData(),
@@ -83,5 +86,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::skin.GetCommonBufferData(),
 		globals::features::vanillaFresnel.settings,
 		Bloom::GetCommonBufferData(bloomSettings),
-		globals::features::postProcessing.GetCommonBufferData());
+		globals::features::postProcessing.GetCommonBufferData(),
+		globals::features::grassCollision.GetCommonBufferData());
 }

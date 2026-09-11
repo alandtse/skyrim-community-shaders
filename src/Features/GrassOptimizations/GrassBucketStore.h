@@ -68,6 +68,7 @@ inline constexpr uint32_t instanceCountOffset = argsByteOffset + sizeof(uint32_t
 /** @brief Contains the instance data, GPU buffers and per-frame cull results for each grass type. */
 struct GrassBucket
 {
+	static constexpr uint32_t kExtrasFloat4Count = 6;
 	ID3D11Buffer* instanceBuf = nullptr;
 	ID3D11ShaderResourceView* instanceSRV = nullptr;
 	ID3D11Buffer* originBuf = nullptr;

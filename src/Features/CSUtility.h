@@ -5,7 +5,11 @@
 #include "Feature.h"
 #include "I18n/I18n.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 struct CSUtility : Feature
 {
@@ -91,7 +95,7 @@ struct CSUtility : Feature
 		Bloom::PresetSettings bloomEnhancement;
 	} settings;
 
-	/** Identifies the OS Utility tab targeted by scoped default restoration. */
+	/** Identifies the utility tab targeted by scoped default restoration. */
 	enum class SettingsPage
 	{
 		Atmosphere,           ///< Sky atmosphere controls.
@@ -100,7 +104,7 @@ struct CSUtility : Feature
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
 		VanillaBloom          ///< Vanilla bloom controls.
 	};
-	/** The visible tab whose settings Restore Defaults changes. */
+	/** The visible utility tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
 
 	struct alignas(16) PerFrameData
@@ -164,4 +168,8 @@ struct CSUtility : Feature
 	static void SanitizeWaterSettings(WaterSettings& a_settings);
 
 	struct Hooks;
+
+private:
+	static float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default);
+	static void SanitizeSettings(Settings& a_settings);
 };

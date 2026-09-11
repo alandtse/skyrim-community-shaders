@@ -1,11 +1,15 @@
 #ifndef __EXPONENTIAL_HEIGHT_FOG_VOLUMETRIC_COMMON_HLSLI__
 #define __EXPONENTIAL_HEIGHT_FOG_VOLUMETRIC_COMMON_HLSLI__
 
+#include "Common/Color.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
 
 namespace ExponentialHeightFog
 {
+	static const float kMinimumTransmittance = 0.0001f;
+	// Extinction is per world unit and can be much smaller than the generic division epsilon.
+	static const float kMinimumExtinction = 1e-20f;
 	float HenyeyGreenstein(float cosTheta, float g)
 	{
 		float g2 = g * g;
@@ -25,7 +29,8 @@ namespace ExponentialHeightFog
 
 	float GetVolumetricStartDistance()
 	{
-		return max(0.0f, SharedData::exponentialHeightFogSettings.volumetricFogStartDistance);
+		return SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 ? 0.0f :
+		                                                                             max(0.0f, SharedData::exponentialHeightFogSettings.volumetricFogStartDistance);
 	}
 
 	float GetVolumetricEndDistance()
@@ -87,6 +92,36 @@ namespace ExponentialHeightFog
 		return ComputeVolumetricNormalizedSlice(viewDepth, GetVolumetricGridSizeZ());
 	}
 
+	float EvaluateVanillaOpticalDepth(float distance)
+	{
+		float normalizedRange = saturate((distance - SharedData::exponentialHeightFogSettings.vanillaFogNear) /
+										 max(SharedData::exponentialHeightFogSettings.vanillaFogFar - SharedData::exponentialHeightFogSettings.vanillaFogNear, 1.0f));
+		float exponent = SharedData::exponentialHeightFogSettings.vanillaFogPower *
+		                 SharedData::exponentialHeightFogSettings.fogAlphaGamma;
+		float opacity = min(pow(normalizedRange, exponent), SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity);
+		return -log(max(1.0f - opacity, kMinimumTransmittance));
+	}
+
+	float GetFogHeightWeight(float3 positionWS, float3 cameraWS)
+	{
+		float height = max(positionWS.z + cameraWS.z - SharedData::exponentialHeightFogSettings.fogHeight, 0.0f);
+		float referenceHeight = SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 ?
+		                            max(cameraWS.z - SharedData::exponentialHeightFogSettings.fogHeight, 0.0f) :
+		                            0.0f;
+		return exp2(clamp(-GetHeightFogFalloff() * (height - referenceHeight), -32.0f, 2.0f));
+	}
+
+	float3 GetFogAmbientColor(float distance)
+	{
+		float normalizedRange = saturate((distance - SharedData::exponentialHeightFogSettings.vanillaFogNear) /
+										 max(SharedData::exponentialHeightFogSettings.vanillaFogFar - SharedData::exponentialHeightFogSettings.vanillaFogNear, 1.0f));
+		float colorBlend = min(pow(normalizedRange, SharedData::exponentialHeightFogSettings.vanillaFogPower),
+			pow(SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity, rcp(SharedData::exponentialHeightFogSettings.fogAlphaGamma)));
+		float3 color = Color::Fog(lerp(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb,
+			SharedData::exponentialHeightFogSettings.vanillaFogFarColor.rgb, colorBlend));
+		return color;
+	}
+
 	float EvaluateHeightFogExtinction(float3 positionWS, float3 cameraWS)
 	{
 		float fogDensity = GetHeightFogDensity();
@@ -95,6 +130,21 @@ namespace ExponentialHeightFog
 		float exponent = fogHeightFalloff * max(worldHeight - SharedData::exponentialHeightFogSettings.fogHeight, 0.0f);
 		float localDensity = fogDensity * exp2(-exponent);
 		return max(localDensity * SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale * 0.5f, 0.0f);
+	}
+
+	float EvaluateFogExtinctionSegment(float nearDistance, float farDistance, float3 positionWS, float3 cameraWS)
+	{
+		float extinction;
+		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0) {
+			float opticalDepth = max(EvaluateVanillaOpticalDepth(farDistance) - EvaluateVanillaOpticalDepth(nearDistance), 0.0f);
+			extinction = opticalDepth / max(farDistance - nearDistance, EPSILON_DIVISION) *
+			             SharedData::exponentialHeightFogSettings.vanillaFogStrength *
+			             SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale *
+			             GetFogHeightWeight(positionWS, cameraWS);
+		} else {
+			extinction = EvaluateHeightFogExtinction(positionWS, cameraWS);
+		}
+		return max(extinction, 0.0f);
 	}
 }
 

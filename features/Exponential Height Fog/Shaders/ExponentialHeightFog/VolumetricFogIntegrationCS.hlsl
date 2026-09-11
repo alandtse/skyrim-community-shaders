@@ -15,6 +15,9 @@ RWTexture3D<float4> IntegratedLightScattering : register(u0);
 	float previousDepth;
 	float3 previousPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(uint3(dispatchID.xy, 0), float3(0.5f, 0.5f, 0.0f), eyeIndex, previousDepth);
 
+	if (ExponentialHeightFog::GetVolumetricStartDistance() == 0.0f)
+		previousPositionWS = 0.0f.xxx;
+
 	[loop] for (uint layerIndex = 0; layerIndex < VolumetricFogGridSize.z; layerIndex++)
 	{
 		uint3 layerCoordinate = uint3(dispatchID.xy, layerIndex);
@@ -22,7 +25,7 @@ RWTexture3D<float4> IntegratedLightScattering : register(u0);
 
 		uint layerEyeIndex;
 		float layerDepth;
-		float3 layerPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(layerCoordinate, 0.5f.xxx, layerEyeIndex, layerDepth);
+		float3 layerPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(layerCoordinate, float3(0.5f, 0.5f, 1.0f), layerEyeIndex, layerDepth);
 		float stepLength = length(layerPositionWS - previousPositionWS);
 		previousPositionWS = layerPositionWS;
 
@@ -33,7 +36,7 @@ RWTexture3D<float4> IntegratedLightScattering : register(u0);
 		float fadeIn = saturate(accumulatedDepth * VolumetricFogNearFadeInDistanceInv);
 
 		float3 scatteringIntegratedOverSlice =
-			fadeIn * (scatteringAndExtinction.rgb - scatteringAndExtinction.rgb * transmittance) / max(extinction, 1e-5f);
+			fadeIn * (scatteringAndExtinction.rgb - scatteringAndExtinction.rgb * transmittance) / max(extinction, ExponentialHeightFog::kMinimumExtinction);
 		accumulatedLighting += scatteringIntegratedOverSlice * accumulatedTransmittance;
 		accumulatedTransmittance *= lerp(1.0f, transmittance, fadeIn);
 

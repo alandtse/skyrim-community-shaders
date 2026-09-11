@@ -84,13 +84,31 @@ public:
 		float volumetricSampleJitterMultiplier = 0.0f;
 		float volumetricUpsampleJitterMultiplier = 1.0f;
 		float volumetricLocalLightScatteringIntensity = 1.0f;
-		float2 pad0;
+		uint useVanillaFogSettings = 1;
+		float vanillaFogMaxOpacity = 1.0f;
+		float vanillaFogDensity = 0.0f;
+		float vanillaFogNear = 0.0f;
+		float vanillaFogFar = 40960.0f;
+		float vanillaFogPower = 1.0f;
+		float fogAlphaGamma = 1.0f;
+		float vanillaFogStrength = 1.25f;
+		float2 pad0 = {};
+		float4 vanillaFogNearColor = {};
+		float4 vanillaFogFarColor = {};
+		float fogLightingInfluence = 0.35f;
+		float3 pad1 = {};
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
+	static_assert(offsetof(Settings, vanillaFogNearColor) == 224);
+	static_assert(offsetof(Settings, fogLightingInfluence) == 256);
+	static_assert(sizeof(Settings) == 272);
 
+	/** @brief Builds the shared visibility curve from the effective weather and lighting settings. */
 	Settings GetCommonBufferData() const;
 
 private:
+	Settings previousFogSettings = {};
+
 	struct VolumetricFogCB
 	{
 		DirectX::XMUINT4 gridSizeAndFlags = {};

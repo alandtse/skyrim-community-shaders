@@ -369,7 +369,8 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(EXP_HEIGHT_FOG)
 	const bool inReflection = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection) != 0;
-	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {
+	// Reflected skies follow the same weather-fog exclusion as the main-view composite.
+	if (inReflection && SharedData::exponentialHeightFogSettings.enabled && SharedData::exponentialHeightFogSettings.useVanillaFogSettings == 0) {
 		float3 skyFogPosition = normalize(input.FogPosition.xyz) * SharedData::CameraData.x;
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFogNoVolumetric(skyFogPosition, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, psout.Color.xyz, float4(input.Position.xy * FrameBuffer::DynamicResolutionParams2.xy, input.Position.z, 1));
 		psout.Color.xyz = lerp(psout.Color.xyz, exponentialHeightFog.xyz, exponentialHeightFog.w);

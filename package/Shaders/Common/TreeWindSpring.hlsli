@@ -90,38 +90,50 @@ namespace TreeWindSpring
 
 	float2 SampleCurrentResponseField(uint fieldIndex, float2 uv)
 	{
+		float2 response = 0.0f.xx;
 		if (fieldIndex == 0u)
-			return ResponseFields[0].SampleLevel(ResponseSampler, uv, 0.0f);
-		if (fieldIndex == 1u)
-			return ResponseFields[1].SampleLevel(ResponseSampler, uv, 0.0f);
-		return ResponseFields[2].SampleLevel(ResponseSampler, uv, 0.0f);
+			response = ResponseFields[0].SampleLevel(ResponseSampler, uv, 0.0f);
+		else if (fieldIndex == 1u)
+			response = ResponseFields[1].SampleLevel(ResponseSampler, uv, 0.0f);
+		else
+			response = ResponseFields[2].SampleLevel(ResponseSampler, uv, 0.0f);
+		return response;
 	}
 
 	float2 SamplePreviousResponseField(uint fieldIndex, float2 uv)
 	{
+		float2 response = 0.0f.xx;
 		if (fieldIndex == 0u)
-			return PreviousResponseFields[0].SampleLevel(ResponseSampler, uv, 0.0f);
-		if (fieldIndex == 1u)
-			return PreviousResponseFields[1].SampleLevel(ResponseSampler, uv, 0.0f);
-		return PreviousResponseFields[2].SampleLevel(ResponseSampler, uv, 0.0f);
+			response = PreviousResponseFields[0].SampleLevel(ResponseSampler, uv, 0.0f);
+		else if (fieldIndex == 1u)
+			response = PreviousResponseFields[1].SampleLevel(ResponseSampler, uv, 0.0f);
+		else
+			response = PreviousResponseFields[2].SampleLevel(ResponseSampler, uv, 0.0f);
+		return response;
 	}
 
 	float4 SampleCurrentTransientSlice(uint fieldIndex, float2 uv, uint heightIndex)
 	{
+		float4 transientSample = 0.0f.xxxx;
 		if (fieldIndex == 0u)
-			return TransientFields[0].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
-		if (fieldIndex == 1u)
-			return TransientFields[1].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
-		return TransientFields[2].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+			transientSample = TransientFields[0].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+		else if (fieldIndex == 1u)
+			transientSample = TransientFields[1].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+		else
+			transientSample = TransientFields[2].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+		return transientSample;
 	}
 
 	float4 SamplePreviousTransientSlice(uint fieldIndex, float2 uv, uint heightIndex)
 	{
+		float4 transientSample = 0.0f.xxxx;
 		if (fieldIndex == 0u)
-			return PreviousTransientFields[0].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
-		if (fieldIndex == 1u)
-			return PreviousTransientFields[1].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
-		return PreviousTransientFields[2].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+			transientSample = PreviousTransientFields[0].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+		else if (fieldIndex == 1u)
+			transientSample = PreviousTransientFields[1].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+		else
+			transientSample = PreviousTransientFields[2].SampleLevel(ResponseSampler, float3(uv, heightIndex), 0.0f);
+		return transientSample;
 	}
 
 	float4 InterpolateCurrentTransient(uint fieldIndex, float2 uv, float worldHeight)

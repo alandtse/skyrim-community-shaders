@@ -189,8 +189,8 @@ void GrassCollision::QueueCollisions()
 			newHistory.reserve(collisionShapes.size());
 
 			BoundingBoxPacked boundingBox;
-			boundingBox.MinExtent = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
-			boundingBox.MaxExtent = { std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
+			boundingBox.MinExtent = float2{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+			boundingBox.MaxExtent = float2{ std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
 			boundingBox.IndexStart = collisionIndexExtent;
 			boundingBox.IndexEnd = collisionIndexExtent;
 

@@ -31,10 +31,16 @@ namespace Util
 		{
 			if (!shader && !failed) {
 				logger::debug("Compiling {}", Util::WStringToString(a_path));
-				shader.attach(static_cast<ShaderT*>(Util::CompileShader(a_path, a_defines, a_target, a_entry)));
+				if constexpr (std::is_same_v<ShaderT, ID3DBlob>) {
+					shader = Util::CompileShaderBlob(a_path, a_defines, a_target, a_entry);
+				} else {
+					shader.attach(static_cast<ShaderT*>(Util::CompileShader(a_path, a_defines, a_target, a_entry)));
+				}
 				failed = !shader;
-				if (shader && a_name)
-					Util::SetResourceName(shader.get(), a_name);
+				if constexpr (!std::is_same_v<ShaderT, ID3DBlob>) {
+					if (shader && a_name)
+						Util::SetResourceName(shader.get(), a_name);
+				}
 			}
 			return shader.get();
 		}

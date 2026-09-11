@@ -447,16 +447,6 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	return wroteOutput;
 }
 
-std::string EffectManager::LoadShaderFile(const char* path)
-{
-	std::ifstream ifs(path, std::ios::binary);
-	if (!ifs.is_open()) {
-		logger::error("[EFFECTS11] Failed to open shader file: {}", path);
-		return {};
-	}
-	return { std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>() };
-}
-
 void EffectManager::CreateCommonResources()
 {
 	CreateQuadGeometry();
@@ -498,24 +488,13 @@ void EffectManager::CreateQuadGeometry()
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
 
-	auto vertexShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\QuadVS.hlsl");
-	if (vertexShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> vertexShaderBlob;
-	winrt::com_ptr<ID3DBlob> errorBlob;
-	HRESULT hr = D3DCompile(vertexShaderSource.data(), vertexShaderSource.size(), "QuadVS.hlsl", nullptr, nullptr,
-		"main", "vs_4_0", 0, 0, vertexShaderBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile input layout vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
+	auto vertexShaderBlob = Util::CompileShaderBlob(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_4_0");
+	if (!vertexShaderBlob) {
+		logger::error("[EFFECTS11] Failed to compile input layout vertex shader");
 		return;
 	}
-	Util::LogShaderCompileWarnings(errorBlob.get(), "EFFECTS11 input layout vertex shader");
 
-	hr = globals::d3d::device->CreateInputLayout(inputElementDescs, ARRAYSIZE(inputElementDescs),
+	HRESULT hr = globals::d3d::device->CreateInputLayout(inputElementDescs, ARRAYSIZE(inputElementDescs),
 		vertexShaderBlob->GetBufferPointer(),
 		vertexShaderBlob->GetBufferSize(),
 		inputLayout.put());

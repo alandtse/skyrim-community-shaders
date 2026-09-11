@@ -534,6 +534,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		baseColor.xyz *= SharedData::grassLightingSettings.BasicGrassBrightness;
 
 	float wetAmount = GrassLighting::GetRainWetness();
+	baseColor.xyz = GrassLighting::GetWetnessAlbedo(baseColor.xyz, wetAmount);
 
 #			if defined(VANILLA_FRESNEL)
 	const bool enableVanillaFresnel = SharedData::vanillaFresnelSettings.Enable;

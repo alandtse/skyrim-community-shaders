@@ -12,6 +12,14 @@ namespace GrassLighting
 #endif
 	}
 
+	// Darkens albedo toward wet, mirroring the porosity-driven darkening applied to world
+	// geometry in Lighting.hlsl, scaled down since grass has no puddle/shore wetness data.
+	float3 GetWetnessAlbedo(float3 albedo, float wetAmount)
+	{
+		float wetnessDarkeningAmount = wetAmount * wetAmount;
+		return lerp(albedo, pow(abs(albedo), 1.0 + wetnessDarkeningAmount), 0.5);
+	}
+
 	float3 GetLightSpecularInput(float3 L, float3 V, float3 N, float3 lightColor, float roughness, float3 F0)
 	{
 		float3 H = normalize(V + L);

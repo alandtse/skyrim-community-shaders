@@ -402,7 +402,6 @@ void GrassOptimizations::UpdateGrass()
 	sliceTableCPU.clear();
 
 	{
-		// Measures the CPU time spent frustum culling bucket slices
 		CS_GPU_PASS("GrassOptimizations::SliceCull");
 		for (auto& [key, b] : bucketStore.buckets) {
 			b.ResetCullState();
@@ -424,7 +423,6 @@ void GrassOptimizations::UpdateGrass()
 	}
 
 	{
-		// Measures the slice table upload, the per-bucket constants, and the cull dispatch per visible bucket.
 		CS_GPU_PASS("GrassOptimizations::InstanceCull");
 		UploadCullState(device, ctx, visibleBuckets);
 	}

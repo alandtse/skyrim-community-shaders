@@ -5,6 +5,8 @@
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
 #include "Utils/Game.h"
 
+#include <d3dcompiler.h>
+
 #define I18N_KEY_PREFIX "feature.grass_optimizations."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -698,8 +700,8 @@ bool GrassOptimizations::AabbVisible(const FrustumSoA& f, __m128 lo, __m128 hi)
 void GrassOptimizations::SetupResources()
 {
 	cullParamsCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CullParamsCB>(), "GrassOptimizations::CullParamsCB");
-	// Two eye slots so a single map covers both draws; see kEyeSlotBytes.
-	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc(2 * kEyeSlotBytes), "GrassOptimizations::EyeIndexCB");
+	// VR maps both eyes' slots in one map so its per-eye draws rebind by offset; see kEyeSlotBytes.
+	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc((globals::game::isVR ? 2u : 1u) * kEyeSlotBytes), "GrassOptimizations::EyeIndexCB");
 	hiZ.SetupResources();
 	bucketStore.SetupResources();
 
@@ -718,8 +720,72 @@ void GrassOptimizations::ClearShaderCache()
 	};
 	release(cullCS);
 	cullCSFailed = false;
+	inputLayouts.clear();
+	layoutSignature = nullptr;
+	layoutSignatureFailed = false;
 	hiZ.ClearShaderCache();
 	bucketStore.ClearShaderCache();
+}
+
+ID3D11InputLayout* GrassOptimizations::GetOptimizedInputLayout(uint64_t a_descVal)
+{
+	if (auto it = inputLayouts.find(a_descVal); it != inputLayouts.end())
+		return it->second.get();
+
+	if (layoutSignatureFailed)
+		return nullptr;
+	if (!layoutSignature) {
+		static constexpr char kSignatureHLSL[] =
+			"struct VS_INPUT {"
+			" float4 Position : POSITION0;"
+			" float2 TexCoord : TEXCOORD0;"
+			" float4 Normal : NORMAL0;"
+			" float4 Color : COLOR0;"
+			" float4 InstanceData1 : TEXCOORD4;"
+			" float4 InstanceData2 : TEXCOORD5;"
+			" float4 InstanceData3 : TEXCOORD6;"
+			" float4 InstanceData4 : TEXCOORD7;"
+			" uint InstanceID : SV_INSTANCEID;"
+			"};"
+			"float4 main(VS_INPUT input) : SV_Position {"
+			" return input.Position + input.Normal + input.Color + "
+			" input.InstanceData1 + input.InstanceData2 + input.InstanceData3 + input.InstanceData4;"
+			"}";
+		winrt::com_ptr<ID3DBlob> errors;
+		if (FAILED(D3DCompile(kSignatureHLSL, sizeof(kSignatureHLSL) - 1, "GrassInstanceSignature",
+				nullptr, nullptr, "main", "vs_5_0", 0, 0, layoutSignature.put(), errors.put())) ||
+			!layoutSignature) {
+			logger::error("[GRASS OPTIMIZATIONS] GrassInstanceSignature compile failed");
+			layoutSignatureFailed = true;
+			return nullptr;
+		}
+	}
+
+	uint64_t storage = a_descVal;
+	auto& vdesc = *reinterpret_cast<RE::BSGraphics::VertexDesc*>(&storage);
+	std::array<D3D11_INPUT_ELEMENT_DESC, 8> elements{};
+	uint32_t count = 0;
+	elements[count++] = { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	if (vdesc.HasFlag(RE::BSGraphics::Vertex::VF_UV))
+		elements[count++] = { "TEXCOORD", 0, DXGI_FORMAT_R16G16_FLOAT, 0, vdesc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_TEXCOORD0), D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	if (vdesc.HasFlag(RE::BSGraphics::Vertex::VF_NORMAL))
+		elements[count++] = { "NORMAL", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, vdesc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_NORMAL), D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	if (vdesc.HasFlag(RE::BSGraphics::Vertex::VF_COLORS))
+		elements[count++] = { "COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, vdesc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_COLOR), D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	for (uint32_t i = 0; i < 4; ++i)
+		elements[count++] = { "TEXCOORD", 4 + i, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, i * 8, D3D11_INPUT_PER_INSTANCE_DATA, 1 };
+
+	winrt::com_ptr<ID3D11InputLayout> layout;
+	const HRESULT hr = globals::d3d::device->CreateInputLayout(elements.data(), count,
+		layoutSignature->GetBufferPointer(), layoutSignature->GetBufferSize(), layout.put());
+	if (FAILED(hr) || !layout) {
+		logger::error("[GRASS OPTIMIZATIONS] input layout creation failed for desc {:X} hr={:08X}", a_descVal, (uint32_t)hr);
+		return nullptr;
+	}
+	Util::SetResourceName(layout.get(), "GrassOptimizations::InputLayout");
+	auto* raw = layout.get();
+	inputLayouts.emplace(a_descVal, std::move(layout));
+	return raw;
 }
 
 ID3D11ComputeShader* GrassOptimizations::GetCullCS()
@@ -947,7 +1013,8 @@ static void UploadEyeIndexCB(GrassOptimizations& self, ID3D11DeviceContext* ctx,
 	if (FAILED(ctx->Map(self.eyeIndexCB->CB(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
 		return;
 	auto* bytes = static_cast<uint8_t*>(m.pData);
-	for (uint32_t eye = 0; eye < 2; ++eye) {
+	const uint32_t slotCount = globals::game::isVR ? 2u : 1u;
+	for (uint32_t eye = 0; eye < slotCount; ++eye) {
 		auto* cb = reinterpret_cast<GrassOptimizations::EyeIndexCB*>(bytes + (size_t)eye * GrassOptimizations::kEyeSlotBytes);
 		*cb = { eye, eye * capacityPerEye, {} };
 	}
@@ -1085,6 +1152,10 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	vbs[1] = b->compactedBuf;
 	ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 	ctx->VSSetShaderResources(2, 1, &b->extrasSRV);
+	if (globals::game::isVR) {
+		if (ID3D11InputLayout* layout = self.GetOptimizedInputLayout(descVal))
+			ctx->IASetInputLayout(layout);
+	}
 	// RunGrass.hlsl reads GrassOptimizationsEyeCB (b7) unconditionally under GRASS_OPTIMIZATIONS, not
 	// just VR, so eye 0 must always bind it or flat reads whatever b7 last held from another draw.
 	UploadEyeIndexCB(self, ctx, b->capacityInstances);
@@ -1133,6 +1204,10 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		strides[0] = lod->meshStride;
 		ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 		ctx->VSSetShaderResources(2, 1, &bin.extrasSRV);
+		if (globals::game::isVR) {
+			if (ID3D11InputLayout* layout = self.GetOptimizedInputLayout(lod->descVal))
+				ctx->IASetInputLayout(layout);
+		}
 		UploadEyeIndexCB(self, ctx, bin.capacityInstances);
 		BindEyeIndexCB(self, 0);
 		ctx->DrawIndexedInstancedIndirect(bin.argsBuf, argsByteOffset);

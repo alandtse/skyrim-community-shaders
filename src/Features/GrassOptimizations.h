@@ -2,6 +2,8 @@
 
 #include <d3d11_1.h>
 
+#include <unordered_map>
+
 #include "Buffer.h"
 #include "GrassOptimizations/GrassBucketStore.h"
 #include "GrassOptimizations/HiZPyramid.h"
@@ -77,6 +79,8 @@ public:
 
 	/** @brief Returns the instance culling compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetCullCS();
+
+	ID3D11InputLayout* GetOptimizedInputLayout(uint64_t a_descVal);
 
 	struct alignas(16) CullParamsCB
 	{
@@ -208,6 +212,9 @@ public:
 
 	std::unique_ptr<ConstantBuffer> cullParamsCB;
 	std::unique_ptr<ConstantBuffer> eyeIndexCB;
+	winrt::com_ptr<ID3DBlob> layoutSignature;
+	bool layoutSignatureFailed = false;
+	std::unordered_map<uint64_t, winrt::com_ptr<ID3D11InputLayout>> inputLayouts;
 	// Slotted per-bucket constants bound via CSSetConstantBuffers1: one 256-byte slot per visible
 	// bucket, one map fills them all, recreated when the bucket count outgrows it.
 	std::unique_ptr<ConstantBuffer> cullBucketCB;

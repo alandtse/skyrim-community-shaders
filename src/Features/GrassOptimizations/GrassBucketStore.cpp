@@ -769,13 +769,11 @@ bool GrassBucketStore::CreateBucketCullScratch(GrassBucket& b, uint32_t capacity
 
 bool GrassBucketStore::CreateBucketArgsBuffer(GrassBucket& b, ID3D11Device* device)
 {
-	// Two back-to-back 8-uint blocks (one per eye; only block 0 is used off VR): 3 uints of padding
-	// so the instance count is UAV accessible at a 16-byte-aligned offset, then the 5-uint args block.
-	const uint32_t initArgs[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	const uint32_t initArgs[16] = { 0 };
 	D3D11_SUBRESOURCE_DATA init{ initArgs, 0, 0 };
 
 	D3D11_BUFFER_DESC bd{};
-	bd.ByteWidth = 16 * sizeof(uint32_t);
+	bd.ByteWidth = (globals::game::isVR ? 16u : 8u) * sizeof(uint32_t);
 	bd.Usage = D3D11_USAGE_DEFAULT;
 	bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
 	bd.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS | D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
@@ -786,13 +784,11 @@ bool GrassBucketStore::CreateBucketArgsBuffer(GrassBucket& b, ID3D11Device* devi
 	}
 	Util::SetResourceName(b.argsBuf, "GrassOptimizations::ArgsBuf");
 
-	// Spans both eyes' count dwords (indices 4 and 12) for a single byte-offset-addressed UAV.
-	// The elements between them are set once from the CPU and never touched by the shader.
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
 	uav.Format = DXGI_FORMAT_R32_TYPELESS;
 	uav.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 	uav.Buffer.FirstElement = instanceCountOffset / sizeof(uint32_t);
-	uav.Buffer.NumElements = (kArgsBlockStride / sizeof(uint32_t)) + 1;
+	uav.Buffer.NumElements = globals::game::isVR ? ((kArgsBlockStride / sizeof(uint32_t)) + 1) : 1;
 	uav.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
 	if (FAILED(device->CreateUnorderedAccessView(b.argsBuf, &uav, &b.argsUAV)) || !b.argsUAV) {
 		logger::error("[GRASS OPTIMIZATIONS] args UAV create failed");
@@ -929,6 +925,7 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 			bin.Release();
 			return false;
 		}
+		Util::SetResourceName(bin.compactedUAV, "GrassOptimizations::LODCompactedBuf UAV");
 	}
 
 	{
@@ -956,6 +953,7 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 			bin.Release();
 			return false;
 		}
+		Util::SetResourceName(bin.extrasUAV, "GrassOptimizations::LODExtrasBuf UAV");
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
 		sv.Format = DXGI_FORMAT_UNKNOWN;
@@ -966,14 +964,15 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 			bin.Release();
 			return false;
 		}
+		Util::SetResourceName(bin.extrasSRV, "GrassOptimizations::LODExtrasBuf SRV");
 	}
 
 	{
-		const uint32_t initArgs[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+		const uint32_t initArgs[16] = { 0 };
 		D3D11_SUBRESOURCE_DATA init{ initArgs, 0, 0 };
 
 		D3D11_BUFFER_DESC bd{};
-		bd.ByteWidth = 16 * sizeof(uint32_t);
+		bd.ByteWidth = (globals::game::isVR ? 16u : 8u) * sizeof(uint32_t);
 		bd.Usage = D3D11_USAGE_DEFAULT;
 		bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
 		bd.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS | D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
@@ -985,18 +984,18 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 		}
 		Util::SetResourceName(bin.argsBuf, "GrassOptimizations::LODArgsBuf");
 
-		// Spans both eyes' instance-count dwords via one raw view.
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
 		uav.Format = DXGI_FORMAT_R32_TYPELESS;
 		uav.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uav.Buffer.FirstElement = instanceCountOffset / sizeof(uint32_t);
-		uav.Buffer.NumElements = (kArgsBlockStride / sizeof(uint32_t)) + 1;
+		uav.Buffer.NumElements = globals::game::isVR ? ((kArgsBlockStride / sizeof(uint32_t)) + 1) : 1;
 		uav.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
 		if (FAILED(device->CreateUnorderedAccessView(bin.argsBuf, &uav, &bin.argsUAV)) || !bin.argsUAV) {
 			logger::error("[GRASS OPTIMIZATIONS] {} LOD args UAV create failed", tierName);
 			bin.Release();
 			return false;
 		}
+		Util::SetResourceName(bin.argsUAV, "GrassOptimizations::LODArgsBuf UAV");
 	}
 
 	bin.capacityInstances = cap;

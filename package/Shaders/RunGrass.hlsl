@@ -231,7 +231,8 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	const float vertexTerm = WindVector.z * (0.5 * (input.Color.w * input.Color.w));
 	msPosition.xyz += float3(WindVector.xy, 0) * (e1.x * vertexTerm);
 	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
-	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[CurrentEyeIndex], float4(eyeRel, 1.0));
+	// WorldViewProj carries the per-eye matrix (FrameBuffer::CameraViewProj is identical for both eyes in VR).
+	const float4 projSpacePosition = mul(WorldViewProj[CurrentEyeIndex], msPosition);
 #		if !defined(VR)
 	vsout.HPosition = projSpacePosition;
 #		endif  // !VR

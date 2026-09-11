@@ -1,6 +1,10 @@
 #include "RainRendering.h"
 
 #include "DynamicCubemaps.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Effects11.h"
+#	include "Effects11/SettingManager.h"
+#endif
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -26,11 +30,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ForceRainRendering,
 	EnableRainRoofOcclusion,
 	EnableRainWind,
+	MatchVanillaRainSpeed,
 	RainDropCount,
 	RainOverheadDropCount,
 	RainDensity,
+	MatchVanillaRainDensity,
+	VanillaRainDensityMultiplier,
 	RainFallSpeed,
 	RainWindInfluence,
+	MatchEffects11RainStretch,
 	RainStreakLength,
 	RainVelocityStretch,
 	RainStreakWidth,
@@ -67,8 +75,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainTextureNormalStrength,
 	RainTextureReflectionStrength,
 	RainTextureUVWidth,
-	RainEnvironmentTransmission,
-	RainSceneRefractionMix,
 	RainHighlightRoughness,
 	RainLightScattering,
 	RainRoofOcclusionFadeStart,
@@ -79,8 +85,6 @@ namespace
 	constexpr uint32_t kGridWidth = 96;
 	constexpr uint32_t kGridDepth = 96;
 	constexpr uint32_t kGridHeight = 4;
-	constexpr float kMaximumRainParticleDensity = 3.0f;
-	constexpr float kReferenceRainGravity = 675.0f;
 
 	struct RainPerformancePreset
 	{
@@ -553,6 +557,9 @@ void RainRendering::NormalizeSettings()
 	settings.ForceRainRendering = settings.ForceRainRendering ? 1u : 0u;
 	settings.EnableRainRoofOcclusion = settings.EnableRainRoofOcclusion ? 1u : 0u;
 	settings.EnableRainWind = settings.EnableRainWind ? 1u : 0u;
+	settings.MatchVanillaRainSpeed = settings.MatchVanillaRainSpeed ? 1u : 0u;
+	settings.MatchVanillaRainDensity = settings.MatchVanillaRainDensity ? 1u : 0u;
+	settings.MatchEffects11RainStretch = settings.MatchEffects11RainStretch ? 1u : 0u;
 	settings.EnableRainRefraction = settings.EnableRainRefraction ? 1u : 0u;
 	settings.EnableRainLightCache = settings.EnableRainLightCache ? 1u : 0u;
 	settings.RainLocalLightDistance = ClampFinite(settings.RainLocalLightDistance, kLocalLightDistanceRange.minimum, kLocalLightDistanceRange.maximum, defaults.RainLocalLightDistance);
@@ -562,6 +569,7 @@ void RainRendering::NormalizeSettings()
 	settings.RainDropCount = std::clamp(settings.RainDropCount, kDropCountRange.minimum, kDropCountRange.maximum);
 	settings.RainOverheadDropCount = std::clamp(settings.RainOverheadDropCount, kOverheadDropCountRange.minimum, kOverheadDropCountRange.maximum);
 	settings.RainDensity = ClampFinite(settings.RainDensity, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainDensity);
+	settings.VanillaRainDensityMultiplier = ClampFinite(settings.VanillaRainDensityMultiplier, kVanillaDensityMultiplierRange.minimum, kVanillaDensityMultiplierRange.maximum, defaults.VanillaRainDensityMultiplier);
 	settings.RainWindInfluence = ClampFinite(settings.RainWindInfluence, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainWindInfluence);
 	settings.RainMinimumVisibility = ClampFinite(settings.RainMinimumVisibility, kUnitRange.minimum, kUnitRange.maximum, defaults.RainMinimumVisibility);
 	settings.RainNearCutoffDistance = ClampFinite(settings.RainNearCutoffDistance, kNearCutoffDistanceRange.minimum, kNearCutoffDistanceRange.maximum, defaults.RainNearCutoffDistance);
@@ -596,6 +604,7 @@ void RainRendering::ApplyPerformanceProfile(PerfProfile a_profile)
 	const auto preset = GetRainPerformancePreset(a_profile);
 	settings.RainDropCount = preset.dropCount;
 	settings.RainDensity = preset.density;
+	settings.MatchVanillaRainDensity = 0;
 	settings.RainFarDistance = preset.farDistance;
 	NormalizeSettings();
 }
@@ -604,7 +613,7 @@ bool RainRendering::MatchesPerformanceProfile(PerfProfile a_profile) const
 {
 	const auto preset = GetRainPerformancePreset(a_profile);
 	constexpr float kEpsilon = 1e-4f;
-	return settings.RainDropCount == preset.dropCount &&
+	return !settings.MatchVanillaRainDensity && settings.RainDropCount == preset.dropCount &&
 	       std::abs(settings.RainDensity - preset.density) <= kEpsilon &&
 	       std::abs(settings.RainFarDistance - preset.farDistance) <= kEpsilon;
 }
@@ -654,7 +663,7 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 	struct WeatherSample
 	{
 		float intensity = 0.0f;
-		float gravity = kReferenceRainGravity;
+		float gravity = kFallbackRainFallSpeed;
 		float2 windSlope{};
 	};
 	const auto getWeatherSample = [](const RE::TESWeather* a_weather, const RE::BSGeometry* a_precipitation) {
@@ -667,11 +676,7 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 		if (particleType != static_cast<uint32_t>(RE::BGSShaderParticleGeometryData::ParticleType::kRain))
 			return sample;
 
-		const float density = a_weather->precipitationData->GetSettingValue(
-															  RE::BGSShaderParticleGeometryData::DataID::kParticleDensity)
-		                          .f;
-		if (std::isfinite(density) && density > 0.0f)
-			sample.intensity = std::min(1.0f, density / kMaximumRainParticleDensity);
+		sample.intensity = Precipitation::GetWeatherRainIntensity(a_weather);
 		const float gravity = a_weather->precipitationData->GetSettingValue(
 															  RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity)
 		                          .f;
@@ -680,6 +685,8 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 		if (const auto* rainEmitter = Precipitation::GetRainEmitter(a_precipitation)) {
 			const auto& wind = rainEmitter->windVelocity;
 			const float verticalGravity = std::abs(rainEmitter->gravityVelocity.z);
+			if (std::isfinite(verticalGravity) && verticalGravity > 0.0f)
+				sample.gravity = verticalGravity;
 			if (std::isfinite(wind.x) && std::isfinite(wind.y) &&
 				std::isfinite(verticalGravity) && verticalGravity > 1.0f) {
 				sample.windSlope = float2{ wind.x / verticalGravity, wind.y / verticalGravity };
@@ -695,16 +702,16 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 	float currentIntensity = 0.0f;
 	if (sky->currentWeather && currentSample.intensity > 0.0f) {
 		const float fadeStart = sky->currentWeather->data.precipitationBeginFadeIn * (1.0f / 255.0f);
-		currentIntensity = currentSample.intensity *
-		                   LinearStep(fadeStart, 1.0f, sky->currentWeatherPct);
+		const float fade = LinearStep(fadeStart, 1.0f, sky->currentWeatherPct);
+		currentIntensity = currentSample.intensity * fade;
 	}
 
 	const WeatherSample previousSample = getWeatherSample(sky->lastWeather, sky->precip->lastPrecip.get());
 	float previousIntensity = 0.0f;
 	if (sky->lastWeather && previousSample.intensity > 0.0f) {
 		const float fadeEnd = sky->lastWeather->data.precipitationEndFadeOut * (1.0f / 255.0f);
-		previousIntensity = previousSample.intensity *
-		                    (1.0f - LinearStep(0.0f, fadeEnd, sky->currentWeatherPct));
+		const float fade = 1.0f - LinearStep(0.0f, fadeEnd, sky->currentWeatherPct);
+		previousIntensity = previousSample.intensity * fade;
 	}
 
 	const float combinedIntensity = currentIntensity + previousIntensity;
@@ -714,10 +721,25 @@ RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 	const float blendedGravity =
 		(currentSample.gravity * currentIntensity + previousSample.gravity * previousIntensity) /
 		combinedIntensity;
-	state.fallSpeedScale = std::clamp(blendedGravity / kReferenceRainGravity, 0.25f, 4.0f);
+	state.fallSpeed = blendedGravity;
 	state.windSlope = (currentSample.windSlope * currentIntensity + previousSample.windSlope * previousIntensity) /
 	                  combinedIntensity;
 	return state;
+}
+
+std::optional<float> RainRendering::GetEffects11RainStretch() const
+{
+#if defined(ENABLE_EFFECTS11)
+	if (globals::features::effects11.loaded && globals::features::effects11.enableEffect) {
+		auto& effects11Settings = SettingManager::GetSingleton();
+		if (effects11Settings.GetSettingInfo("MotionStretch", "RAIN")) {
+			const float stretch = effects11Settings.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
+			if (std::isfinite(stretch))
+				return std::clamp(stretch, kUnitRange.minimum, kUnitRange.maximum);
+		}
+	}
+#endif
+	return std::nullopt;
 }
 
 RainRendering::CommonBuffer RainRendering::GetCommonBufferData() const
@@ -962,7 +984,7 @@ void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2
 	a_data.Refraction = float4{ ClampFinite(settings.RainRefractionDistance, kRefractionDistanceRange.minimum, kRefractionDistanceRange.maximum, defaults.RainRefractionDistance),
 		a_hasSceneColor ? 1.0f : 0.0f,
 		glassy ? ClampFinite(settings.RainStreakVariation, kUnitRange.minimum, kUnitRange.maximum, defaults.RainStreakVariation) : 0.0f,
-		ClampFinite(settings.RainEnvironmentTransmission, kUnitRange.minimum, kUnitRange.maximum, defaults.RainEnvironmentTransmission) };
+		0.0f };
 	a_data.ScreenSize = float4{ a_size.x, a_size.y, 1.0f / a_description.Width, 1.0f / a_description.Height };
 	a_data.TexturedRain = float4{ glassy && rainTextureSRV && refractionSampler ? 1.0f : 0.0f,
 		ClampFinite(settings.RainTextureNormalStrength, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainTextureNormalStrength),
@@ -971,7 +993,7 @@ void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2
 		ClampFinite(settings.RainTextureUVWidth, kTextureUVWidthRange.minimum, kTextureUVWidthRange.maximum, defaults.RainTextureUVWidth), 0.0f };
 	a_data.MaterialLighting = float4{ ClampFinite(settings.RainHighlightRoughness, kHighlightRoughnessRange.minimum, kHighlightRoughnessRange.maximum, defaults.RainHighlightRoughness),
 		ClampFinite(settings.RainLightScattering, kUnitRange.minimum, kUnitRange.maximum, defaults.RainLightScattering),
-		ClampFinite(settings.RainSceneRefractionMix, kUnitRange.minimum, kUnitRange.maximum, defaults.RainSceneRefractionMix), settings.EnableRainLightCache ? 1.0f : 0.0f };
+		0.0f, settings.EnableRainLightCache ? 1.0f : 0.0f };
 	const auto& lightLimitFix = globals::features::lightLimitFix;
 	if (glassy && lightLimitFix.loaded && lightLimitFix.lights && lightLimitFix.lightGrid && lightLimitFix.lightIndexList) {
 		a_data.LocalLighting = float4{ ClampFinite(settings.RainLocalLightResponse, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, defaults.RainLocalLightResponse),
@@ -1002,7 +1024,9 @@ RainRendering::PerFrame RainRendering::BuildPerFrameData(
 	};
 	data.WeatherFallDepth = float4{
 		a_weather.intensity,
-		ClampFinite(settings.RainFallSpeed, kRuntimeFallSpeedRange.minimum, kRuntimeFallSpeedRange.maximum, defaults.RainFallSpeed) * a_weather.fallSpeedScale,
+		settings.MatchVanillaRainSpeed ?
+			ClampFinite(a_weather.fallSpeed, 1.0f, kRuntimeFallSpeedRange.maximum, kFallbackRainFallSpeed) :
+			ClampFinite(settings.RainFallSpeed, kRuntimeFallSpeedRange.minimum, kRuntimeFallSpeedRange.maximum, defaults.RainFallSpeed),
 		0.0f,
 		ClampFinite(settings.RainIntersectionFadeDistance, kRuntimeIntersectionFadeRange.minimum, kRuntimeIntersectionFadeRange.maximum, defaults.RainIntersectionFadeDistance)
 	};
@@ -1012,6 +1036,12 @@ RainRendering::PerFrame RainRendering::BuildPerFrameData(
 		ClampFinite(settings.RainStreakWidth, kRuntimeStreakWidthRange.minimum, kRuntimeStreakWidthRange.maximum, defaults.RainStreakWidth),
 		ClampFinite(settings.RainOpacity, kUnitRange.minimum, kUnitRange.maximum, defaults.RainOpacity)
 	};
+	if (settings.MatchEffects11RainStretch) {
+		if (const auto stretch = GetEffects11RainStretch()) {
+			data.Streak.x = 1.0f - *stretch;
+			data.Streak.y = *stretch;
+		}
+	}
 	data.Appearance = float4{
 		ClampFinite(settings.RainBrightness, kRuntimeBrightnessRange.minimum, kRuntimeBrightnessRange.maximum, defaults.RainBrightness),
 		ClampFinite(settings.RainLightingResponse, kUnitRange.minimum, kUnitRange.maximum, defaults.RainLightingResponse),
@@ -1030,10 +1060,12 @@ RainRendering::PerFrame RainRendering::BuildPerFrameData(
 		ClampFinite(settings.RainCurtainContrast, kRuntimeCurtainContrastRange.minimum, kRuntimeCurtainContrastRange.maximum, defaults.RainCurtainContrast),
 		0.0f
 	};
+	const double vanillaDensityMultiplier = ClampFinite(settings.VanillaRainDensityMultiplier,
+		kVanillaDensityMultiplierRange.minimum, kVanillaDensityMultiplierRange.maximum, defaults.VanillaRainDensityMultiplier);
 	data.CurtainDensity = float4{
 		ClampFinite(settings.RainCurtainMinDensity, kRuntimeCurtainDensityRange.minimum, kRuntimeCurtainDensityRange.maximum, defaults.RainCurtainMinDensity),
 		ClampFinite(settings.RainCurtainMaxDensity, kRuntimeCurtainDensityRange.minimum, kRuntimeCurtainDensityRange.maximum, defaults.RainCurtainMaxDensity),
-		0.0f,
+		settings.MatchVanillaRainDensity ? static_cast<float>(std::min(1.0, a_weather.intensity * vanillaDensityMultiplier)) : -1.0f,
 		0.0f
 	};
 	data.LightColor = float4{ lightColor.x, lightColor.y, lightColor.z, 0.0f };
@@ -1133,7 +1165,9 @@ void RainRendering::DrawRain()
 	if (!settings.EnableRainRendering || globals::state->IsFullScreenMenuOpen())
 		return;
 
-	const WeatherRainState weather = settings.ForceRainRendering ? WeatherRainState{ 1.0f, 1.0f } : GetWeatherRainState();
+	WeatherRainState weather = GetWeatherRainState();
+	if (settings.ForceRainRendering)
+		weather.intensity = 1.0f;
 	if (weather.intensity <= 0.0f)
 		return;
 
@@ -1184,14 +1218,21 @@ void RainRendering::DrawRain()
 		return;
 	}
 	renderPathReady = true;
+	const bool continuingRain = lastDrawFrame != UINT32_MAX && frame == lastDrawFrame + 1u;
 	lastDrawFrame = frame;
 
 	CS_GPU_PASS("RainRendering::AirborneRain");
 	const bool hasSceneColor = mainTarget.SRV && usesWaterMaterial && settings.EnableRainRefraction &&
-	                           settings.RainSceneRefractionMix > 0.0f && settings.RainRefractionStrength > 0.0f &&
+	                           settings.RainRefractionStrength > 0.0f &&
 	                           EnsureSceneColorCopy(mainTarget.texture, mainTarget.RTV);
 
 	PerFrame data = BuildPerFrameData(weather, mainDescription, dynamicSize, hasSceneColor);
+	const float rainTime = globals::state->timer;
+	const float elapsedTime = continuingRain ? std::max(rainTime - previousRainTime, 0.0f) : 0.0f;
+	previousRainTime = rainTime;
+	// Changing velocity must not rescale the travel already accumulated during the session.
+	fallTravelDistance += static_cast<double>(elapsedTime) * data.WeatherFallDepth.y;
+	data.WeatherFallDepth.z = static_cast<float>(fallTravelDistance);
 	const auto& skylighting = globals::features::skylighting;
 	const bool hasRoofOcclusion = data.RoofOcclusion.x > 0.5f;
 	perFrameCB->Update(data);

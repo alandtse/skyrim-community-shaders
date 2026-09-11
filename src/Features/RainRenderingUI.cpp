@@ -41,7 +41,22 @@ void RainRendering::DrawPerformanceSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("overhead_drop_count_tooltip"), "Reserves this many near-layer particles for a softly faded volume above the player. The total drop count does not increase."));
 
-	ImGui::SliderFloat(T(TKEY("density"), "Rain Density"), &settings.RainDensity, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, "%.2f");
+	if (ImGui::Button(T(TKEY("match_vanilla_density"), "Follow Weather Rain Intensity"))) {
+		settings.MatchVanillaRainDensity = 1;
+		settings.VanillaRainDensityMultiplier = 1.0f;
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("match_vanilla_density_tooltip"), "Uses the same normalized weather intensity as Wetness Effects to scale this effect's drop budget. This does not reproduce Skyrim's particle count. Resets the multiplier to 1x. Curtains and occlusion still apply; forced rain uses full intensity."));
+	if (settings.MatchVanillaRainDensity) {
+		ImGui::SameLine();
+		if (ImGui::Button(T(TKEY("manual_density"), "Use Manual Density")))
+			settings.MatchVanillaRainDensity = 0;
+		ImGui::SliderFloat(T(TKEY("vanilla_density_multiplier"), "Weather Intensity Multiplier"), &settings.VanillaRainDensityMultiplier,
+			kVanillaDensityMultiplierRange.minimum, kVanillaDensityMultiplierRange.maximum, "%.2fx");
+		ImGui::TextWrapped("%s", T(TKEY("vanilla_density_budget_help"), "Weather intensity controls drop occupancy. Maximum Drop Count remains the limit; the multiplier cannot add drops once the budget is full."));
+	} else {
+		ImGui::SliderFloat(T(TKEY("density"), "Rain Density"), &settings.RainDensity, kDoubleUnitRange.minimum, kDoubleUnitRange.maximum, "%.2f");
+	}
 	if (ImGui::SliderFloat(T(TKEY("far_distance"), "Rain Far Distance"), &settings.RainFarDistance, kFarDistanceRange.minimum, kFarDistanceRange.maximum, "%.0f"))
 		NormalizeSettings();
 
@@ -97,9 +112,14 @@ void RainRendering::DrawMotionSettings()
 {
 	if (!ImGui::TreeNodeEx(T(TKEY("motion"), "Motion"), ImGuiTreeNodeFlags_DefaultOpen))
 		return;
-	ImGui::SliderFloat(T(TKEY("fall_speed"), "Base Fall Speed"), &settings.RainFallSpeed, kFallSpeedRange.minimum, kFallSpeedRange.maximum, "%.0f");
+	DrawFlagCheckbox(T(TKEY("match_vanilla_speed"), "Match Vanilla Rain Speed"), settings.MatchVanillaRainSpeed);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("fall_speed_tooltip"), "Baseline fall speed scaled by the active weather's gravity. Force Rain uses this value directly."));
+		ImGui::TextUnformatted(T(TKEY("match_vanilla_speed_tooltip"), "Uses the active rain emitter's fall velocity without an extra multiplier, with weather gravity as fallback. Forced rain follows rainy weather too; without rainy weather it uses 675 units per second. Disable for manual speed."));
+	ImGui::BeginDisabled(settings.MatchVanillaRainSpeed != 0);
+	ImGui::SliderFloat(T(TKEY("fall_speed"), "Manual Fall Speed"), &settings.RainFallSpeed, kFallSpeedRange.minimum, kFallSpeedRange.maximum, "%.0f units/s");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("fall_speed_tooltip"), "Explicit fall velocity in game units per second when Match Vanilla Rain Speed is off. Weather does not multiply this value."));
+	ImGui::EndDisabled();
 	DrawFlagCheckbox(T(TKEY("wind_enable"), "Follow Vanilla Rain Wind"), settings.EnableRainWind);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("wind_enable_tooltip"), "Uses the active vanilla rain emitter's wind-to-gravity ratio. It does not load the separate spatial wind system."));
@@ -113,8 +133,18 @@ void RainRendering::DrawAppearanceSettings()
 {
 	if (!ImGui::TreeNodeEx(T(TKEY("streaks"), "Streak Appearance"), ImGuiTreeNodeFlags_DefaultOpen))
 		return;
+#if defined(ENABLE_EFFECTS11)
+	DrawFlagCheckbox(T(TKEY("match_effects11_stretch"), "Match Effects 11 Rain Stretch"), settings.MatchEffects11RainStretch);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("match_effects11_stretch_tooltip"), "Automatically follows Effects 11 weather/time-of-day MotionStretch while Effects 11 is enabled. Uses the manual values below otherwise, without overwriting them. Airborne Rain keeps its own velocity, depth layers and streak variation; opacity and density are unchanged."));
+#endif
+	const auto matchedStretch = settings.MatchEffects11RainStretch ? GetEffects11RainStretch() : std::nullopt;
+	if (matchedStretch)
+		ImGui::Text(T(TKEY("matched_effects11_stretch"), "Active Effects 11 stretch: %.3f"), *matchedStretch);
+	ImGui::BeginDisabled(matchedStretch.has_value());
 	ImGui::SliderFloat(T(TKEY("streak_length"), "Base Streak Length"), &settings.RainStreakLength, kStreakLengthRange.minimum, kStreakLengthRange.maximum, "%.1f");
 	ImGui::SliderFloat(T(TKEY("velocity_stretch"), "Velocity Stretch"), &settings.RainVelocityStretch, kVelocityStretchRange.minimum, kVelocityStretchRange.maximum, "%.3f");
+	ImGui::EndDisabled();
 	ImGui::SliderFloat(T(TKEY("streak_width"), "Streak Width"), &settings.RainStreakWidth, kStreakWidthRange.minimum, kStreakWidthRange.maximum, "%.2f");
 	ImGui::SliderFloat(T(TKEY("opacity"), "Rain Opacity"), &settings.RainOpacity, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
 	ImGui::SliderFloat(T(TKEY("brightness"), "Rain Brightness"), &settings.RainBrightness, kBrightnessRange.minimum, kBrightnessRange.maximum, "%.2f");
@@ -206,10 +236,7 @@ void RainRendering::DrawWaterMaterialSettings()
 
 	if (ImGui::TreeNodeEx(T(TKEY("advanced_water_material"), "Advanced Water Material"))) {
 		ImGui::BeginDisabled(!usesWaterMaterial);
-		ImGui::SliderFloat(T(TKEY("environment_transmission"), "Environment Transmission"), &settings.RainEnvironmentTransmission, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("environment_transmission_tooltip"), "Cubemap transmission fills the portion not using nearby scene distortion. It does not reduce Scene Distortion Mix. Zero leaves that portion as clear background transmission."));
-		if (settings.RainEnvironmentTransmission > 0.0f && !GetRainEnvironment())
+		if (!GetRainEnvironment())
 			ImGui::TextDisabled("%s", T(TKEY("rain_environment_unavailable"), "Environment cubemap unavailable; using background transmission."));
 		ImGui::SliderFloat(T(TKEY("core_darkening"), "Translucent Core Darkening"), &settings.RainCoreDarkening, kCoreDarkeningRange.minimum, kCoreDarkeningRange.maximum, "%.2f");
 		ImGui::SliderFloat(T(TKEY("edge_highlight"), "Edge Highlight"), &settings.RainEdgeHighlight, kEdgeHighlightRange.minimum, kEdgeHighlightRange.maximum, "%.2f");
@@ -226,9 +253,6 @@ void RainRendering::DrawWaterMaterialSettings()
 		ImGui::SliderFloat(T(TKEY("highlight_roughness"), "Water Highlight Roughness"), &settings.RainHighlightRoughness, kHighlightRoughnessRange.minimum, kHighlightRoughnessRange.maximum, "%.2f");
 		ImGui::SliderFloat(T(TKEY("light_scattering"), "Light Scattering"), &settings.RainLightScattering, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
 		ImGui::BeginDisabled(!settings.EnableRainRefraction);
-		ImGui::SliderFloat(T(TKEY("scene_distortion_mix"), "Scene Distortion Mix"), &settings.RainSceneRefractionMix, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("scene_distortion_mix_tooltip"), "Transmission taken from the distorted scene inside nearby drops. One gives scene distortion priority over cubemap transmission; Rain Opacity controls broad reflection and scattering without weakening refraction or direct light glints."));
 		ImGui::SliderFloat(T(TKEY("refraction_distance"), "Glassy Detail Distance"), &settings.RainRefractionDistance, kRefractionDistanceRange.minimum, kRefractionDistanceRange.maximum, "%.0f units");
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
@@ -241,9 +265,15 @@ void RainRendering::DrawSpatialVariationSettings()
 {
 	if (!ImGui::TreeNodeEx(T(TKEY("spatial_variation"), "Spatial Variation")))
 		return;
-	ImGui::SliderFloat(T(TKEY("density_noise_scale"), "Density Noise Scale"), &settings.RainDensityNoiseScale, kDensityNoiseScaleRange.minimum, kDensityNoiseScaleRange.maximum, "%.0f");
+	ImGui::SliderFloat(T(TKEY("density_noise_scale"), "Density Noise Scale"), &settings.RainDensityNoiseScale, kDensityNoiseScaleRange.minimum, kDensityNoiseScaleRange.maximum, "%.0f", ImGuiSliderFlags_Logarithmic);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("density_noise_scale_tooltip"), "World-space cluster size in game units. Limited to half each layer's radius (at least 64 units) so small near and overhead volumes retain detail. Patterns do not follow head rotation or translation."));
 	ImGui::SliderFloat(T(TKEY("density_noise_strength"), "Density Noise Strength"), &settings.RainDensityNoiseStrength, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
-	ImGui::SliderFloat(T(TKEY("curtain_scale"), "Curtain Scale"), &settings.RainCurtainScale, kCurtainScaleRange.minimum, kCurtainScaleRange.maximum, "%.0f");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("density_noise_strength_tooltip"), "Biases stable birth positions toward clusters in every layer, including overhead rain. At full density, variation redistributes the particle budget instead of thinning it."));
+	ImGui::SliderFloat(T(TKEY("curtain_scale"), "Curtain Scale"), &settings.RainCurtainScale, kCurtainScaleRange.minimum, kCurtainScaleRange.maximum, "%.0f", ImGuiSliderFlags_Logarithmic);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("curtain_scale_tooltip"), "World-space band size in game units. Limited to each layer's radius (at least 128 units for the layer limit). Applies to near, mid, far, and overhead rain."));
 	ImGui::SliderFloat(T(TKEY("curtain_strength"), "Curtain Strength"), &settings.RainCurtainStrength, kUnitRange.minimum, kUnitRange.maximum, "%.2f");
 	ImGui::SliderFloat(T(TKEY("curtain_contrast"), "Curtain Contrast"), &settings.RainCurtainContrast, kCurtainContrastRange.minimum, kCurtainContrastRange.maximum, "%.2f");
 	ImGui::SliderFloat(T(TKEY("curtain_min_density"), "Curtain Minimum Density"), &settings.RainCurtainMinDensity, kCurtainMinimumDensityRange.minimum, kCurtainMinimumDensityRange.maximum, "%.2f");

@@ -7,6 +7,7 @@
 #include <array>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <winrt/base.h>
 
@@ -28,6 +29,7 @@ private:
 	static constexpr uint32_t kMaximumDebugMode = 8;
 	static constexpr uint32_t kMinimumRuntimeDropCount = 1;
 	static constexpr float kMaximumRefractionPixels = 12.0f;
+	static constexpr float kFallbackRainFallSpeed = 675.0f;
 	static constexpr const char* kDefaultRainTexturePath = "Data\\Textures\\CommunityShaders\\RainRendering\\RainDrops\\Default\\RainDrop.png";
 	static constexpr const char* kCustomRainTexturePath = "Data\\Textures\\CommunityShaders\\RainRendering\\RainDrops\\Custom\\RainDrop.png";
 
@@ -35,16 +37,17 @@ private:
 	static constexpr SettingRange<uint32_t> kOverheadDropCountRange{ 0, 64 };
 	static constexpr SettingRange<float> kUnitRange{ 0.0f, 1.0f };
 	static constexpr SettingRange<float> kDoubleUnitRange{ 0.0f, 2.0f };
+	static constexpr SettingRange<float> kVanillaDensityMultiplierRange{ 0.0f, 4.0f };
 	static constexpr SettingRange<float> kBudgetWeightRange{ 0.0f, 4.0f };
 	static constexpr SettingRange<float> kFarDistanceRange{ 2000.0f, 30000.0f };
 	static constexpr SettingRange<float> kNearCutoffDistanceRange{ 0.0f, 64.0f };
-	static constexpr SettingRange<float> kFallSpeedRange{ 500.0f, 6000.0f };
-	static constexpr SettingRange<float> kStreakLengthRange{ 4.0f, 500.0f };
-	static constexpr SettingRange<float> kVelocityStretchRange{ 0.0f, 0.25f };
+	static constexpr SettingRange<float> kFallSpeedRange{ 100.0f, 6000.0f };
+	static constexpr SettingRange<float> kStreakLengthRange{ 0.0f, 500.0f };
+	static constexpr SettingRange<float> kVelocityStretchRange{ 0.0f, 1.0f };
 	static constexpr SettingRange<float> kStreakWidthRange{ 0.2f, 8.0f };
 	static constexpr SettingRange<float> kBrightnessRange{ 0.0f, 4.0f };
-	static constexpr SettingRange<float> kDensityNoiseScaleRange{ 256.0f, 16000.0f };
-	static constexpr SettingRange<float> kCurtainScaleRange{ 512.0f, 30000.0f };
+	static constexpr SettingRange<float> kDensityNoiseScaleRange{ 64.0f, 16000.0f };
+	static constexpr SettingRange<float> kCurtainScaleRange{ 64.0f, 30000.0f };
 	static constexpr SettingRange<float> kCurtainContrastRange{ 0.25f, 4.0f };
 	static constexpr SettingRange<float> kCurtainMinimumDensityRange{ 0.0f, 2.0f };
 	static constexpr SettingRange<float> kCurtainMaximumDensityRange{ 0.0f, 3.0f };
@@ -58,7 +61,7 @@ private:
 	static constexpr SettingRange<float> kRoofFadeStartRange{ 0.0f, 0.99f };
 	static constexpr SettingRange<float> kRuntimeFarDistanceRange{ 1000.0f, 50000.0f };
 	static constexpr SettingRange<float> kRuntimeFallSpeedRange{ 100.0f, 10000.0f };
-	static constexpr SettingRange<float> kRuntimeStreakLengthRange{ 1.0f, 1000.0f };
+	static constexpr SettingRange<float> kRuntimeStreakLengthRange{ 0.0f, 1000.0f };
 	static constexpr SettingRange<float> kRuntimeStreakWidthRange{ 0.05f, 20.0f };
 	static constexpr SettingRange<float> kRuntimeBrightnessRange{ 0.0f, 8.0f };
 	static constexpr SettingRange<float> kRuntimeDensityNoiseScaleRange{ 64.0f, 50000.0f };
@@ -82,12 +85,16 @@ public:
 		uint ForceRainRendering = 0;
 		uint EnableRainRoofOcclusion = 1;
 		uint EnableRainWind = 1;
-		uint RainDropCount = 32000;
+		uint MatchVanillaRainSpeed = 1;
+		uint RainDropCount = 62000;
 		uint RainOverheadDropCount = 64;
 		float RainDensity = 2.0f;
-		float RainFallSpeed = 2336.0f;
-		float RainWindInfluence = 2.0f;
+		uint MatchVanillaRainDensity = 1;
+		float VanillaRainDensityMultiplier = 1.0f;
+		float RainFallSpeed = kFallbackRainFallSpeed;
+		float RainWindInfluence = 1.0f;
 
+		uint MatchEffects11RainStretch = 1;
 		float RainStreakLength = 72.0f;
 		float RainVelocityStretch = 0.045f;
 		float RainStreakWidth = 1.54f;
@@ -129,8 +136,6 @@ public:
 		float RainTextureNormalStrength = 2.0f;
 		float RainTextureReflectionStrength = 1.0f;
 		float RainTextureUVWidth = 0.5f;
-		float RainEnvironmentTransmission = 0.8f;
-		float RainSceneRefractionMix = 1.0f;
 		float RainHighlightRoughness = 0.18f;
 		float RainLightScattering = 1.0f;
 		float RainRoofOcclusionFadeStart = 0.20f;
@@ -192,7 +197,7 @@ public:
 	struct alignas(16) CachedLightData
 	{
 		float4 Position;
-		float4 IrradianceScattering;
+		float4 Irradiance;
 		float4 Direction;
 	};
 	static_assert(sizeof(CachedLightData) == 48, "RainRendering::CachedLightData must match RainCachedLight");
@@ -249,7 +254,7 @@ private:
 	struct WeatherRainState
 	{
 		float intensity = 0.0f;
-		float fallSpeedScale = 1.0f;
+		float fallSpeed = kFallbackRainFallSpeed;
 		float2 windSlope{};
 	};
 
@@ -273,6 +278,7 @@ private:
 	std::array<uint32_t, 4> GetLayerDropCounts() const;
 	float4 GetLayerRadii(float a_farDistance) const;
 	WeatherRainState GetWeatherRainState() const;
+	std::optional<float> GetEffects11RainStretch() const;
 	float3 GetRainLightColor() const;
 	bool EnsureShaders();
 	bool EnsureRainSampler();
@@ -326,4 +332,6 @@ private:
 	bool shaderCompileAttempted = false;
 	bool renderPathReady = false;
 	uint32_t lastDrawFrame = UINT32_MAX;
+	float previousRainTime = 0.0f;
+	double fallTravelDistance = 0.0;
 };

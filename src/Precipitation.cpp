@@ -3,6 +3,9 @@
 #include "Features/Skylighting.h"
 #include "Globals.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace
 {
 	struct Main_RenderPrecipitation
@@ -34,6 +37,15 @@ namespace
 	};
 
 	bool precipitationHookInstalled = false;
+}
+
+float Precipitation::GetWeatherRainIntensity(const RE::TESWeather* a_weather)
+{
+	if (!a_weather || !a_weather->precipitationData)
+		return 0.0f;
+	const float density = a_weather->precipitationData->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity).f;
+	constexpr float fullRainIntensityDensity = 3.0f;
+	return std::isfinite(density) && density > 0.0f ? std::min(1.0f, density / fullRainIntensityDensity) : 0.0f;
 }
 
 void Precipitation::Install()

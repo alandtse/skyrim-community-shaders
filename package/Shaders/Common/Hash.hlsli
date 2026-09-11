@@ -15,6 +15,12 @@ namespace Hash
 		return value ^ (value >> 16u);
 	}
 
+	/** @brief Mixes a signed lattice coordinate and seed without floating-point conversion. */
+	uint Lattice3D(int3 lattice, uint seed)
+	{
+		return LowBias32(asuint(lattice.x) ^ LowBias32(asuint(lattice.y) ^ LowBias32(asuint(lattice.z) ^ seed)));
+	}
+
 	/** @brief Hashes an integer into the half-open range [0, 1). */
 	float Float01(uint value)
 	{

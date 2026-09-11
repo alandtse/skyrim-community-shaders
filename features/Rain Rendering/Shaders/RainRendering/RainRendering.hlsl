@@ -1,8 +1,10 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Hash.hlsli"
+#include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/StereoSampling.hlsli"
 #include "RainRendering/RainConstants.hlsli"
+#include "RainRendering/RainDistribution.hlsli"
 
 #include "RainRendering/RainLighting.hlsli"
 #if defined(RAIN_SKYLIGHTING_OCCLUSION) && defined(COMPUTESHADER)
@@ -31,7 +33,7 @@ StructuredBuffer<uint> RainGroupOffsets : register(t40);
 struct RainCachedLight
 {
 	float4 Position;
-	float4 IrradianceScattering;
+	float4 Irradiance;
 	float4 Direction;
 };
 RWStructuredBuffer<uint> RainLightClaimsRW : register(u5);
@@ -90,29 +92,12 @@ RainSceneColorPixelOutput RainSceneColorPS(RainSceneColorVertexOutput input)
 	RainSceneColorPixelOutput output;
 	output.Color = SceneColor.SampleLevel(RefractionSampler, sourcePixel / float2(sourceWidth, sourceHeight), 0.0f);
 	output.Depth = min(min(
-						   RainCameraData.w / max(-depth00 * RainCameraData.z + RainCameraData.x, 1e-4f),
-						   RainCameraData.w / max(-depth10 * RainCameraData.z + RainCameraData.x, 1e-4f)),
+						   RainCameraData.w / max(-depth00 * RainCameraData.z + RainCameraData.x, EPSILON_DIVISION),
+						   RainCameraData.w / max(-depth10 * RainCameraData.z + RainCameraData.x, EPSILON_DIVISION)),
 		min(
-			RainCameraData.w / max(-depth01 * RainCameraData.z + RainCameraData.x, 1e-4f),
-			RainCameraData.w / max(-depth11 * RainCameraData.z + RainCameraData.x, 1e-4f)));
+			RainCameraData.w / max(-depth01 * RainCameraData.z + RainCameraData.x, EPSILON_DIVISION),
+			RainCameraData.w / max(-depth11 * RainCameraData.z + RainCameraData.x, EPSILON_DIVISION)));
 	return output;
-}
-
-uint HashLattice(int2 lattice, uint seed)
-{
-	return Hash::LowBias32(asuint(lattice.x) ^ Hash::LowBias32(asuint(lattice.y) ^ seed));
-}
-
-float ValueNoise(float2 position, uint seed)
-{
-	int2 lattice = int2(floor(position));
-	float2 offset = frac(position);
-	float2 blend = offset * offset * (3.0f - 2.0f * offset);
-	float value00 = Hash::Float01(HashLattice(lattice, seed));
-	float value10 = Hash::Float01(HashLattice(lattice + int2(1, 0), seed));
-	float value01 = Hash::Float01(HashLattice(lattice + int2(0, 1), seed));
-	float value11 = Hash::Float01(HashLattice(lattice + int2(1, 1), seed));
-	return lerp(lerp(value00, value10, blend.x), lerp(value01, value11, blend.x), blend.y);
 }
 
 int PositiveModulo(int value, int divisor)
@@ -136,7 +121,7 @@ int3 SelectWorldCell(uint3 slot, int3 baseCell, uint3 dimensions)
 float3 SafeNormalize(float3 value, float3 fallback)
 {
 	float lengthSquared = dot(value, value);
-	return lengthSquared > 1e-6f ? value * rsqrt(lengthSquared) : fallback;
+	return lengthSquared > EPSILON_DIVISION ? value * rsqrt(lengthSquared) : fallback;
 }
 
 void RejectDrop(uint dropIndex)
@@ -211,7 +196,7 @@ bool RainUsesSharedLighting(float headDistance)
 	float layerRadius = LayerRadii[layerIndex];
 	uint3 gridDimensions = max(GridAndDebug.xyz, uint3(1u, 1u, 1u));
 	uint totalCellCount = gridDimensions.x * gridDimensions.y * gridDimensions.z;
-	uint slotIndex = (layerDropIndex * 12347u + 5317u) % totalCellCount;
+	uint slotIndex = Hash::LowBias32(layerDropIndex ^ Hash::LowBias32(layerIndex + 0xD7A38E91u)) % totalCellCount;
 	uint3 slot;
 	slot.x = slotIndex % gridDimensions.x;
 	slot.y = (slotIndex / gridDimensions.x) % gridDimensions.y;
@@ -231,7 +216,7 @@ bool RainUsesSharedLighting(float headDistance)
 	float fallCycleHeight = cellSize.z;
 	if (isOverheadDrop) {
 		uint3 overheadDimensions = uint3(8u, 8u, 1u);
-		uint overheadSlotIndex = (layerDropIndex * 37u + 17u) % 64u;
+		uint overheadSlotIndex = Hash::LowBias32(layerDropIndex ^ 0xA24BAED5u) % 64u;
 		uint3 overheadSlot = uint3(overheadSlotIndex % 8u, overheadSlotIndex / 8u, 0u);
 		overheadRadius = 450.0f;
 		overheadHeight = 900.0f;
@@ -250,7 +235,7 @@ bool RainUsesSharedLighting(float headDistance)
 	float fallSpeed = max(WeatherFallDepth.y, 1.0f);
 	float2 lateralVelocity = VanillaWind.xy * fallSpeed * VanillaWind.z;
 	float initialPhase = Hash::Float01(cellSeed ^ 0xA511E9B3u);
-	float fallDistance = max(HeadPositionAndTime.w, 0.0f) * fallSpeed + initialPhase * fallCycleHeight;
+	float fallDistance = max(WeatherFallDepth.z, 0.0f) + initialPhase * fallCycleHeight;
 	uint lifeCycle = uint(floor(fallDistance / fallCycleHeight));
 	float lifeFraction = frac(fallDistance / fallCycleHeight);
 	uint lifeSeed = Hash::LowBias32(cellSeed ^ Hash::LowBias32(lifeCycle + 0x63D83595u));
@@ -259,7 +244,16 @@ bool RainUsesSharedLighting(float headDistance)
 		Hash::Float01(lifeSeed ^ 0xB5297A4Du),
 		Hash::Float01(lifeSeed ^ 0x68E31DA4u),
 		0.0f);
-	float3 dropPosition = (float3(worldCell) + jitter) * cellSize;
+	float3 alternateJitter = float3(
+		Hash::Float01(lifeSeed ^ 0x1B56C4E9u),
+		Hash::Float01(lifeSeed ^ 0x9E3779B9u),
+		0.0f);
+	RainDistribution::Field distribution;
+	float meanDensityWeight;
+	// Birth candidates stay fixed for the lifetime; evaluating moving positions would switch paths mid-fall.
+	float3 dropPosition = RainDistribution::SelectSpawn(
+		(float3(worldCell) + jitter) * cellSize, (float3(worldCell) + alternateJitter) * cellSize,
+		isOverheadDrop ? overheadRadius : layerRadius, lifeSeed, distribution, meanDensityWeight);
 	if (isOverheadDrop)
 		dropPosition.z = HeadPositionAndTime.z + overheadBottom + (1.0f - lifeFraction) * overheadHeight;
 	else
@@ -331,36 +325,14 @@ bool RainUsesSharedLighting(float headDistance)
 		}
 	}
 
-	float spatialDensity = 1.0f;
-	[branch] if (DistanceNoise.z > 0.0f)
-	{
-		float spatialNoise = ValueNoise(dropPosition.xy / max(DistanceNoise.y, 1.0f), 0xD1B54A35u);
-		spatialDensity = lerp(1.0f, lerp(0.32f, 1.68f, spatialNoise), saturate(DistanceNoise.z));
-	}
-
-	float curtainShape = 0.0f;
-	float curtainFactor = 1.0f;
-	[branch] if (Curtain.y > 0.0f || GridAndDebug.w == 4u)
-	{
-		const float2 curtainDirection = float2(0.8192319f, 0.5734624f);
-		float2 curtainPerpendicular = float2(-curtainDirection.y, curtainDirection.x);
-		float curtainScale = max(Curtain.x, 1.0f);
-		float2 curtainCoordinate = float2(
-			dot(dropPosition.xy, curtainDirection) / (curtainScale * 0.28f),
-			dot(dropPosition.xy, curtainPerpendicular) / curtainScale);
-		float curtainNoise = ValueNoise(curtainCoordinate, 0x94D049BBu);
-		curtainShape = pow(saturate(curtainNoise), max(Curtain.z, 0.1f));
-		float curtainMinimum = min(CurtainDensity.x, CurtainDensity.y);
-		float curtainMaximum = max(CurtainDensity.x, CurtainDensity.y);
-		float curtainDensity = lerp(curtainMinimum, curtainMaximum, curtainShape);
-		curtainFactor = lerp(1.0f, curtainDensity, saturate(Curtain.y));
-	}
-
 	float lodDensity = lerp(0.42f, 1.38f, sqrt(distanceRatio));
-	float density = VolumeSizeAndDensity.w * WeatherFallDepth.x * spatialDensity * curtainFactor * lodDensity;
+	float density = isOverheadDrop ? VolumeSizeAndDensity.w : VolumeSizeAndDensity.w * WeatherFallDepth.x * lodDensity;
+	// Vanilla density already includes the weather transition; do not multiply that fade twice.
+	if (CurtainDensity.z >= 0.0f)
+		density = CurtainDensity.z;
 	float acceptance = Hash::Float01(lifeSeed ^ 0xC2B2AE35u);
-	float acceptedDensity = isOverheadDrop ? saturate(VolumeSizeAndDensity.w) : saturate(density);
-	if ((GridAndDebug.w == 0u || GridAndDebug.w >= 6u) && acceptance > acceptedDensity) {
+	float acceptedDensity = RainDistribution::Acceptance(density, meanDensityWeight);
+	if ((GridAndDebug.w == 0u || GridAndDebug.w >= 6u) && acceptance >= acceptedDensity) {
 		RejectDrop(dropIndex);
 		return;
 	}
@@ -389,7 +361,7 @@ bool RainUsesSharedLighting(float headDistance)
 			uint previousClaim;
 			InterlockedMin(RainLightClaimsRW[RainLightBucket(RainLightCell(dropPosition))], dropIndex, previousClaim);
 		} else {
-			localLight = RainLighting::Evaluate(dropPosition, HeadPositionAndTime.xyz, distanceFromHead);
+			localLight = RainLighting::Evaluate(dropPosition, distanceFromHead);
 		}
 		rainColor = localLight.Irradiance * Appearance.x;
 	}
@@ -401,10 +373,10 @@ bool RainUsesSharedLighting(float headDistance)
 		rainColor = float3(1.0f, 0.35f, 0.05f);
 		opacity = 0.85f;
 	} else if (GridAndDebug.w == 3u) {
-		rainColor = lerp(float3(0.05f, 0.1f, 0.8f), float3(1.0f, 0.15f, 0.0f), saturate(spatialDensity * 0.6f));
+		rainColor = lerp(float3(0.05f, 0.1f, 0.8f), float3(1.0f, 0.15f, 0.0f), saturate(distribution.SpatialDensity * 0.6f));
 		opacity = 0.8f;
 	} else if (GridAndDebug.w == 4u) {
-		rainColor = lerp(float3(0.08f, 0.05f, 0.3f), float3(1.0f, 0.85f, 0.05f), curtainShape);
+		rainColor = lerp(float3(0.08f, 0.05f, 0.3f), float3(1.0f, 0.85f, 0.05f), distribution.CurtainShape);
 		opacity = 0.8f;
 	} else if (GridAndDebug.w == 5u) {
 		rainColor = layerIndex == 0u ? float3(1.0f, 0.1f, 0.1f) :
@@ -416,7 +388,7 @@ bool RainUsesSharedLighting(float headDistance)
 	drop.PositionLength = float4(dropPosition, max(streakLength, 1.0f));
 	drop.VelocityWidth = float4(velocity, max(streakWidth, 0.05f));
 	drop.ColorOpacity = float4(rainColor, saturate(opacity * layerFade));
-	drop.LightDirection = float4(localLight.Direction, localLight.Scattering);
+	drop.LightDirection = float4(localLight.Direction, 0.0f);
 	RainDropsRW[dropIndex] = drop;
 }
 
@@ -429,10 +401,10 @@ bool RainUsesSharedLighting(float headDistance)
 	if (dropIndex >= LayerCounts.w)
 		return;
 	float3 position = RainDrops[dropIndex].PositionLength.xyz;
-	RainLighting::Sample light = RainLighting::Evaluate(position, HeadPositionAndTime.xyz, distance(position, HeadPositionAndTime.xyz));
+	RainLighting::Sample light = RainLighting::Evaluate(position, distance(position, HeadPositionAndTime.xyz));
 	RainCachedLight cached;
 	cached.Position = float4(position, 0.0f);
-	cached.IrradianceScattering = float4(light.Irradiance, light.Scattering);
+	cached.Irradiance = float4(light.Irradiance, 0.0f);
 	cached.Direction = float4(light.Direction, 0.0f);
 	RainLightCacheRW[bucket] = cached;
 }
@@ -453,14 +425,13 @@ bool RainUsesSharedLighting(float headDistance)
 	RainLighting::Sample light;
 	// Hash collisions must not borrow lighting from an unrelated world-space cell.
 	if (all(cell == RainLightCell(cached.Position.xyz))) {
-		light.Irradiance = cached.IrradianceScattering.rgb;
-		light.Scattering = cached.IrradianceScattering.a;
+		light.Irradiance = cached.Irradiance.rgb;
 		light.Direction = cached.Direction.xyz;
 	} else {
-		light = RainLighting::Evaluate(position, HeadPositionAndTime.xyz, headDistance);
+		light = RainLighting::Evaluate(position, headDistance);
 	}
 	RainDropsRW[dropIndex].ColorOpacity.rgb = light.Irradiance * Appearance.x;
-	RainDropsRW[dropIndex].LightDirection = float4(light.Direction, light.Scattering);
+	RainDropsRW[dropIndex].LightDirection = float4(light.Direction, 0.0f);
 }
 
 groupshared uint RainGroupScan[RAIN_COMPUTE_GROUP_SIZE];
@@ -539,7 +510,7 @@ struct RainVertexOutput
 	nointerpolation float3 ScreenSideAndWidth: TEXCOORD4;
 	nointerpolation float DetailFade: TEXCOORD5;
 	nointerpolation float SpawnReveal: TEXCOORD6;
-	nointerpolation float3 ScreenAlongAndLength: TEXCOORD7;
+	nointerpolation float4 ScreenAlongAndLength: TEXCOORD7;
 	nointerpolation float3 StreakAxisWorld: TEXCOORD8;
 	nointerpolation float3 StreakSideWorld: TEXCOORD9;
 	nointerpolation float3 HeadViewDirection: TEXCOORD10;
@@ -552,7 +523,7 @@ float2 ProjectWorldVectorToPixels(float3 worldVector, float4 centerClip, uint ey
 	float4 vectorClip = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(worldVector, 0.0f));
 	float2 projected =
 		(vectorClip.xy * centerClip.w - centerClip.xy * vectorClip.w) /
-		max(centerClip.w * centerClip.w, 1e-4f);
+		max(centerClip.w * centerClip.w, EPSILON_DIVISION);
 #ifdef VR
 	return projected * float2(ScreenSize.x * 0.25f, -ScreenSize.y * 0.5f);
 #else
@@ -613,7 +584,7 @@ RainVertexOutput RainVS(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
 		float2 projectedSide = ProjectWorldVectorToPixels(
 			sideAxis * drop.VelocityWidth.w * 0.5f, centerClip, eyeIndex);
 		float halfWidth = length(projectedSide);
-		output.ScreenSideAndWidth = float3(projectedSide / max(halfWidth, 1e-4f), halfWidth);
+		output.ScreenSideAndWidth = float3(projectedSide / max(halfWidth, EPSILON_DIVISION), halfWidth);
 		output.DetailFade = 1.0f - smoothstep(Refraction.x * 0.65f, Refraction.x, distance(drop.PositionLength.xyz, HeadPositionAndTime.xyz));
 		output.StreakAxisWorld = streakAxis;
 		output.StreakSideWorld = sideAxis;
@@ -621,13 +592,16 @@ RainVertexOutput RainVS(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
 		float2 ribbonFacing = float2(dot(secondSide, output.HeadViewDirection), dot(firstSide, output.HeadViewDirection));
 		ribbonFacing *= ribbonFacing;
 		// The two world-space ribbons share one coverage budget and identical weights in both eyes.
-		ribbonCoverage = ribbonFacing[planeIndex] / max(ribbonFacing.x + ribbonFacing.y, 1e-5f);
+		ribbonCoverage = ribbonFacing[planeIndex] / max(ribbonFacing.x + ribbonFacing.y, EPSILON_DOT_CLAMP);
 		output.LightDirection = drop.LightDirection;
 		if (TexturedRain.x > 0.5f) {
 			float2 projectedAlong = ProjectWorldVectorToPixels(
 				streakAxis * drop.PositionLength.w * 0.5f, centerClip, eyeIndex);
 			float halfLength = length(projectedAlong);
-			output.ScreenAlongAndLength = float3(projectedAlong / max(halfLength, 1e-4f), halfLength);
+			float2 projectedSize = max(float2(halfWidth, halfLength) * 2.0f, 0.25f);
+			float2 texelsPerPixel = RainTextureShape.xy * float2(RainTextureShape.z, 1.0f) / projectedSize;
+			float textureMip = max(log2(max(texelsPerPixel.x, texelsPerPixel.y)), 0.0f);
+			output.ScreenAlongAndLength = float4(projectedAlong / max(halfLength, EPSILON_DIVISION), halfLength, textureMip);
 		}
 	}
 #ifdef VR
@@ -649,33 +623,37 @@ RainVertexOutput RainVS(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
 float LinearSceneDepth(float2 pixel)
 {
 	float rawSceneDepth = SceneDepth.Load(int3(pixel, 0));
-	return RainCameraData.w / max(-rawSceneDepth * RainCameraData.z + RainCameraData.x, 1e-4f);
+	return RainCameraData.w / max(-rawSceneDepth * RainCameraData.z + RainCameraData.x, EPSILON_DIVISION);
 }
 
 [earlydepthstencil] float4 RainPS(RainVertexOutput input) : SV_Target0
 {
-	float sceneDepth = LinearSceneDepth(input.Position.xy);
-	float intersectionFade = saturate((sceneDepth - input.ViewDepth) / max(WeatherFallDepth.w, 1.0f));
-	if (intersectionFade <= 0.0f)
-		discard;
 	float widthFade = saturate(1.0f - abs(input.StreakCoordinate.y));
 	float endFade = smoothstep(0.0f, 0.10f, input.StreakCoordinate.x) *
 	                smoothstep(0.0f, 0.10f, 1.0f - input.StreakCoordinate.x);
 	float revealStart = saturate(1.0f - input.SpawnReveal);
 	float spawnReveal = smoothstep(revealStart, revealStart + 0.08f, input.StreakCoordinate.x);
+	float silhouetteFade = widthFade * endFade * spawnReveal;
+	// Texture opacity and depth fading can only reduce this coverage bound.
+	if (Glassy.x > 0.5f && input.ColorOpacity.a * silhouetteFade <= RainMinimumOpticalCoverage)
+		discard;
+	float sceneDepth = LinearSceneDepth(input.Position.xy);
+	float intersectionFade = saturate((sceneDepth - input.ViewDepth) / max(WeatherFallDepth.w, 1.0f));
+	if (intersectionFade <= 0.0f)
+		discard;
 	float alpha = input.ColorOpacity.a * widthFade * endFade * spawnReveal * intersectionFade * 0.55f;
 	float3 color = input.ColorOpacity.rgb;
 	[branch] if (Glassy.x > 0.5f)
 	{
 		float resolvedWidth = smoothstep(0.35f, 1.25f, input.ScreenSideAndWidth.z);
-		RainMaterial::Surface water = RainMaterial::Evaluate(input, widthFade * endFade * spawnReveal, resolvedWidth, intersectionFade);
+		RainMaterial::Surface water = RainMaterial::Evaluate(input, silhouetteFade, resolvedWidth, intersectionFade);
 		float opticalCoverage = input.ColorOpacity.a * water.Opacity * intersectionFade;
 		float surfaceOpacity = saturate(Streak.w);
 		float surfaceFresnel = min(water.Fresnel * surfaceOpacity, RainMaterial::MaximumSurfaceFresnel);
 		float transmission = (1.0f - surfaceFresnel) * (1.0f - Glassy.y * water.Core);
-		float refractionAmount = Refraction.y > 0.5f ? input.DetailFade * MaterialLighting.z : 0.0f;
-		float environmentAmount = TexturedRain.w > 0.5f ? Refraction.w * (1.0f - refractionAmount) : 0.0f;
-		float reflectionScale = surfaceFresnel / max(water.Fresnel, 1e-4f);
+		float refractionAmount = Refraction.y > 0.5f ? input.DetailFade : 0.0f;
+		float environmentAmount = TexturedRain.w > 0.5f ? RainMaterial::EnvironmentTransmission * (1.0f - refractionAmount) : 0.0f;
+		float reflectionScale = surfaceFresnel / max(water.Fresnel, EPSILON_DIVISION);
 		float3 waterRadiance = water.Reflection * reflectionScale + water.DirectLighting + water.ScatteredLighting * surfaceOpacity +
 		                       water.EnvironmentTransmission * transmission * environmentAmount;
 		// Preserve a restrained glass rim when environment grading drives every sampled light source to black.
@@ -720,13 +698,18 @@ float LinearSceneDepth(float2 pixel)
 			float safeRefraction = saturate((refractedDepth - input.ViewDepth) / RainRefractionDepthFade);
 			actualDisplacement = (refractedPixel - pixel) * safeRefraction * refractionAmount;
 			float2 halfResolution = float2(halfWidth, halfHeight);
-			float3 background = SceneColor.SampleLevel(RefractionSampler, halfPixel / halfResolution, 0).rgb;
-			float3 refracted = SceneColor.SampleLevel(RefractionSampler, refractedHalfPixel / halfResolution, 0).rgb;
-			waterRadiance += Color::IrradianceToLinear(lerp(background, refracted, safeRefraction)) * transmission * refractionAmount;
+			float2 samplePixel = safeRefraction > 0.0f ? refractedHalfPixel : halfPixel;
+			float3 transmittedScene = SceneColor.SampleLevel(RefractionSampler, samplePixel / halfResolution, 0).rgb;
+			[branch] if (safeRefraction > 0.0f && safeRefraction < 1.0f)
+			{
+				float3 background = SceneColor.SampleLevel(RefractionSampler, halfPixel / halfResolution, 0).rgb;
+				transmittedScene = lerp(background, transmittedScene, safeRefraction);
+			}
+			waterRadiance += Color::IrradianceToLinear(transmittedScene) * transmission * refractionAmount;
 		}
 		// Unsampled transmission stays in the destination blend, keeping the water body clear at every LOD.
 		float extinction = 1.0f - transmission * (1.0f - environmentAmount - refractionAmount);
-		color = Color::IrradianceToGamma(waterRadiance / max(extinction, 1e-4f));
+		color = Color::IrradianceToGamma(waterRadiance / max(extinction, EPSILON_DIVISION));
 		alpha = opticalCoverage * extinction;
 		if (GridAndDebug.w == 6u) {
 			color = float3(abs(actualDisplacement) / max(Glassy.w, 1.0f), 0.0f);

@@ -15,6 +15,8 @@ StructuredBuffer<uint> RainLightIndices : register(t36);
 StructuredBuffer<LightLimitFix::LightGrid> RainLightCells : register(t37);
 #endif
 
+#include "Common/Math.hlsli"
+
 namespace RainLighting
 {
 	/** @brief Incident light and a shared, intensity-weighted direction for the water highlight. */
@@ -22,11 +24,10 @@ namespace RainLighting
 	{
 		float3 Irradiance;
 		float3 Direction;
-		float Scattering;
 	};
 
 	/** @brief Evaluates incident local lighting at one world-space sample shared by both eyes. */
-	Sample Evaluate(float3 worldPosition, float3 headPosition, float headDistance)
+	Sample Evaluate(float3 worldPosition, float headDistance)
 	{
 		Sample result = (Sample)0;
 #if defined(RAIN_LOCAL_LIGHTS) && defined(COMPUTESHADER)
@@ -62,9 +63,8 @@ namespace RainLighting
 		uint count = min(min(lightCell.lightCount, MAX_CLUSTER_LIGHTS), indexCount - lightCell.offset);
 		float3 illumination = 0.0f;
 		float3 weightedDirection = 0.0f;
-		float weightedScattering = 0.0f;
-		float totalWeight = 0.0f;
-		float3 viewDirection = (headPosition - worldPosition) / max(headDistance, 1.0f);
+		float3 strongestDirection = 0.0f;
+		float strongestWeight = 0.0f;
 		[loop] for (uint index = 0u; index < count; ++index)
 		{
 			uint lightIndex = RainLightIndices[lightCell.offset + index];
@@ -86,18 +86,19 @@ namespace RainLighting
 			float attenuation = saturate(1.0f - lightDistance * lightDistance * light.invRadius * light.invRadius);
 #	endif
 			float3 lightDirection = toLight / max(lightDistance, 1.0f);
-			float forwardScatter = pow(saturate(dot(-lightDirection, viewDirection)), 4.0f);
 			float3 lightColor = Color::PointLight(light.color, (light.lightFlags & LightLimitFix::LightFlags::Linear) != 0u, light.lightFlags);
 			float3 irradiance = Color::IrradianceToLinear(max(lightColor, 0.0f)) * max(light.fade, 0.0f) * attenuation;
 			float weight = Color::RGBToLuminance(irradiance);
 			illumination += irradiance;
 			weightedDirection += lightDirection * weight;
-			weightedScattering += forwardScatter * weight;
-			totalWeight += weight;
+			if (weight > strongestWeight) {
+				strongestWeight = weight;
+				strongestDirection = lightDirection;
+			}
 		}
 		result.Irradiance = min(illumination, 16.0f.xxx) * LocalLighting.x * (1.0f - smoothstep(LocalLighting.y * 0.65f, LocalLighting.y, headDistance));
-		result.Direction = weightedDirection / max(totalWeight, 1e-6f);
-		result.Scattering = weightedScattering / max(totalWeight, 1e-6f);
+		float directionLengthSquared = dot(weightedDirection, weightedDirection);
+		result.Direction = directionLengthSquared > EPSILON_GLINTS ? weightedDirection * rsqrt(directionLengthSquared) : strongestDirection;
 #endif
 		return result;
 	}

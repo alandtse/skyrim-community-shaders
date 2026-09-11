@@ -2,6 +2,8 @@
 
 namespace Precipitation
 {
+	/** @brief Returns weather rain intensity on the established 0-1 wetness scale, not a particle count. */
+	float GetWeatherRainIntensity(const RE::TESWeather* a_weather);
 	/** @brief Installs the shared precipitation render hook. */
 	void Install();
 

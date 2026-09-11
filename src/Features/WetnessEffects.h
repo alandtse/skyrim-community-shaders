@@ -130,9 +130,6 @@ public:
 	/** @brief Returns the weather analysis configuration for the debug weather analysis panel. */
 	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const override;
 
-	// Constants and utilities for rain intensity calculations
-	static constexpr float MAX_RAIN_PARTICLE_DENSITY = 3.0f;
-
 	/**
 	 * @brief Extracts rain intensity from the active precipitation geometry and weather.
 	 * @param precipObject The precipitation particle geometry.

@@ -4,6 +4,7 @@
 #include "../../I18n/I18n.h"
 #include "../../Utils/Subrect.h"
 #include "../../Utils/UI.h"
+#include "../../Utils/VRGaze.h"
 #include "../FoveatedCommon.h"
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
@@ -23,7 +24,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	peripheryTemporalAlpha,
 	subrectBlendMode,
 	subrectFeatherWidth,
-	subrectDitherStrength);
+	subrectDitherStrength,
+	eyeTrackedFoveation);
 
 // ============================================================================
 // Lifecycle
@@ -102,6 +104,7 @@ void FoveatedRender::ClampSettings()
 	settings.peripheryTemporalAlpha = std::clamp(settings.peripheryTemporalAlpha, 0.05f, 0.5f);
 	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
 	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
+	settings.eyeTrackedFoveation = std::min(settings.eyeTrackedFoveation, 2u);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 5u);
@@ -185,6 +188,18 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 		coverageH > 1e-4f ? coverageW / coverageH : 1.0f);
 	profile.centerOffsets[0] = float2{ (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
 	profile.centerOffsets[1] = float2{ (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
+
+	// Overrides centerOffsets in place, so the existing VRFoveationCenterOffsets
+	// plumbing (State.cpp) needs no changes; the subrect-derived value above becomes
+	// GazeTracker's fallback.
+	auto& gaze = Util::VR::GazeTracker::GetSingleton();
+	if (settings.eyeTrackedFoveation != static_cast<uint>(EyeTrackedFoveationMode::kOff)) {
+		const bool synthetic = settings.eyeTrackedFoveation == static_cast<uint>(EyeTrackedFoveationMode::kSynthetic);
+		gaze.Update(synthetic);
+		profile.centerOffsets[0] = gaze.GetCenterOffset(0, profile.centerOffsets[0]);
+		profile.centerOffsets[1] = gaze.GetCenterOffset(1, profile.centerOffsets[1]);
+	}
+
 	return profile;
 }
 
@@ -445,6 +460,20 @@ void FoveatedRender::DrawSettings()
 								  "the selected upscaler is actually running vs where the cheap stretch is filling.\n"
 								  "No perf impact; runtime toggle, no restart needed. Also shows briefly whenever\n"
 								  "you drag-resize the region below, even with this off."));
+		}
+
+		ImGui::Separator();
+		{
+			// kSynthetic (2) is deliberately omitted -- devbench can still set it via the
+			// settings blob; don't re-add it, it does nothing without gazeOverride/gazeSweep.
+			std::vector<const char*> gazeModeLabels = {
+				T(TKEY("foveated_eyetracked_off"), "Off"),
+				T(TKEY("foveated_eyetracked_auto"), "Auto"),
+			};
+			ImGui::Combo(T(TKEY("foveated_eyetracked_label"), "Eye-Tracked Foveation"),
+				reinterpret_cast<int*>(&settings.eyeTrackedFoveation), gazeModeLabels.data(), (int)gazeModeLabels.size());
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("foveated_eyetracked_tooltip"), "Uses eye tracking if your headset supports it. Untested on real eye-tracking hardware."));
 		}
 
 		// Preview off kVR_FRAMEBUFFER (the final composed SBS image the headset

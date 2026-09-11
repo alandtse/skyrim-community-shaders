@@ -18,6 +18,7 @@
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Utils/VRGaze.h"
 
 #include "Hooks.h"
 
@@ -775,6 +776,13 @@ void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 	state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
 	state->inWorld = true;
 	state->worldRenderedThisFrame = true;
+
+	// Deliberately here, not any per-feature Prepass hook: those fire only when the
+	// engine renders shadows/reflections that frame, which isn't guaranteed every
+	// frame. RenderWorld fires whenever the 3D world is drawn at all.
+	if (globals::game::isVR)
+		Util::VR::GazeTracker::GetSingleton().Init();
+
 	func(a1);
 
 	state->inWorld = false;

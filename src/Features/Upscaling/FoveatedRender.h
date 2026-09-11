@@ -58,6 +58,16 @@ struct FoveatedRender
 		kGaussianBlur = 2,  // 3x3 Gaussian blur (soft periphery)
 	};
 
+	// Sources the foveation center from Util::VR::GazeTracker instead of the
+	// static subrect-derived center, when available. kSynthetic drives a devbench test
+	// signal instead of the real OpenVR query, for validating the pipeline without hardware.
+	enum class EyeTrackedFoveationMode : uint
+	{
+		kOff = 0,
+		kAuto = 1,
+		kSynthetic = 2,
+	};
+
 	/** @brief Translated display names for the enums above -- single source shared by
 	 *  DrawSettings' dropdowns and Upscaling::GetProfilePreviewText. */
 	static const char* DlssModeName(DlssMode mode);
@@ -87,6 +97,7 @@ struct FoveatedRender
 		uint subrectBlendMode = static_cast<uint>(SubrectBlendMode::kHardCopy);
 		float subrectFeatherWidth = 64.0f;
 		float subrectDitherStrength = 1.0f;
+		uint eyeTrackedFoveation = static_cast<uint>(EyeTrackedFoveationMode::kOff);
 	};
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {

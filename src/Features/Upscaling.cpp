@@ -18,6 +18,7 @@
 #include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
+#include "Utils/VRGaze.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cfloat>
@@ -542,6 +543,55 @@ void Upscaling::RegisterUxActions()
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
+		});
+
+	// Outer (...) needed: the preprocessor splits macro args on brace-blind top-level
+	// commas, and the lambda body below has some (json{...} literals) without it.
+	FEATURE_QUERY("gazeStatus",
+		"Eye-tracked foveation status -> {available,live,synthetic,leftCenterOffset:[x,y],rightCenterOffset:[x,y],lastValidAgeMs,consecutiveFailures,apiVersion}. available requires a headset whose driver actually reports eye tracking (Vive Pro Eye/Pimax-Tobii/Varjo/PSVR2-class) -- untested on real hardware, this is the first thing a tester with such a headset should call.",
+		([](const Feature*, const json&) -> json {
+			const auto status = Util::VR::GazeTracker::GetSingleton().GetStatus();
+			json result;
+			result["available"] = status.available;
+			result["live"] = status.live;
+			result["synthetic"] = status.synthetic;
+			result["leftCenterOffset"] = std::vector<float>{ status.centerOffset[0].x, status.centerOffset[0].y };
+			result["rightCenterOffset"] = std::vector<float>{ status.centerOffset[1].x, status.centerOffset[1].y };
+			result["lastValidAgeMs"] = status.lastValidAgeMs;
+			result["consecutiveFailures"] = status.consecutiveFailures;
+			result["apiVersion"] = status.apiVersion;
+			return result;
+		}));
+
+	FEATURE_COMMAND("gazeOverride",
+		"Inject a synthetic eye-tracked-foveation gaze sample through the same state the real OpenVR query writes, for pipeline testing without eye-tracking hardware -- requires settings.eyeTrackedFoveation != Off. Params: u, v (float, UV 0..1, default 0.5 each), eye (int, 0=left/1=right, omit for both), ttlMs (int, 0=until gazeClear, default 0).",
+		[](Feature*, const json& args) {
+			const float rawU = args.value("u", 0.5f);
+			const float rawV = args.value("v", 0.5f);
+			const float u = std::isfinite(rawU) ? std::clamp(rawU, 0.0f, 1.0f) : 0.5f;
+			const float v = std::isfinite(rawV) ? std::clamp(rawV, 0.0f, 1.0f) : 0.5f;
+			const int rawEye = args.value("eye", Util::VR::GazeTracker::kBothEyes);
+			const int eye = (rawEye == 0 || rawEye == 1) ? rawEye : Util::VR::GazeTracker::kBothEyes;
+			const uint32_t ttlMs = args.value("ttlMs", 0u);
+			Util::VR::GazeTracker::GetSingleton().SetSyntheticOverride(float2{ u, v }, eye, ttlMs);
+		});
+
+	FEATURE_COMMAND("gazeSweep",
+		"Scripted synthetic gaze motion (both eyes) -- reveals mask popping, smoothing lag, and per-eye desync that a static gazeOverride can't. Params: pattern (string: circle|lissajous|saccade, default circle), hz (float, default 0.25), amplitude (float, UV units, default 0.3).",
+		[](Feature*, const json& args) {
+			const std::string patternName = args.value("pattern", std::string{ "circle" });
+			auto pattern = Util::VR::GazeTracker::SweepPattern::kCircle;
+			if (patternName == "lissajous")
+				pattern = Util::VR::GazeTracker::SweepPattern::kLissajous;
+			else if (patternName == "saccade")
+				pattern = Util::VR::GazeTracker::SweepPattern::kSaccade;
+			Util::VR::GazeTracker::GetSingleton().StartSweep(pattern, args.value("hz", 0.25f), args.value("amplitude", 0.3f));
+		});
+
+	FEATURE_COMMAND("gazeClear",
+		"Drop any active gazeOverride/gazeSweep and resume hardware eye-tracking data (or the static fallback center if unavailable).",
+		[](Feature*, const json&) {
+			Util::VR::GazeTracker::GetSingleton().ClearSyntheticOverride();
 		});
 }
 

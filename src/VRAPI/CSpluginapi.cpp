@@ -257,9 +257,9 @@ namespace CSPluginAPI
 	UpscalePreset CSInterface001::GetUpscalePreset()
 	{
 		auto& upscaling = globals::features::upscaling;
-		// While PerfMode's render-target hook is active the boot-latched preset is the
+		// While the VR render-target hook is active the boot-latched preset is the
 		// one actually rendering; report it rather than a pending selection.
-		const uint32_t mode = upscaling.perfMode.IsHookActive() ?
+		const uint32_t mode = upscaling.vrSubmit.IsHookActive() ?
 		                          upscaling.bootSnapshot.Boot(&Upscaling::Settings::qualityMode) :
 		                          upscaling.settings.qualityMode;
 		return static_cast<UpscalePreset>(std::min(mode, static_cast<uint32_t>(Upscaling::QualityMode::kUltraPerformance)));
@@ -304,7 +304,7 @@ namespace CSPluginAPI
 
 	bool CSInterface001::GetRenderAtUpscaleResActive()
 	{
-		return globals::features::upscaling.perfMode.IsHookActive();
+		return globals::features::upscaling.vrSubmit.IsHookActive();
 	}
 
 	void CSInterface001::SetVRUpscalingTransitionProfile(bool renderScaleModeEnabled, UpscalePreset preset, DLSSProfile profile)

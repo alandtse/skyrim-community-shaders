@@ -119,7 +119,7 @@ public:
 		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
-		uint32_t outputHeight = 0);
+		uint32_t outputHeight = 0, const sl::Constants* frameConstants = nullptr);
 
 	// Cached DLL version info for Streamline plugin directory
 	static std::vector<std::pair<std::string, std::string>> dllVersions;
@@ -167,7 +167,8 @@ public:
 
 	/** @brief Acquires a new frame token from Streamline for the current frame. */
 	bool EnsureFrameToken();
-	bool CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex = 0);
+	/** @brief Captures camera constants into snapshot, or publishes them when snapshot is null. */
+	bool CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex = 0, sl::Constants* snapshot = nullptr);
 
 	// height = 0 -> use full per-eye DisplayRes height (default for the standard
 	// upscale path). Non-zero is the subrect height the FoveatedRender route needs.

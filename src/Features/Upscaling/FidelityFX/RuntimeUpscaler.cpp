@@ -1513,6 +1513,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			};
 			commandList->ResourceBarrier(static_cast<UINT>(beginBarriers.size()), beginBarriers.data());
 
+			const auto* submitFrame = upscaling.vrSubmit.GetDispatchParameters();
+			const auto jitter = submitFrame ? submitFrame->jitter : upscaling.jitter;
 			ffx::DispatchDescUpscale dispatchParameters{};
 			dispatchParameters.commandList = commandList;
 			dispatchParameters.color = ffxApiGetResourceDX12(runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
@@ -1522,20 +1524,20 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			dispatchParameters.reactive = ffxApiGetResourceDX12(runtimeReactiveShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.transparencyAndComposition = ffxApiGetResourceDX12(runtimeTransparencyShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.output = ffxApiGetResourceDX12(runtimeOutputShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS, FFX_API_RESOURCE_USAGE_UAV);
-			dispatchParameters.jitterOffset = { -upscaling.jitter.x, -upscaling.jitter.y };
+			dispatchParameters.jitterOffset = { -jitter.x, -jitter.y };
 			dispatchParameters.motionVectorScale = { a_motionVectorScaleX, a_motionVectorScaleY };
 			dispatchParameters.renderSize = { a_renderWidth, a_renderHeight };
 			dispatchParameters.upscaleSize = { a_displayWidth, a_displayHeight };
 			dispatchParameters.enableSharpening = true;
 			dispatchParameters.sharpness = a_sharpness;
-			dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
+			dispatchParameters.frameTimeDelta = submitFrame ? submitFrame->frameTime : *globals::game::deltaTime * 1000.f;
 			dispatchParameters.preExposure = 1.0f;
 			// Our repo has no ShouldResetHistoryThisFrame(); mirror Upscale()'s existing
 			// menu-reset predicate (menus produce no fresh motion vectors/depth).
-			dispatchParameters.reset = state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid;
-			dispatchParameters.cameraNear = *globals::game::cameraNear;
-			dispatchParameters.cameraFar = *globals::game::cameraFar;
-			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+			dispatchParameters.reset = upscaling.vrSubmit.ShouldResetHistory() || (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid);
+			dispatchParameters.cameraNear = submitFrame ? submitFrame->cameraNear : *globals::game::cameraNear;
+			dispatchParameters.cameraFar = submitFrame ? submitFrame->cameraFar : *globals::game::cameraFar;
+			dispatchParameters.cameraFovAngleVertical = submitFrame ? submitFrame->verticalFov : Util::GetVerticalFOVRad();
 			dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 			dispatchParameters.flags = 0;
 			const bool runtimeFallbackReset = runtimeFallbackResetDispatchesRemaining > 0;
@@ -1752,7 +1754,8 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		return false;
 
 	auto& upscaling = globals::features::upscaling;
-	auto jitter = upscaling.jitter;
+	const auto* submitFrame = upscaling.vrSubmit.GetDispatchParameters();
+	auto jitter = submitFrame ? submitFrame->jitter : upscaling.jitter;
 	const auto fallbackFramePath =
 		runtimeRequested ? RuntimeUpscalerFramePath::kHostFsr31Fallback : RuntimeUpscalerFramePath::kHostFsr31;
 	RecordRuntimeUpscalerFramePath(fallbackFramePath);
@@ -1780,21 +1783,21 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.upscaleSize.height = a_displayHeight;
 	dispatchParameters.jitterOffset.x = -jitter.x;
 	dispatchParameters.jitterOffset.y = -jitter.y;
-	dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
-	dispatchParameters.cameraFar = *globals::game::cameraFar;
-	dispatchParameters.cameraNear = *globals::game::cameraNear;
+	dispatchParameters.frameTimeDelta = submitFrame ? submitFrame->frameTime : *globals::game::deltaTime * 1000.f;
+	dispatchParameters.cameraFar = submitFrame ? submitFrame->cameraFar : *globals::game::cameraFar;
+	dispatchParameters.cameraNear = submitFrame ? submitFrame->cameraNear : *globals::game::cameraNear;
 	dispatchParameters.enableSharpening = true;
 	dispatchParameters.sharpness = a_sharpness;
 	// Narrows FOV by the crop's height fraction (a no-op ratio of 1.0 when uncropped);
 	// FSR3 has no principal-point field, so an off-center crop still gets a centered FOV.
-	const float verticalFovFull = Util::GetVerticalFOVRad();
+	const float verticalFovFull = submitFrame ? submitFrame->verticalFov : Util::GetVerticalFOVRad();
 	const float cropHeightFraction = a_motionVectorScaleY > 0.0f ? (float)a_renderHeight / a_motionVectorScaleY : 1.0f;
 	dispatchParameters.cameraFovAngleVertical = 2.0f * std::atan(std::tan(verticalFovFull * 0.5f) * cropHeightFraction);
 	dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 	const bool runtimeFallbackReset = runtimeRequested && runtimeFallbackResetDispatchesRemaining > 0;
 	if (runtimeFallbackReset)
 		runtimeFallbackResetDispatchesRemaining--;
-	dispatchParameters.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) || runtimeFallbackReset;
+	dispatchParameters.reset = upscaling.vrSubmit.ShouldResetHistory() || (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) || runtimeFallbackReset;
 	dispatchParameters.preExposure = 1.0f;
 	dispatchParameters.flags = 0;
 

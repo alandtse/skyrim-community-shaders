@@ -393,14 +393,10 @@ void FidelityFX::CreateFSRResources()
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	// PerfMode bridge: when the BSOpenVR size hook is live, state->screenSize is polluted
-	// to renderRes (engine RTs were allocated small). FSR3 still needs to upscale to the
-	// real HMD display resolution, so use perfMode's snapshot for displaySize/maxUpscaleSize.
-	// maxRenderSize stays at screenSize (which IS renderRes under the hook — that's FSR's
-	// expected input extent).
-	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive();
-	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
+	// Submit-stage output dimensions are independent of the engine render targets.
+	auto& vrSubmit = globals::features::upscaling.vrSubmit;
+	const bool dlssperfActive = vrSubmit.IsHookActive();
+	const auto displaySize = dlssperfActive ? vrSubmit.GetDisplayScreenSize() : screenSize;
 
 	uint32_t displayWidth = (uint32_t)(globals::game::isVR ? displaySize.x / 2 : displaySize.x);
 	uint32_t displayHeight = (uint32_t)displaySize.y;
@@ -416,7 +412,7 @@ void FidelityFX::CreateFSRResources()
 		contextDescription.displaySize.width = displayWidth;
 		contextDescription.displaySize.height = displayHeight;
 		contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
-		if (globals::features::hdrDisplay.loaded) {
+		if (globals::features::hdrDisplay.loaded || globals::features::upscaling.vrSubmit.IsHookActive()) {
 			contextDescription.flags |= FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
 			contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R10G10B10A2_UNORM;
 		} else {
@@ -492,11 +488,10 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_d
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 
-	// state->screenSize is polluted to renderRes under PerfMode's hook -- mirror
-	// CreateFSRResources' dlssperfActive check or the upscale target size is wrong.
-	auto& perfMode = upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive();
-	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
+	// Submit output dimensions must match the display size used to create FSR contexts.
+	auto& vrSubmit = upscaling.vrSubmit;
+	const bool dlssperfActive = vrSubmit.IsHookActive();
+	const auto displaySize = dlssperfActive ? vrSubmit.GetDisplayScreenSize() : screenSize;
 
 	// Default to in-place output when caller didn't supply a separate destination.
 	if (!a_colorOut)
@@ -550,9 +545,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_d
 				allEvaluated = false;
 		}
 
-		// Merge outputs into the supplied displayRes destination (kMAIN by default;
-		// perfMode.testTexture when PerfMode has shrunk the engine RTs). Skip on a failed
-		// eye -- FinalizePerEyeOutputs would otherwise merge an unwritten/stale eye texture.
+		// A failed eye must not publish unwritten or stale stereo output.
 		if (allEvaluated)
 			upscaling.FinalizePerEyeOutputs(a_colorOut);
 	} else {

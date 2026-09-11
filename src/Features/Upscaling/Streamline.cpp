@@ -13,7 +13,6 @@
 #include "../Upscaling.h"
 #include "DX12SwapChain.h"
 #include "FoveatedRender/Bridge.h"
-#include "PerfMode.h"
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
@@ -425,7 +424,7 @@ bool Streamline::EnsureFrameToken()
 	return frameToken != nullptr;
 }
 
-bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex)
+bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex, sl::Constants* snapshot)
 {
 	if (!initialized)
 		return false;
@@ -483,7 +482,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
 	// Menus render no motion vectors; camera-derived MVs restore valid reprojection there.
 	// Reset only when that fill couldn't run — accumulating against zero MVs ghosts.
-	slConstants.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ?
+	slConstants.reset = (upscaling.vrSubmit.ShouldResetHistory() || (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid)) ?
 	                        sl::Boolean::eTrue :
 	                        sl::Boolean::eFalse;
 
@@ -500,6 +499,11 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.orthographicProjection = sl::Boolean::eFalse;
 	slConstants.motionVectorsDilated = sl::Boolean::eFalse;
 	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
+
+	if (snapshot) {
+		*snapshot = slConstants;
+		return true;
+	}
 
 	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, p_viewport))) {
 		logger::error("[Streamline {}] Could not set constants for eye {}", instanceTag, eyeIndex);
@@ -566,24 +570,17 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 
 	// DLSS dispatch must match the renderRes the engine RTs were latched for,
 	// not the live preset.
-	auto& perfModeRef = globals::features::upscaling.perfMode;
-	const uint32_t qualityMode = perfModeRef.IsHookActive() ? perfModeRef.GetLatchedQualityMode() : globals::features::upscaling.settings.qualityMode;
+	auto& vrSubmitRef = globals::features::upscaling.vrSubmit;
+	const uint32_t qualityMode = vrSubmitRef.IsHookActive() ? vrSubmitRef.GetLatchedQualityMode() : globals::features::upscaling.settings.qualityMode;
 	dlssOptions.mode = DLSSModeForQualityMode(qualityMode);
 
 	auto state = globals::state;
-
-	// PerfMode bridge: state->screenSize.y is polluted to RenderRes by the
-	// BSOpenVR size hook; use perfMode's snapshot of the real DisplayRes when
-	// the hook is live so DLSS is created at the right scale. The width arg
-	// is already display-correct (caller computes from displaySize).
-	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
 
 	dlssOptions.outputWidth = width;
 	// height==0 → caller is the standard upscale path; use full per-eye DisplayRes height.
 	// Non-zero is the FoveatedRender subrect height — must match extentOut.height or NGX
 	// produces zeroed output. See SetDLSSOptions decl in Streamline.h for the rationale.
-	dlssOptions.outputHeight = height != 0 ? height : (dlssperfActive ? (uint)perfMode.GetDisplayScreenSize().y : (uint)state->screenSize.y);
+	dlssOptions.outputHeight = height != 0 ? height : (uint)state->screenSize.y;
 
 	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
 	{
@@ -591,7 +588,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		D3D11_TEXTURE2D_DESC mainDesc;
 		static_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
-		bool isHDR = mainDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM;
+		bool isHDR = globals::features::upscaling.vrSubmit.IsDispatching() || mainDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM;
 		dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 	}
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
@@ -634,7 +631,7 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 	ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
-	uint32_t outputHeight)
+	uint32_t outputHeight, const sl::Constants* frameConstants)
 {
 	auto context = globals::d3d::context;
 
@@ -645,8 +642,12 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	sl::Resource reactiveMaskRes = { sl::ResourceType::eTex2d, reactiveMask, 0 };
 	sl::Resource transparencyMaskRes = { sl::ResourceType::eTex2d, transparencyMask, 0 };
 
-	if (!CheckFrameConstants(vp, eyeIndex))
+	if (frameConstants) {
+		if (!EnsureFrameToken() || slSetConstants(*frameConstants, *frameToken, vp) != sl::Result::eOk)
+			return false;
+	} else if (!CheckFrameConstants(vp, eyeIndex)) {
 		return false;
+	}
 
 	const bool emitPCLMarkers =
 		globals::features::upscaling.settings.reflexUseMarkersToOptimize &&
@@ -729,26 +730,11 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	// PerfMode bridge: when the BSOpenVR size hook is live, state->screenSize
-	// is polluted to RenderRes (the spoofed HMD recommended size). DLSS must
-	// be told the TRUE DisplayRes for its output extent, otherwise NGX rejects
-	// the evaluate as InvalidParameter (0xbad00005) because the configured
-	// quality-scale doesn't match the actual extent ratio. The upscale also
-	// has to write into perfMode's private DisplayRes testTexture instead of
-	// the now-RenderRes kMAIN.
-	// DLSS input and output must not alias. Always write to the intermediate texture,
-	// then either sharpen or copy the result back to kMAIN.
 	auto& upscaling = globals::features::upscaling;
-	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
-	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
-
-	// Sharpening active -> write to the RCAS read source (sharpenerTexture, or PerfMode's
-	// refraTempTex) directly so RCAS can sharpen with no CopyResource round-trip.
-	const bool dlssperfSharpen = upscaling.IsPerfModeSharpenRedirectActive();
-	ID3D11Resource* colorOut =
-		dlssperfActive ? (dlssperfSharpen ? static_cast<ID3D11Resource*>(perfMode.GetRefraTempTex()) : static_cast<ID3D11Resource*>(perfMode.GetTestTexture())) :
-						 ((upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
+	const auto displaySize = screenSize;
+	ID3D11Resource* colorOut = (upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ?
+	                               upscaling.sharpenerTexture->resource.get() :
+	                               a_upscalingTexture;
 
 	// VR stereo DLSS: NGX D3D11 only accepts zero-offset subrects. Non-zero offsets return
 	// FAIL_InvalidParameter because Streamline's dlssEntry.cpp never sets

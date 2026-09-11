@@ -80,7 +80,7 @@ public:
 	void DestroyFSRResources();
 
 	// a_colorOut, if non-null, redirects the upscaled result to a displayRes target instead
-	// of writing back into a_upscalingTexture (needed when kMAIN is renderRes, e.g. PerfMode).
+	// of writing back into a_upscalingTexture.
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_depth, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness, ID3D11Resource* a_colorOut = nullptr);
 
 	/** @brief AMD adapter classes FSR 4.1.1 can run on: RDNA 3 discrete (RX 7000) and RDNA 4 (RX 9000). */

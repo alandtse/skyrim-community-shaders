@@ -31,6 +31,11 @@ RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
 	// In SBS layout the x axis spans two eyes, so x-component must be halved.
 	float2 mv = MvecTex.Load(int3(pos, 0)).xy;
 	float2 currentUV = (float2(pos) + 0.5) / float2(TexWidth, TexHeight);
+#if defined(SINGLE_EYE)
+	float2 reprojUV = currentUV + mv;
+	float eyeMinX = 0.0;
+	float eyeMaxX = 1.0;
+#else
 	float2 reprojUV = currentUV + mv * float2(0.5, 1.0);
 
 	// ── SBS eye-boundary clamp ──
@@ -39,6 +44,7 @@ RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
 	float halfW = 0.5;
 	float eyeMinX = (currentUV.x < halfW) ? 0.0 : halfW;
 	float eyeMaxX = eyeMinX + halfW;
+#endif
 	float texelHalfX = 0.5 / (float)TexWidth;
 	float texelHalfY = 0.5 / (float)TexHeight;
 	reprojUV.x = clamp(reprojUV.x, eyeMinX + texelHalfX, eyeMaxX - texelHalfX);
@@ -51,9 +57,14 @@ RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
 	// Local motion alone can't detect disocclusion: a moving NPC leaves near-zero-MV
 	// background behind it, so reprojected history can be a stale, unrelated surface.
 	// Clamp it into a 5-tap YCoCg box from the current frame before blending.
+#if defined(SINGLE_EYE)
+	uint eyeMinPx = 0;
+	uint eyeMaxPx = TexWidth - 1;
+#else
 	uint halfWpx = TexWidth / 2;
 	uint eyeMinPx = (pos.x < halfWpx) ? 0 : halfWpx;
 	uint eyeMaxPx = eyeMinPx + halfWpx - 1;
+#endif
 	int2 posN = int2(pos.x, clamp((int)pos.y - 1, 0, (int)TexHeight - 1));
 	int2 posS = int2(pos.x, clamp((int)pos.y + 1, 0, (int)TexHeight - 1));
 	int2 posE = int2(clamp((int)pos.x + 1, (int)eyeMinPx, (int)eyeMaxPx), pos.y);

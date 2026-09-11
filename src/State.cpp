@@ -1408,13 +1408,12 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		if (upscaling.loaded) {
 			auto upscaleMethod = upscaling.GetUpscaleMethod();
 			if (temporal && upscaleMethod != Upscaling::UpscaleMethod::kTAA) {
-				const auto& perfMode = upscaling.perfMode;
-				if (perfMode.IsHookActive()) {
-					// PerfMode forces the DRS ratio to identity while rendering
-					// sub-native, so bias off the latched eye dims instead.
+				const auto& vrSubmit = upscaling.vrSubmit;
+				if (vrSubmit.IsHookActive()) {
+					// Engine targets already use render dimensions, so mip bias needs the latched output ratio.
 					data.MipBias = std::log2f(
-						static_cast<float>(perfMode.GetRenderEyeWidth()) /
-						static_cast<float>(perfMode.GetDisplayEyeWidth()));
+						static_cast<float>(vrSubmit.GetRenderEyeWidth()) /
+						static_cast<float>(vrSubmit.GetDisplayEyeWidth()));
 				} else {
 					auto renderSize = Util::ConvertToDynamic(screenSize, true);
 					data.MipBias = std::log2f(renderSize.x / screenSize.x);

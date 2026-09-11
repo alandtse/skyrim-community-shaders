@@ -430,12 +430,6 @@ namespace globals
 			stl::detour_vfunc<53, ID3D11DeviceContext_ClearDepthStencilView>(a_context);
 		}
 
-		// Scene-fade overlay Draw(30) detour — skip the vtable patch unless PerfMode will actually
-		// engage, to avoid a foreign-interop surface for other context-vfunc hookers. Same gate as the
-		// size hook (ShouldEngagePerfMode), evaluated here at D3D init before IsHookActive() flips.
-		if (globals::features::upscaling.ShouldEngagePerfMode())
-			globals::features::upscaling.perfMode.InstallFadeOverlayHook(a_context);
-
 		UnderwaterDepthOfField::InstallD3DHooks(a_context);
 	}
 }

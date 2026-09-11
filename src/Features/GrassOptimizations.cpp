@@ -5,8 +5,6 @@
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
 #include "Utils/Game.h"
 
-#include <d3dcompiler.h>
-
 #define I18N_KEY_PREFIX "feature.grass_optimizations."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -733,27 +731,9 @@ ID3D11InputLayout* GrassOptimizations::GetOptimizedInputLayout(uint64_t a_descVa
 	if (layoutSignatureFailed)
 		return nullptr;
 	if (!layoutSignature) {
-		static constexpr char kSignatureHLSL[] =
-			"struct VS_INPUT {"
-			" float4 Position : POSITION0;"
-			" float2 TexCoord : TEXCOORD0;"
-			" float4 Normal : NORMAL0;"
-			" float4 Color : COLOR0;"
-			" float4 InstanceData1 : TEXCOORD4;"
-			" float4 InstanceData2 : TEXCOORD5;"
-			" float4 InstanceData3 : TEXCOORD6;"
-			" float4 InstanceData4 : TEXCOORD7;"
-			" uint InstanceID : SV_INSTANCEID;"
-			"};"
-			"float4 main(VS_INPUT input) : SV_Position {"
-			" return input.Position + input.Normal + input.Color + "
-			" input.InstanceData1 + input.InstanceData2 + input.InstanceData3 + input.InstanceData4;"
-			"}";
-		winrt::com_ptr<ID3DBlob> errors;
-		if (FAILED(D3DCompile(kSignatureHLSL, sizeof(kSignatureHLSL) - 1, "GrassInstanceSignature",
-				nullptr, nullptr, "main", "vs_5_0", 0, 0, layoutSignature.put(), errors.put())) ||
-			!layoutSignature) {
-			logger::error("[GRASS OPTIMIZATIONS] GrassInstanceSignature compile failed");
+		layoutSignature = Util::CompileShaderBlob(L"Data\\Shaders\\GrassOptimizations\\GrassInstanceSignatureVS.hlsl", {}, "vs_5_0");
+		if (!layoutSignature) {
+			logger::error("[GRASS OPTIMIZATIONS] GrassInstanceSignatureVS compile failed");
 			layoutSignatureFailed = true;
 			return nullptr;
 		}

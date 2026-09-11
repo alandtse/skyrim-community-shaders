@@ -25,6 +25,7 @@
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRendering.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
@@ -100,6 +101,7 @@ namespace globals
 		WaterEffects waterEffects{};
 		SceneSelector sceneSelector{};
 		PerformanceOverlay performanceOverlay{};
+		RainRendering rainRendering{};
 		WetnessEffects wetnessEffects{};
 		ExtendedTranslucency extendedTranslucency{};
 		Upscaling upscaling{};

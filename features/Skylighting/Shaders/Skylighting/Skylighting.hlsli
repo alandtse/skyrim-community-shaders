@@ -173,13 +173,9 @@ namespace Skylighting
 		return saturate(skylightingDiffuse / max(vertexAO, EPSILON_DIVISION));
 	}
 
-	sh2 SampleNoBias(float3 positionMS)
+	sh2 SampleNoBiasIncludingInteriors(float3 positionMS)
 	{
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
-
-		if (SharedData::InInterior)
-			return scaledUnitSH;
-
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
 		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
 
@@ -211,6 +207,14 @@ namespace Skylighting
 		}
 
 		return SphericalHarmonics::Scale(sum, rcp(wsum + EPSILON_WEIGHT_SUM));
+	}
+
+	sh2 SampleNoBias(float3 positionMS)
+	{
+		if (SharedData::InInterior)
+			return UNIT_SH / 1e-10;
+
+		return SampleNoBiasIncludingInteriors(positionMS);
 	}
 #endif
 }

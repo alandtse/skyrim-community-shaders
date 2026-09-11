@@ -17,6 +17,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRendering.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
@@ -418,6 +419,10 @@ namespace PostProcessingExtensions
 		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 		{
 			func(This, Pass, RenderFlags);
+			if (globals::features::rainRendering.loaded &&
+				globals::state->currentPixelDescriptor == static_cast<uint32_t>(SIE::ShaderCache::ParticleShaderTechniques::EnvCubeRain)) {
+				globals::features::rainRendering.DrawAtVanillaRainPass();
+			}
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)
 				globals::features::effects11.ModifyParticle(Pass);

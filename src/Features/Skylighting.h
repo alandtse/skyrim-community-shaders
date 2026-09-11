@@ -120,12 +120,6 @@ public:
 	/** @brief Renders the skylighting occlusion map using the precipitation rendering system. */
 	void RenderOcclusion();
 
-	struct Main_Precipitation_RenderOcclusion
-	{
-		static void thunk();
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	/** @brief Forces two-sided utility rendering while the interior occlusion mask is built. */
 	struct BSUtilityShader_SetupGeometry
 	{

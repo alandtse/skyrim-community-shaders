@@ -1,5 +1,7 @@
 #include "Upscaling.h"
+
 #include "GpuPass.h"
+#include "Precipitation.h"
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
@@ -1293,6 +1295,7 @@ struct SSRPostRender_Hook
 
 void Upscaling::PostPostLoad()
 {
+	Precipitation::Install();
 	// Guard before foveatedRender.PostPostLoad() so its hooks also stand down.
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
@@ -1324,9 +1327,6 @@ void Upscaling::PostPostLoad()
 
 	// Patches facegen texture generation to not use dynamic resolution
 	stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
-
-	// Patches precipitation camera to not use dynamic resolution
-	stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x3A1, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x3BF : 0x3A1, 0x2FA));
 
 	// Forces FXAA off
 	stl::detour_thunk<BSImageSpace_Init_FXAA>(REL::RelocationID(98974, 105626));
@@ -3273,14 +3273,6 @@ void Upscaling::SetScissorRect::thunk(RE::BSGraphics::Renderer* This, int a_left
 	}
 
 	func(This, a_left, a_top, a_right, a_bottom);
-}
-
-void Upscaling::Main_RenderPrecipitation::thunk()
-{
-	auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
-	runtimeData.dynamicResolutionLock = 1;
-	func();
-	runtimeData.dynamicResolutionLock = 0;
 }
 
 void Upscaling::BSFaceGenManager_UpdatePendingCustomizationTextures::thunk()

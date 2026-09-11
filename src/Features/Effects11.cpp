@@ -15,6 +15,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "IBL.h"
+#include "RainRendering.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TerrainShadows.h"
@@ -301,7 +302,8 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 	}
 	data.VolumetricRaysSkyColorAmount = settingManager.GetInterpolatedTimeOfDayValue("SkyColorAmount", "VOLUMETRICRAYS");
 
-	data.EnableRain = enableEffect && raindropSRV;
+	data.EnableRain = enableEffect && raindropSRV &&
+	                  !globals::features::rainRendering.IsReplacingVanillaRain();
 	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
 	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
 
@@ -823,7 +825,7 @@ void Effects11::ModifySky(RE::BSRenderPass* Pass)
 
 void Effects11::ModifyParticle(RE::BSRenderPass* Pass)
 {
-	if (!enableEffect || !raindropSRV)
+	if (!enableEffect || !raindropSRV || globals::features::rainRendering.IsReplacingVanillaRain())
 		return;
 
 	if (!Pass)
@@ -843,7 +845,7 @@ void Effects11::ModifyParticle(RE::BSRenderPass* Pass)
 
 void Effects11::ParticleShaderHacks()
 {
-	if (!enableEffect || !raindropSRV)
+	if (!enableEffect || !raindropSRV || globals::features::rainRendering.IsReplacingVanillaRain())
 		return;
 
 	auto state = globals::state;

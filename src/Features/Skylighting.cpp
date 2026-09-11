@@ -3,6 +3,7 @@
 #include "Deferred.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "Precipitation.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -306,12 +307,11 @@ void Skylighting::Prepass()
 
 void Skylighting::PostPostLoad()
 {
+	Precipitation::Install();
 	logger::info("[SKYLIGHTING] Hooking BSLightingShaderProperty::GetPrecipitationOcclusionMapRenderPassesImp");
 	stl::write_vfunc<0x2D, BSLightingShaderProperty_GetPrecipitationOcclusionMapRenderPassesImpl>(RE::VTABLE_BSLightingShaderProperty[0]);
 	stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
 	stl::write_vfunc<0x7, BSUtilityShader_RestoreGeometry>(RE::VTABLE_BSUtilityShader[0]);
-	stl::write_thunk_call<Main_Precipitation_RenderOcclusion>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x3A1, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x3BF : 0x3A1, 0x2FA));
-
 	if (globals::game::isVR)
 		stl::write_thunk_call<SetViewFrustumVR>(REL::RelocationID(25643, 26185).address() + REL::Relocate(0x5D9, 0x59D, 0x5DC));
 	else
@@ -528,15 +528,15 @@ void Skylighting::SetViewFrustumVR::thunk(RE::NiCamera* a_camera, RE::NiFrustum*
 void Skylighting::RenderOcclusion()
 {
 	ZoneScopedS(8);
-	auto shaderCache = globals::shaderCache;
-	auto renderer = globals::game::renderer;
-	auto sky = globals::game::sky;
+	auto* shaderCache = globals::shaderCache;
+	auto* renderer = globals::game::renderer;
+	auto* sky = globals::game::sky;
 	const bool interior = Util::IsInterior();
 
 	if (!shaderCache->IsEnabled()) {
 		if (!interior) {
 			CS_GPU_PASS("Skylighting::PrecipitationMask");
-			Main_Precipitation_RenderOcclusion::func();
+			Precipitation::RenderOriginal();
 		}
 		return;
 	}
@@ -549,11 +549,9 @@ void Skylighting::RenderOcclusion()
 		CS_GPU_PASS("Skylighting::PrecipitationMask");
 		auto precipitationObject = precipitation->currentPrecip ? precipitation->currentPrecip : precipitation->lastPrecip;
 		if (precipitationObject) {
-			auto* particleProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(
-				precipitationObject->GetGeometryRuntimeData().shaderProperty.get());
-			if (particleProperty && particleProperty->particleEmitter) {
+			if (auto* rainEmitter = Precipitation::GetRainEmitter(precipitationObject.get())) {
 				precipitation->SetupMask();
-				precipitation->RenderMask(static_cast<RE::BSParticleShaderRainEmitter*>(particleProperty->particleEmitter));
+				precipitation->RenderMask(rainEmitter);
 			}
 		}
 	}
@@ -631,15 +629,9 @@ void Skylighting::RenderOcclusion()
 		CS_GPU_PASS("Skylighting::OcclusionMask");
 		precipitation->RenderMask(reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain));
 	}
-
 	OcclusionDir = -float4{ direction.x, direction.y, direction.z, 0.0f };
 	OcclusionTransform = reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain)->occlusionProjection;
 	lastOcclusionRenderFrame = globals::state->frameCount;
-}
-
-void Skylighting::Main_Precipitation_RenderOcclusion::thunk()
-{
-	globals::features::skylighting.RenderOcclusion();
 }
 
 void Skylighting::BSUtilityShader_SetupGeometry::thunk(

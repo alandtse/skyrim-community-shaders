@@ -511,12 +511,6 @@ private:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct Main_RenderPrecipitation
-	{
-		static void thunk();
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	struct BSFaceGenManager_UpdatePendingCustomizationTextures
 	{
 		static void thunk();

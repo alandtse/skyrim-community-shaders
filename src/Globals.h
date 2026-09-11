@@ -35,6 +35,7 @@ struct VR;
 struct WaterEffects;
 struct SceneSelector;
 struct PerformanceOverlay;
+struct RainRendering;
 struct WetnessEffects;
 struct ExtendedTranslucency;
 struct Upscaling;
@@ -134,6 +135,7 @@ namespace globals
 		extern WaterEffects waterEffects;
 		extern SceneSelector sceneSelector;
 		extern PerformanceOverlay performanceOverlay;
+		extern RainRendering rainRendering;
 		extern WetnessEffects wetnessEffects;
 		extern ExtendedTranslucency extendedTranslucency;
 		extern Upscaling upscaling;

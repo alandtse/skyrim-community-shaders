@@ -667,7 +667,7 @@ namespace FoveatedRenderImpl::Ops
 		context->CopySubresourceRegion(Core::vrRenderSBS->resource.get(), 0, 0, 0, 0, src, 0, &drsBox);
 	}
 
-	void StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
+	bool StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride)
 	{
@@ -677,17 +677,19 @@ namespace FoveatedRenderImpl::Ops
 		                          (Core::vrRenderSBS ? Core::vrRenderSBS->srv.get() : nullptr);
 		if (!src) {
 			logger::error("[FOVEATED] StretchDRSBothEyes missing source SRV");
-			return;
+			return false;
 		}
 		for (uint32_t i = 0; i < 2; ++i) {
 			uint32_t dstX = (i == 1) ? eyeWidthOut : 0;
 			uint32_t srcX = (i == 1) ? eyeWidthIn : 0;
-			StretchDRSToFullEye(
-				src, dstUAV,
-				dstX, eyeWidthOut, eyeHeightOut,
-				srcX, renderW, renderH,
-				eyeWidthIn, eyeHeightIn);
+			if (!StretchDRSToFullEye(
+					src, dstUAV,
+					dstX, eyeWidthOut, eyeHeightOut,
+					srcX, renderW, renderH,
+					eyeWidthIn, eyeHeightIn))
+				return false;
 		}
+		return true;
 	}
 
 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,

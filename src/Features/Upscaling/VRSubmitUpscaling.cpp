@@ -849,6 +849,8 @@ void VRSubmitUpscaling::CaptureInputs()
 		return;
 	if (shaderResetPending.exchange(false)) {
 		Invalidate();
+		sourceCopy = nullptr;
+		sourceView = nullptr;
 		for (auto& shader : encodeShaders)
 			shader.Reset();
 		colorShader.Reset();
@@ -1030,10 +1032,14 @@ bool VRSubmitUpscaling::ReconstructPair(ID3D11Texture2D* source, vr::EColorSpace
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		desc.Usage = D3D11_USAGE_DEFAULT;
 		desc.CPUAccessFlags = desc.MiscFlags = 0;
-		winrt::check_hresult(globals::d3d::device->CreateTexture2D(&desc, nullptr, sourceCopy.put()));
-		Util::SetResourceName(sourceCopy.get(), "Upscaling::SubmitSource");
-		winrt::check_hresult(globals::d3d::device->CreateShaderResourceView(sourceCopy.get(), nullptr, sourceView.put()));
-		Util::SetResourceName(sourceView.get(), "Upscaling::SubmitSource SRV");
+		winrt::com_ptr<ID3D11Texture2D> copy;
+		winrt::com_ptr<ID3D11ShaderResourceView> view;
+		winrt::check_hresult(globals::d3d::device->CreateTexture2D(&desc, nullptr, copy.put()));
+		Util::SetResourceName(copy.get(), "Upscaling::SubmitSource");
+		winrt::check_hresult(globals::d3d::device->CreateShaderResourceView(copy.get(), nullptr, view.put()));
+		Util::SetResourceName(view.get(), "Upscaling::SubmitSource SRV");
+		sourceCopy = std::move(copy);
+		sourceView = std::move(view);
 	}
 	context->CopyResource(sourceCopy.get(), source);
 	const bool gamma = colorSpace != vr::ColorSpace_Linear;

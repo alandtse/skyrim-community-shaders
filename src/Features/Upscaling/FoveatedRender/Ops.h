@@ -47,8 +47,8 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t srcOffsetX, uint32_t srcWidth, uint32_t srcHeight,
 		uint32_t srcEyeWidth, uint32_t srcEyeHeight);
 
-	// StretchDRS for both eyes (snapshot must already exist in vrRenderSBS).
-	void StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
+	/** @brief Stretches both eyes from the snapshot or override; returns false if either eye fails. */
+	bool StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride = nullptr);
 

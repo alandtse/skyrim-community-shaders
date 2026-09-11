@@ -763,6 +763,13 @@ static void WriteArgsUint32(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, uint32_
 	ctx->UpdateSubresource(buf, 0, &box, &value, 0, 0);
 }
 
+static void ResetInstanceCount(ID3D11DeviceContext* ctx, ID3D11Buffer* buf)
+{
+	WriteArgsUint32(ctx, buf, InstanceCountOffsetForEye(0), 0);
+	if (globals::game::isVR)
+		WriteArgsUint32(ctx, buf, InstanceCountOffsetForEye(1), 0);
+}
+
 void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 {
 	if (b.cullSlot == UINT32_MAX)
@@ -770,19 +777,14 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 
 	// Reset only the instance-count dword: the args UAV spans CPU-set fields that must survive
 	// every frame, so a wholesale ClearUnorderedAccessView would corrupt them.
-	WriteArgsUint32(ctx, b.argsBuf, InstanceCountOffsetForEye(0), 0);
-	if (globals::game::isVR)
-		WriteArgsUint32(ctx, b.argsBuf, InstanceCountOffsetForEye(1), 0);
+	ResetInstanceCount(ctx, b.argsBuf);
 
 	// The main bin then one triple per LOD tier, matching u0-u8 in GrassCullingCS.
 	ID3D11UnorderedAccessView* uavs[3 + 3 * (size_t)GrassMeshLibrary::LODTier::kCount] = { b.compactedUAV, b.extrasUAV, b.argsUAV };
 	for (size_t tier = 0; tier < (size_t)GrassMeshLibrary::LODTier::kCount; ++tier) {
 		const GrassBucket::LODBin& bin = b.lodBins[tier];
-		if (bin.active) {
-			WriteArgsUint32(ctx, bin.argsBuf, InstanceCountOffsetForEye(0), 0);
-			if (globals::game::isVR)
-				WriteArgsUint32(ctx, bin.argsBuf, InstanceCountOffsetForEye(1), 0);
-		}
+		if (bin.active)
+			ResetInstanceCount(ctx, bin.argsBuf);
 		uavs[3 + tier * 3 + 0] = bin.active ? bin.compactedUAV : nullptr;
 		uavs[3 + tier * 3 + 1] = bin.active ? bin.extrasUAV : nullptr;
 		uavs[3 + tier * 3 + 2] = bin.active ? bin.argsUAV : nullptr;
@@ -987,6 +989,30 @@ static void BindEyeIndexCB(GrassOptimizations& self, uint32_t eyeIndex)
 	self.ctx1->VSSetConstantBuffers1(7, 1, &cb, &first, &num);
 }
 
+static void WriteIndirectArgs(ID3D11DeviceContext* ctx, ID3D11Buffer* argsBuf, uint32_t indexCount, uint32_t capacity)
+{
+	WriteArgsUint32(ctx, argsBuf, argsByteOffset, indexCount);
+	if (globals::game::isVR) {
+		WriteArgsUint32(ctx, argsBuf, ArgsByteOffsetForEye(1), indexCount);
+		WriteArgsUint32(ctx, argsBuf, StartInstanceLocationOffsetForEye(1), capacity);
+	}
+}
+
+static void DrawGrassIndirect(GrassOptimizations& self, ID3D11DeviceContext* ctx, ID3D11Buffer* argsBuf, uint64_t descVal, uint32_t capacity)
+{
+	if (globals::game::isVR) {
+		if (ID3D11InputLayout* layout = self.GetOptimizedInputLayout(descVal))
+			ctx->IASetInputLayout(layout);
+	}
+	UploadEyeIndexCB(self, ctx, capacity);
+	BindEyeIndexCB(self, 0);
+	ctx->DrawIndexedInstancedIndirect(argsBuf, argsByteOffset);
+	if (globals::game::isVR) {
+		BindEyeIndexCB(self, 1);
+		ctx->DrawIndexedInstancedIndirect(argsBuf, ArgsByteOffsetForEye(1));
+	}
+}
+
 void VanillaDrawInstanceTriShape(RE::BSMultiStreamInstanceTriShape* geometry)
 {
 	auto* ctx = globals::d3d::context;
@@ -1074,12 +1100,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 
 	if (!b->argsIndexCountWritten) {
 		const uint32_t indexCount = 3u * geometry->GetTrishapeRuntimeData().triangleCount;
-		WriteArgsUint32(ctx, b->argsBuf, argsByteOffset, indexCount);
-		if (globals::game::isVR) {
-			// Eye 1 shares the same mesh, so IndexCountPerInstance matches eye 0's.
-			WriteArgsUint32(ctx, b->argsBuf, ArgsByteOffsetForEye(1), indexCount);
-			WriteArgsUint32(ctx, b->argsBuf, StartInstanceLocationOffsetForEye(1), b->capacityInstances);
-		}
+		WriteIndirectArgs(ctx, b->argsBuf, indexCount, b->capacityInstances);
 		b->argsIndexCountWritten = true;
 	}
 
@@ -1093,7 +1114,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		shadowState.topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
 	}
-	static REL::Relocation<void (*)(uint32_t)> SetDirtyStates{ REL::RelocationID(75580, 77386) };
+	static REL::Relocation<void (*)(uint32_t)> SetDirtyStates{ RELOCATION_ID(75580, 77386) };
 	SetDirtyStates(0);
 
 	ctx->IASetIndexBuffer(indexB, DXGI_FORMAT_R16_UINT, 0);
@@ -1109,19 +1130,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	vbs[1] = b->compactedBuf;
 	ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 	ctx->VSSetShaderResources(2, 1, &b->extrasSRV);
-	if (globals::game::isVR) {
-		if (ID3D11InputLayout* layout = self.GetOptimizedInputLayout(descVal))
-			ctx->IASetInputLayout(layout);
-	}
-	// RunGrass.hlsl reads GrassOptimizationsEyeCB (b7) unconditionally under GRASS_OPTIMIZATIONS, not
-	// just VR, so eye 0 must always bind it or flat reads whatever b7 last held from another draw.
-	UploadEyeIndexCB(self, ctx, b->capacityInstances);
-	BindEyeIndexCB(self, 0);
-	ctx->DrawIndexedInstancedIndirect(b->argsBuf, argsByteOffset);
-	if (globals::game::isVR) {
-		BindEyeIndexCB(self, 1);
-		ctx->DrawIndexedInstancedIndirect(b->argsBuf, ArgsByteOffsetForEye(1));
-	}
+	DrawGrassIndirect(self, ctx, b->argsBuf, descVal, b->capacityInstances);
 
 	std::array<const GrassMeshLibrary::LODMesh*, (size_t)GrassMeshLibrary::LODTier::kCount> lodMeshes{};
 	{
@@ -1140,11 +1149,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 			continue;
 
 		if (!bin.argsIndexCountWritten) {
-			WriteArgsUint32(ctx, bin.argsBuf, argsByteOffset, lod->indexCount);
-			if (globals::game::isVR) {
-				WriteArgsUint32(ctx, bin.argsBuf, ArgsByteOffsetForEye(1), lod->indexCount);
-				WriteArgsUint32(ctx, bin.argsBuf, StartInstanceLocationOffsetForEye(1), bin.capacityInstances);
-			}
+			WriteIndirectArgs(ctx, bin.argsBuf, lod->indexCount, bin.capacityInstances);
 			bin.argsIndexCountWritten = true;
 		}
 
@@ -1161,16 +1166,6 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		strides[0] = lod->meshStride;
 		ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 		ctx->VSSetShaderResources(2, 1, &bin.extrasSRV);
-		if (globals::game::isVR) {
-			if (ID3D11InputLayout* layout = self.GetOptimizedInputLayout(lod->descVal))
-				ctx->IASetInputLayout(layout);
-		}
-		UploadEyeIndexCB(self, ctx, bin.capacityInstances);
-		BindEyeIndexCB(self, 0);
-		ctx->DrawIndexedInstancedIndirect(bin.argsBuf, argsByteOffset);
-		if (globals::game::isVR) {
-			BindEyeIndexCB(self, 1);
-			ctx->DrawIndexedInstancedIndirect(bin.argsBuf, ArgsByteOffsetForEye(1));
-		}
+		DrawGrassIndirect(self, ctx, bin.argsBuf, lod->descVal, bin.capacityInstances);
 	}
 }

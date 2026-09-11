@@ -29,14 +29,14 @@ namespace
 		const float directionLength = std::hypot(a_ambientVelocity.x, a_ambientVelocity.y);
 		float3 direction = a_fallbackDirection;
 		if (useRealDirection && std::isfinite(directionLength) && directionLength > 0.0001f) {
-			direction = {
+			direction = float3{
 				a_ambientVelocity.x / directionLength,
 				a_ambientVelocity.y / directionLength,
 				0.0f
 			};
 		} else if (!useRealDirection) {
 			const float directionRadians = DirectX::XMConvertToRadians(a_wind.runtimeState.windFieldAppliedDirectionDegrees);
-			direction = { std::cos(directionRadians), std::sin(directionRadians), 0.0f };
+			direction = float3{ std::cos(directionRadians), std::sin(directionRadians), 0.0f };
 		}
 		return { direction, speed };
 	}
@@ -74,20 +74,20 @@ void State::AdvanceWindHistory(float a_frameTime)
 
 void State::UpdateWeatherWind()
 {
-	ambientWindVelocity = {};
+	ambientWindVelocity = float3{};
 	const auto* sky = globals::game::sky;
 	const float activeWindIntensity = sky && std::isfinite(sky->windSpeed) ?
 	                                      std::clamp(sky->windSpeed, 0.0f, 1.0f) :
 	                                      0.0f;
 	float2 weatherDirection{};
 	if (sky && std::isfinite(sky->windAngle)) {
-		weatherDirection = { std::cos(sky->windAngle), std::sin(sky->windAngle) };
+		weatherDirection = float2{ std::cos(sky->windAngle), std::sin(sky->windAngle) };
 	}
 	const float directionLength = std::hypot(weatherDirection.x, weatherDirection.y);
 	if (std::isfinite(directionLength) && directionLength > 0.0001f && std::isfinite(activeWindIntensity)) {
 		weatherDirection.x /= directionLength;
 		weatherDirection.y /= directionLength;
-		ambientWindVelocity = { weatherDirection.x * activeWindIntensity, weatherDirection.y * activeWindIntensity, 0.0f };
+		ambientWindVelocity = float3{ weatherDirection.x * activeWindIntensity, weatherDirection.y * activeWindIntensity, 0.0f };
 	}
 }
 
@@ -179,11 +179,11 @@ void State::UpdateWindSharedData(SharedDataCB& a_data) const
 	const float3 previousBlendedVelocity =
 		previousTransitionVelocity +
 		(previousWindFieldSelectedVelocity - previousTransitionVelocity) * previousWindFieldTransitionBlend;
-	a_data.WindFieldAmbient = {
+	a_data.WindFieldAmbient = float4{
 		blendedVelocity.x, blendedVelocity.y, blendedVelocity.z,
 		windFieldGustTravelDistance
 	};
-	a_data.WindFieldPreviousAmbient = {
+	a_data.WindFieldPreviousAmbient = float4{
 		previousBlendedVelocity.x, previousBlendedVelocity.y, previousBlendedVelocity.z,
 		previousWindFieldGustTravelDistance
 	};
@@ -191,13 +191,13 @@ void State::UpdateWindSharedData(SharedDataCB& a_data) const
 	a_data.WindFieldPrevious = previousWindFieldCurrent;
 	a_data.WindFieldTransition = windFieldTransition;
 	a_data.WindFieldPreviousTransition = previousWindFieldTransition;
-	a_data.WindFieldTransitionData = {
+	a_data.WindFieldTransitionData = float4{
 		windFieldTransitionBlend,
 		previousWindFieldTransitionBlend,
 		0.0f,
 		0.0f
 	};
-	a_data.WindFieldSpringDebug = {
+	a_data.WindFieldSpringDebug = float4{
 		globals::features::wind.grassState.springFieldMinimum[0].x,
 		globals::features::wind.grassState.springFieldMinimum[0].y,
 		globals::features::wind.grassState.springFieldAvailable[0] ?

@@ -82,7 +82,6 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> colorCorrectionComputeShader;
 	winrt::com_ptr<ID3D11Buffer> colorCorrectionConstantBuffer;
 
-	static std::string LoadShaderFile(const char* path);
 	void CreateQuadGeometry();
 	void CreateRenderStates();
 	void CreateCopyShaders();

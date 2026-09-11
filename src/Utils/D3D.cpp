@@ -135,10 +135,8 @@ namespace Util
 			logger::debug("[{}] Shader logs:\n{}", Context, static_cast<char*>(ErrorBlob->GetBufferPointer()));
 	}
 
-	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
+	winrt::com_ptr<ID3DBlob> CompileShaderBlob(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
 	{
-		auto device = globals::d3d::device;
-
 		CustomInclude include;
 
 		// Build defines (aka convert vector->D3DCONSTANT array)
@@ -164,17 +162,15 @@ namespace Util
 			for (unsigned int i = 0; i < shaderDefines->size(); i++)
 				macros.push_back({ shaderDefines->at(i).first.c_str(), shaderDefines->at(i).second.c_str() });
 		}
-		if (!_stricmp(ProgramType, "ps_5_0"))
+		if (!_stricmp(ProgramType, "ps_5_0") || !_stricmp(ProgramType, "ps_4_0"))
 			macros.push_back({ "PSHADER", "" });
-		else if (!_stricmp(ProgramType, "vs_5_0"))
+		else if (!_stricmp(ProgramType, "vs_5_0") || !_stricmp(ProgramType, "vs_4_0"))
 			macros.push_back({ "VSHADER", "" });
 		else if (!_stricmp(ProgramType, "hs_5_0"))
 			macros.push_back({ "HULLSHADER", "" });
 		else if (!_stricmp(ProgramType, "ds_5_0"))
 			macros.push_back({ "DOMAINSHADER", "" });
-		else if (!_stricmp(ProgramType, "cs_5_0"))
-			macros.push_back({ "COMPUTESHADER", "" });
-		else if (!_stricmp(ProgramType, "cs_4_0"))
+		else if (!_stricmp(ProgramType, "cs_5_0") || !_stricmp(ProgramType, "cs_4_0"))
 			macros.push_back({ "COMPUTESHADER", "" });
 		else
 			return nullptr;
@@ -209,14 +205,24 @@ namespace Util
 			return nullptr;
 		}
 		LogShaderCompileWarnings(shaderErrors.get(), str);
+		return shaderBlob;
+	}
 
+	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
+	{
+		auto device = globals::d3d::device;
+		auto shaderBlob = CompileShaderBlob(FilePath, Defines, ProgramType, Program);
+		if (!shaderBlob)
+			return nullptr;
+
+		std::string str = Util::WStringToString(FilePath);
 		HRESULT hr = S_OK;
 		ID3D11DeviceChild* regShader = nullptr;
-		if (!_stricmp(ProgramType, "ps_5_0")) {
+		if (!_stricmp(ProgramType, "ps_5_0") || !_stricmp(ProgramType, "ps_4_0")) {
 			ID3D11PixelShader* shader = nullptr;
 			hr = device->CreatePixelShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &shader);
 			regShader = shader;
-		} else if (!_stricmp(ProgramType, "vs_5_0")) {
+		} else if (!_stricmp(ProgramType, "vs_5_0") || !_stricmp(ProgramType, "vs_4_0")) {
 			ID3D11VertexShader* shader = nullptr;
 			hr = device->CreateVertexShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &shader);
 			regShader = shader;

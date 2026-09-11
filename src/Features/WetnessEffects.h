@@ -20,12 +20,12 @@ public:
 	/** @brief Returns a summary description and list of key features for the UI. */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
-		return { T("feature.wetness_effects.description", "Adds realistic wetness effects including rain-based surface wetness, puddle formation, shore wetness, and dynamic raindrop effects for enhanced weather immersion."),
+		return { T("feature.wetness_effects.description", "Adds weather-driven environmental wetness plus model-attached water drops and trails on characters."),
 			{ T("feature.wetness_effects.key_feature_1", "Dynamic surface wetness based on weather conditions"),
 				T("feature.wetness_effects.key_feature_2", "Realistic puddle formation and shore wetness effects"),
 				T("feature.wetness_effects.key_feature_3", "Animated raindrop effects with splashes and ripples"),
 				T("feature.wetness_effects.key_feature_4", "Configurable wetness intensity and weather transitions"),
-				T("feature.wetness_effects.key_feature_5", "Support for skin wetness and material-specific responses") } };
+				T("feature.wetness_effects.key_feature_5", "Model-attached character droplets, trails, and wet-surface lighting") } };
 	};
 
 	bool HasShaderDefine(RE::BSShader::Type) override { return true; };
@@ -42,7 +42,7 @@ public:
 		float PuddleMaxAngle = 0.95f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
-		float SkinWetness = 0.95f;
+		float HairWetness = 0.5f;
 		float WeatherTransitionSpeed = 3.0f;
 
 		// Raindrop fx settings
@@ -62,7 +62,35 @@ public:
 		float RippleRadius = 1.f;
 		float RippleBreadth = .5f;
 		float RippleLifetime = .5f;
+
+		uint EnableCharacterRainSpots = true;
+		float CharacterSpotDensity = 1.0f;
+		float CharacterSpotRadius = 0.75f;
+		float CharacterSpotStrength = 1.0f;
+		float CharacterSpotRoughness = 0.1f;
+		float CharacterSpotNormalStrength = 0.75f;
+		uint CharacterSpotDebug = 0u;
+		float CharacterCoatIntensity = 5.0f;
+		float CharacterWetSheen = 0.55f;
+		float CharacterRainActivityMultiplier = 2.5f;
+		// Used by CPU wetness decay; retained here to preserve the mirrored settings layout.
+		float CharacterDryTime = 10.0f;
+		uint EnableWeaponRainDrops = true;
 	};
+
+	/** @brief Stable debug-mode ordering shared by the character-rain UI and frame upload. */
+	enum class CharacterDebugMode : std::uint32_t
+	{
+		Shading,
+		Combined,
+		Settled,
+		Impacts,
+		Flow,
+		Surfaces,
+		Weapons,
+		Count
+	};
+	static_assert(sizeof(Settings) == 160);
 
 	struct alignas(16) PerFrame
 	{
@@ -72,8 +100,12 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		Settings settings;
+		float CharacterImpactIntensity;
+		float CharacterRetainedWetness;
+		float2 CharacterStatePadding;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
+	static_assert(sizeof(PerFrame) == 256);
 
 	struct DebugSettings
 	{
@@ -109,13 +141,20 @@ public:
 	static constexpr ClimatePreset defaultPreset = ClimatePreset::NordicStandard;
 	ClimatePreset climatePreset = defaultPreset;
 
-	/** @brief Builds the per-frame constant buffer data including weather state and settings. */
-	PerFrame GetCommonBufferData() const;
+	/**
+	 * @brief Builds the per-frame constant buffer data including weather state and settings.
+	 * @param a_advanceFrameState Whether this call advances animation and retained-wetness state.
+	 */
+	PerFrame GetCommonBufferData(bool a_advanceFrameState = true) const;
 
 	/** @brief Updates wetness state and binds the per-frame constant buffer. */
 	virtual void Prepass() override;
 	/** @brief Detects Splashes of Storms mod presence for compatibility handling. */
 	virtual void PostPostLoad() override;
+	/** @brief Registers character geometry lifecycle listeners after data loading. */
+	virtual void DataLoaded() override;
+	/** @brief Queues actors already loaded with the current save. */
+	virtual void GameLoaded() override;
 
 	/** @brief Draws the ImGui settings panel for wetness effects configuration. */
 	virtual void DrawSettings() override;
@@ -168,10 +207,23 @@ public:
 	bool DoesCurrentSettingsMatchPreset(ClimatePreset preset) const;
 	/** @brief Detects which climate preset matches the current settings, if any. */
 	void DetectCurrentPreset();
+	/** @brief Returns whether render-pass geometry needs character rain surface classification. */
+	bool ShouldClassifyCharacterRainSurfaces() const
+	{
+		const bool characterEffectsEnabled = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
+		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || settings.CharacterSpotDebug != 0u;
+		return loaded && characterEffectsEnabled && characterWaterVisible;
+	}
 
 private:
+	void DrawEnvironmentWetnessSettings();
+	void DrawCharacterRainSettings();
+	void RestoreCharacterRainDefaults();
+	void UpdateCharacterRainData(PerFrame& a_data, bool a_updateState) const;
 	void DrawWeatherAnalysis() const;
 
+	mutable float characterSurfaceWetness = 0.0f;
+	mutable std::uint32_t lastCharacterWetnessUpdateFrame = UINT32_MAX;
 	bool splashesOfStormsLoaded = false;
 
 	// Weather wetness calculation result for debug display

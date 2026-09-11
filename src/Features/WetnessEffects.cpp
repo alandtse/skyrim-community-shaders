@@ -1,7 +1,13 @@
 #include "WetnessEffects.h"
+#include "CharacterRainSurfaces.h"
+#include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "SceneSelector.h"
+#include "State.h"
+
+#include <array>
+#include <cmath>
 
 #define I18N_KEY_PREFIX "feature.wetness_effects."
 
@@ -17,7 +23,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PuddleMaxAngle,
 	PuddleMinWetness,
 	MinRainWetness,
-	SkinWetness,
+	HairWetness,
 	WeatherTransitionSpeed,
 	EnableRaindropFx,
 	EnableSplashes,
@@ -34,7 +40,19 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RippleStrength,
 	RippleRadius,
 	RippleBreadth,
-	RippleLifetime)
+	RippleLifetime,
+	EnableCharacterRainSpots,
+	CharacterSpotDensity,
+	CharacterSpotRadius,
+	CharacterSpotStrength,
+	CharacterSpotRoughness,
+	CharacterSpotNormalStrength,
+	CharacterSpotDebug,
+	CharacterCoatIntensity,
+	CharacterWetSheen,
+	CharacterRainActivityMultiplier,
+	CharacterDryTime,
+	EnableWeaponRainDrops)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -45,6 +63,31 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessOverride,
 	PuddleWetnessOverride,
 	RainOverride)
+
+namespace
+{
+	struct CharacterRainSettingLimits
+	{
+		static constexpr float kMinimumDensity = 0.0f;
+		static constexpr float kMaximumDensity = 1.0f;
+		static constexpr float kMinimumRadius = 0.2f;
+		static constexpr float kMaximumRadius = 3.0f;
+		static constexpr float kMinimumStrength = 0.0f;
+		static constexpr float kMaximumStrength = 1.0f;
+		static constexpr float kMinimumRoughness = 0.08f;
+		static constexpr float kMaximumRoughness = 0.6f;
+		static constexpr float kMinimumNormalStrength = 0.0f;
+		static constexpr float kMaximumNormalStrength = 1.0f;
+		static constexpr float kMinimumCoatIntensity = 0.0f;
+		static constexpr float kMaximumCoatIntensity = 8.0f;
+		static constexpr float kMinimumWetSheen = 0.0f;
+		static constexpr float kMaximumWetSheen = 1.0f;
+		static constexpr float kMinimumActivity = 0.25f;
+		static constexpr float kMaximumActivity = 8.0f;
+		static constexpr float kMinimumDryTime = 2.0f;
+		static constexpr float kMaximumDryTime = 60.0f;
+	};
+}
 
 // Climate preset data - defines regional weather characteristics
 // Precipitation rates calculated from actual shader mechanics: grid size, interval, and raindrop chance
@@ -375,6 +418,7 @@ namespace Ripples
 
 void WetnessEffects::PostPostLoad()
 {
+	CharacterRainSurfaces::Install();
 	splashesOfStormsLoaded = static_cast<bool>(GetModuleHandle(L"po3_SplashesOfStorms.dll"));
 	if (splashesOfStormsLoaded) {
 		logger::info("[{}] Splashes of Storms detected, compatibility enabled", GetName());
@@ -385,7 +429,37 @@ void WetnessEffects::PostPostLoad()
 	Ripples::Install();
 }
 
+void WetnessEffects::DataLoaded()
+{
+	CharacterRainSurfaces::RegisterEvents();
+}
+
+void WetnessEffects::GameLoaded()
+{
+	characterSurfaceWetness = 0.0f;
+	lastCharacterWetnessUpdateFrame = UINT32_MAX;
+	CharacterRainSurfaces::QueueLoadedActors();
+}
+
 void WetnessEffects::DrawSettings()
+{
+	if (!ImGui::BeginTabBar("##WetnessEffectsTabs"))
+		return;
+
+	if (ImGui::BeginTabItem(T(TKEY("tab_environment_wetness"), "Environment Wetness"))) {
+		DrawEnvironmentWetnessSettings();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T(TKEY("tab_character_wet_effects"), "Character Wet Effects"))) {
+		DrawCharacterRainSettings();
+		ImGui::EndTabItem();
+	}
+
+	ImGui::EndTabBar();
+}
+
+void WetnessEffects::DrawEnvironmentWetnessSettings()
 {
 	// Climate Preset Selection - Always visible at the top
 	Util::DrawSectionHeader(T(TKEY("climate_presets"), "Climate Presets"), false, false);
@@ -575,10 +649,6 @@ void WetnessEffects::DrawSettings()
 			ImGui::Text("%s", T(TKEY("min_rain_wetness_tooltip"), "The minimum amount an object gets wet from rain."));
 		}
 
-		ImGui::SliderFloat(T(TKEY("skin_wetness"), "Skin Wetness"), &settings.SkinWetness, 0.0f, 1.0f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("skin_wetness_tooltip"), "How wet character skin and hair get during rain."));
-		}
 		ImGui::SliderInt(T(TKEY("shore_range"), "Shore Range"), (int*)&settings.ShoreRange, 1, 64);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			auto meters = Util::Units::GameUnitsToMeters(static_cast<float>(settings.ShoreRange));
@@ -702,6 +772,121 @@ static void DrawRainTypeLabel(const char* prefix, float rate)
 // =====================
 // Weather/Precipitation Analysis Helpers
 // =====================
+
+void WetnessEffects::DrawCharacterRainSettings()
+{
+	Util::DrawSectionHeader(T(TKEY("character_activation_exposure"), "Activation & Exposure"), false, false);
+	bool wetnessEnabled = settings.EnableWetnessEffects != 0;
+	if (ImGui::Checkbox(T(TKEY("enable_wetness"), "Enable Wetness"), &wetnessEnabled)) {
+		settings.EnableWetnessEffects = wetnessEnabled;
+		Ripples::UpdateSettings();
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("enable_wetness_tooltip"), "Enables a wetness effect near water and when it is raining."));
+
+	ImGui::BeginDisabled(!settings.EnableWetnessEffects);
+	bool enabled = settings.EnableCharacterRainSpots != 0;
+	if (ImGui::Checkbox(T(TKEY("enable_character_rain_spots"), "Enable Character Wet Drops"), &enabled))
+		settings.EnableCharacterRainSpots = enabled;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("character_rain_spots_tooltip"), "Three reflective water layers on compatible opaque skin, clothing and armor: tiny settled beads, fresh arriving drops, and long flowing rivulets. Activity follows Wetness rather than rain-particle visibility. Equipped weapons use stationary beads and a wet sheen instead of trails. All patterns remain attached to their model and require Enable Wetness."));
+	ImGui::EndDisabled();
+
+	const bool characterEffectsDisabled = !settings.EnableWetnessEffects || !settings.EnableCharacterRainSpots;
+	ImGui::BeginDisabled(characterEffectsDisabled);
+	ImGui::SliderFloat(T(TKEY("character_rain_activity"), "Drop Activity"), &settings.CharacterRainActivityMultiplier,
+		CharacterRainSettingLimits::kMinimumActivity, CharacterRainSettingLimits::kMaximumActivity, "%.2fx");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("character_rain_activity_tooltip"), "Multiplier for character-drop density and arrival rate. Reduce it for low wetness or raise it for saturated surfaces."));
+	ImGui::SliderFloat(T(TKEY("character_dry_time"), "Character Dry Time"), &settings.CharacterDryTime,
+		CharacterRainSettingLimits::kMinimumDryTime, CharacterRainSettingLimits::kMaximumDryTime, "%.0f sec");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("character_dry_time_tooltip"), "How long broad retained character sheen takes to fade after global weather wetness falls. Cover immediately suppresses localized beads, impacts, and rivulets; shelter does not start a separate per-character dry timer."));
+	ImGui::EndDisabled();
+
+	ImGui::Spacing();
+	Util::DrawSectionHeader(T(TKEY("character_drops_trails"), "Drops & Trails"), false, false);
+
+	ImGui::BeginDisabled(characterEffectsDisabled);
+	ImGui::SliderFloat(T(TKEY("character_spot_density"), "Drop Density"), &settings.CharacterSpotDensity,
+		CharacterRainSettingLimits::kMinimumDensity, CharacterRainSettingLimits::kMaximumDensity, "%.2f");
+	ImGui::SliderFloat(T(TKEY("character_spot_radius"), "Drop Size"), &settings.CharacterSpotRadius,
+		CharacterRainSettingLimits::kMinimumRadius, CharacterRainSettingLimits::kMaximumRadius, "%.2f units");
+	ImGui::SliderFloat(T(TKEY("character_spot_strength"), "Drop & Trail Strength"), &settings.CharacterSpotStrength,
+		CharacterRainSettingLimits::kMinimumStrength, CharacterRainSettingLimits::kMaximumStrength, "%.2f");
+	ImGui::EndDisabled();
+
+	ImGui::Spacing();
+	Util::DrawSectionHeader(T(TKEY("character_surface_lighting"), "Wet Surface Lighting"), false, false);
+	ImGui::BeginDisabled(!settings.EnableWetnessEffects);
+	ImGui::SliderFloat(T(TKEY("hair_wetness"), "Hair Wetness"), &settings.HairWetness, 0.0f, 1.0f);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("hair_wetness_tooltip"), "Controls the existing uniform rain-wetness response on character hair. It is separate from model-attached drops and trails."));
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled(characterEffectsDisabled);
+	ImGui::SliderFloat(T(TKEY("character_coat_intensity"), "Droplet Coat / Highlight Intensity"), &settings.CharacterCoatIntensity,
+		CharacterRainSettingLimits::kMinimumCoatIntensity, CharacterRainSettingLimits::kMaximumCoatIntensity, "%.2fx");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("character_coat_intensity_tooltip"), "Controls the independent water-reflection strength on skin, clothing and armor. Dynamic Cubemaps supplies environmental reflections; direct lights and the ambient fallback work without it."));
+	ImGui::SliderFloat(T(TKEY("character_wet_sheen"), "Character Surface Wet Sheen"), &settings.CharacterWetSheen,
+		CharacterRainSettingLimits::kMinimumWetSheen, CharacterRainSettingLimits::kMaximumWetSheen, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("character_wet_sheen_tooltip"), "Adds a clear wet sheen to eligible skin, clothing and armor from retained surface water; localized beads and rivulets remain stronger."));
+	ImGui::SliderFloat(T(TKEY("character_spot_roughness"), "Water Roughness"), &settings.CharacterSpotRoughness,
+		CharacterRainSettingLimits::kMinimumRoughness, CharacterRainSettingLimits::kMaximumRoughness, "%.2f");
+	ImGui::SliderFloat(T(TKEY("character_spot_normal"), "Droplet Normal Strength"), &settings.CharacterSpotNormalStrength,
+		CharacterRainSettingLimits::kMinimumNormalStrength, CharacterRainSettingLimits::kMaximumNormalStrength, "%.2f");
+	ImGui::EndDisabled();
+
+	ImGui::Spacing();
+	Util::DrawSectionHeader(T(TKEY("character_equipped_weapons"), "Equipped Weapons"), false, false);
+	ImGui::BeginDisabled(characterEffectsDisabled);
+	bool weaponDrops = settings.EnableWeaponRainDrops != 0;
+	if (ImGui::Checkbox(T(TKEY("enable_weapon_rain_drops"), "Stationary Water Beads"), &weaponDrops))
+		settings.EnableWeaponRainDrops = weaponDrops;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("weapon_rain_drops_tooltip"), "Adds model-attached droplets and a thin wet sheen to equipped weapons. Weapon droplets never slide or form vertical trails, so bows, staves and drawn weapons remain stable at any orientation."));
+	ImGui::EndDisabled();
+
+	ImGui::Spacing();
+	Util::DrawSectionHeader(T(TKEY("character_debug"), "Debug"), false, false);
+	if (ImGui::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
+		RestoreCharacterRainDefaults();
+
+	ImGui::BeginDisabled(characterEffectsDisabled);
+	const char* debugModes[] = {
+		T(TKEY("character_debug_shading"), "Water Shading"),
+		T(TKEY("character_debug_combined"), "Combined Coverage"),
+		T(TKEY("character_debug_static"), "Settled Beads Only"),
+		T(TKEY("character_debug_impacts"), "Arriving Drops Only"),
+		T(TKEY("character_debug_flow"), "Flowing Rivulets Only"),
+		T(TKEY("character_debug_surfaces"), "Eligible Character Surfaces"),
+		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
+	};
+	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
+	int debugMode = static_cast<int>(std::min<uint>(settings.CharacterSpotDebug, static_cast<uint>(std::size(debugModes) - 1)));
+	if (ImGui::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &debugMode, debugModes, static_cast<int>(std::size(debugModes))))
+		settings.CharacterSpotDebug = static_cast<uint>(debugMode);
+	ImGui::EndDisabled();
+}
+
+void WetnessEffects::RestoreCharacterRainDefaults()
+{
+	const Settings defaults{};
+	settings.HairWetness = defaults.HairWetness;
+	settings.EnableCharacterRainSpots = defaults.EnableCharacterRainSpots;
+	settings.CharacterSpotDensity = defaults.CharacterSpotDensity;
+	settings.CharacterSpotRadius = defaults.CharacterSpotRadius;
+	settings.CharacterSpotStrength = defaults.CharacterSpotStrength;
+	settings.CharacterSpotRoughness = defaults.CharacterSpotRoughness;
+	settings.CharacterSpotNormalStrength = defaults.CharacterSpotNormalStrength;
+	settings.CharacterSpotDebug = defaults.CharacterSpotDebug;
+	settings.CharacterCoatIntensity = defaults.CharacterCoatIntensity;
+	settings.CharacterWetSheen = defaults.CharacterWetSheen;
+	settings.CharacterRainActivityMultiplier = defaults.CharacterRainActivityMultiplier;
+	settings.CharacterDryTime = defaults.CharacterDryTime;
+	settings.EnableWeaponRainDrops = defaults.EnableWeaponRainDrops;
+}
 
 static float linearstep(float edge0, float edge1, float x)
 {
@@ -835,7 +1020,7 @@ void WetnessEffects::ApplyClimatePreset(ClimatePreset preset)
 	// Removed clamping for all settings to allow full preset range
 }
 
-WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
+WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData(bool a_advanceFrameState) const
 {
 	PerFrame data{};
 
@@ -922,7 +1107,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	}
 
 	static size_t rainTimer = 0;  // size_t for precision
-	if (!globals::game::ui->GameIsPaused())
+	if (a_advanceFrameState && !globals::game::ui->GameIsPaused())
 		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
 	data.Time = rainTimer / 1000.f;
 
@@ -932,12 +1117,71 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.settings.RaindropGridSize = 1.0f / settings.RaindropGridSize;
 	data.settings.RaindropInterval = 1.0f / settings.RaindropInterval;
 	data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
+	UpdateCharacterRainData(data, a_advanceFrameState);
 
 	return data;
 }
 
+void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data, bool a_updateState) const
+{
+	static constexpr auto kMaximumCharacterRainDebugMode =
+		static_cast<std::uint32_t>(CharacterDebugMode::Count) - 1u;
+	static constexpr float kMaximumCharacterFrameDeltaSeconds = 0.25f;
+
+	struct SettingRange
+	{
+		float Settings::* member;
+		float minimum;
+		float maximum;
+	};
+	static constexpr std::array<SettingRange, 9> characterRainSettingRanges{ {
+		{ &Settings::CharacterSpotDensity, CharacterRainSettingLimits::kMinimumDensity, CharacterRainSettingLimits::kMaximumDensity },
+		{ &Settings::CharacterSpotRadius, CharacterRainSettingLimits::kMinimumRadius, CharacterRainSettingLimits::kMaximumRadius },
+		{ &Settings::CharacterSpotStrength, CharacterRainSettingLimits::kMinimumStrength, CharacterRainSettingLimits::kMaximumStrength },
+		{ &Settings::CharacterSpotRoughness, CharacterRainSettingLimits::kMinimumRoughness, CharacterRainSettingLimits::kMaximumRoughness },
+		{ &Settings::CharacterSpotNormalStrength, CharacterRainSettingLimits::kMinimumNormalStrength, CharacterRainSettingLimits::kMaximumNormalStrength },
+		{ &Settings::CharacterCoatIntensity, CharacterRainSettingLimits::kMinimumCoatIntensity, CharacterRainSettingLimits::kMaximumCoatIntensity },
+		{ &Settings::CharacterWetSheen, CharacterRainSettingLimits::kMinimumWetSheen, CharacterRainSettingLimits::kMaximumWetSheen },
+		{ &Settings::CharacterRainActivityMultiplier, CharacterRainSettingLimits::kMinimumActivity, CharacterRainSettingLimits::kMaximumActivity },
+		{ &Settings::CharacterDryTime, CharacterRainSettingLimits::kMinimumDryTime, CharacterRainSettingLimits::kMaximumDryTime },
+	} };
+	const Settings defaults{};
+	for (const auto& range : characterRainSettingRanges) {
+		auto& value = a_data.settings.*range.member;
+		value = std::clamp(std::isfinite(value) ? value : defaults.*range.member, range.minimum, range.maximum);
+	}
+	a_data.settings.EnableCharacterRainSpots = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
+	a_data.settings.EnableWeaponRainDrops = a_data.settings.EnableCharacterRainSpots &&
+	                                        settings.EnableWeaponRainDrops;
+	a_data.settings.CharacterSpotDebug = a_data.settings.EnableCharacterRainSpots ?
+	                                         std::min(settings.CharacterSpotDebug, kMaximumCharacterRainDebugMode) :
+	                                         0u;
+	float weatherIntensity = std::sqrt(std::clamp(a_data.Wetness, 0.0f, 1.0f));
+	weatherIntensity = std::isfinite(weatherIntensity) ? std::clamp(weatherIntensity, 0.0f, 1.0f) : 0.0f;
+
+	const std::uint32_t currentFrame = globals::state ? globals::state->frameCount : 0u;
+	const bool updateState = a_updateState && lastCharacterWetnessUpdateFrame != currentFrame;
+	if (updateState)
+		lastCharacterWetnessUpdateFrame = currentFrame;
+
+	if (updateState && !a_data.settings.EnableCharacterRainSpots) {
+		characterSurfaceWetness = 0.0f;
+	} else if (updateState && weatherIntensity >= characterSurfaceWetness) {
+		characterSurfaceWetness = weatherIntensity;
+	} else if (updateState && (!globals::game::ui || !globals::game::ui->GameIsPaused())) {
+		const float deltaSeconds = std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, kMaximumCharacterFrameDeltaSeconds);
+		const float dryRate = 1.0f / a_data.settings.CharacterDryTime;
+		characterSurfaceWetness = std::max(weatherIntensity, characterSurfaceWetness - deltaSeconds * dryRate);
+	}
+
+	a_data.CharacterImpactIntensity = weatherIntensity;
+	a_data.CharacterRetainedWetness = characterSurfaceWetness;
+	a_data.CharacterStatePadding = float2(0.0f, 0.0f);
+}
+
 void WetnessEffects::Prepass()
 {
+	CharacterRainSurfaces::RefreshPendingActors();
 	static auto renderer = globals::game::renderer;
 	static auto& precipOcclusionTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 
@@ -949,6 +1193,10 @@ void WetnessEffects::Prepass()
 void WetnessEffects::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!o_json.contains("HairWetness") && o_json.contains("SkinWetness"))
+		settings.HairWetness = o_json["SkinWetness"].get<float>();
+	if (!o_json.contains("CharacterDryTime") && o_json.contains("CharacterShelterDryTime"))
+		settings.CharacterDryTime = o_json["CharacterShelterDryTime"].get<float>();
 
 	// Auto-detect which preset matches the loaded settings
 	DetectCurrentPreset();
@@ -970,6 +1218,8 @@ void WetnessEffects::SaveSettings(json& o_json)
 void WetnessEffects::RestoreDefaultSettings()
 {
 	settings = {};
+	characterSurfaceWetness = 0.0f;
+	lastCharacterWetnessUpdateFrame = UINT32_MAX;
 	climatePreset = defaultPreset;
 
 	// Apply the default climate preset to ensure settings reflect the preset values
@@ -1002,7 +1252,7 @@ void WetnessEffects::DrawWeatherAnalysis() const
 		return;
 	}
 
-	auto frameData = GetCommonBufferData();
+	auto frameData = GetCommonBufferData(false);
 	const auto& presetInfo = CLIMATE_PRESET_INFO[static_cast<size_t>(climatePreset)];
 	Settings defaultSettings{};
 

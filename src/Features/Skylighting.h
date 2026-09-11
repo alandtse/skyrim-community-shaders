@@ -47,6 +47,8 @@ public:
 
 	/** @brief Installs rendering hooks and registers event handlers after plugin load. */
 	virtual void PostPostLoad() override;
+	/** @brief Invalidates probe state when a save finishes loading. */
+	virtual void GameLoaded() override;
 
 	//////////////////////////////////////////////////////////////////////////////////
 
